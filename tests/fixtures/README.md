@@ -1,0 +1,4 @@
+# Fixtures
+
+- `planner-export.sample.json`: one session exported from reinvent-planner.cloud on 1 October 2026 by the owner. Abstract shortened. Shows the shape `reseat rules import` must read: `id` is the Events API sessionId, `shortId` is the code (base sitting ends in `-R`, repeats in `-R1`, `-R2`), `repeats[]` lists other sittings with their own ids, `seatCapacity` is the room size (not available from the Events API), times are UTC in `startDateTime` and Las Vegas local in `startTime`.
+- `catalog-2026-10-01.json`: a real ListSessions pull of reinvent2026 made with `reseat save-fixture` by the owner on 1 October 2026. Fetched with `includeAbstracts=false`. Speaker names removed. One session per line. Load it with `FakeEventsApi.from_fixture(path)` or `reseat.fixtures.load_catalog(path)`. `tests/test_real_catalog.py` asserts its venue and type counts. To refresh, run `reseat save-fixture` from the repo root and update the counts in that test from the new pull.

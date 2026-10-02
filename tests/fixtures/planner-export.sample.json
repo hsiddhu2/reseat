@@ -1,0 +1,57 @@
+[
+    {
+        "id": "1780442277219001cKCh",
+        "hash": "8b12103df4a5b32f463d5ace25e4ecfb",
+        "shortId": "COP324-R",
+        "title": "AI-Powered FinOps: Cloud Cost Optimization in Practice",
+        "abstract": "Embed FinOps as an operational discipline using AI-powered cost optimization. Laptop required",
+        "startDateTime": "2026-11-30T20:00:00.000Z",
+        "startTime": "12:00",
+        "startTimeFormatted": "2026-11-30T20:00:00.000Z",
+        "endDateTime": "2026-11-30T22:00:00.000Z",
+        "endTime": "14:00",
+        "sessionTimeId": "1790025482872001CTnR",
+        "lastModified": "2026-10-01T01:09:54Z",
+        "speakers": [
+            {"id": "1725445141730001Jez7_17746331reinvent2026", "displayName": "Enrico Bonaccorsi", "name": "Enrico Bonaccorsi", "firstName": "Enrico", "lastName": "Bonaccorsi", "company": "Amazon Web Services"},
+            {"id": "1789144288590001SAXG_17746331reinvent2026", "displayName": "Rupesh Lunia", "name": "Rupesh Lunia", "firstName": "Rupesh", "lastName": "Lunia", "company": ""}
+        ],
+        "venue": {"id": "MGM_Grand", "displayName": "MGM Grand"},
+        "day": "Monday",
+        "type": {"id": "Type", "displayName": "Workshop"},
+        "level": {"id": "Level", "displayName": "300 - Advanced", "value": 300},
+        "services": [
+            {"id": "Services", "displayName": "AWS Billing and Cost Management"},
+            {"id": "Services", "displayName": "AWS Compute Optimizer"},
+            {"id": "Services", "displayName": "AWS Savings Plans"}
+        ],
+        "topics": [
+            {"id": "Topic", "displayName": "Artificial Intelligence"},
+            {"id": "Topic", "displayName": "Cloud Operations"}
+        ],
+        "areaOfInterest": [
+            {"id": "AreaofInterest", "displayName": "Cost Optimization"},
+            {"id": "AreaofInterest", "displayName": "Agentic AI"}
+        ],
+        "industry": [],
+        "role": [
+            {"id": "Role", "displayName": "Developer / Engineer"},
+            {"id": "Role", "displayName": "IT Professional / Technical Manager"},
+            {"id": "Role", "displayName": "Solution / Systems Architect"}
+        ],
+        "features": [{"id": "Features", "displayName": "Hands-on"}],
+        "seatCapacity": 84,
+        "repeats": [
+            {
+                "id": "1790358255827001ioDc",
+                "shortId": "COP324-R1",
+                "startDateTime": "2026-12-02T23:30:00.000Z",
+                "endDateTime": "2026-12-03T01:30:00.000Z",
+                "startTime": "15:30",
+                "endTime": "17:30",
+                "day": "Wednesday",
+                "venue": {"id": "MGM_Grand", "displayName": "MGM Grand"}
+            }
+        ]
+    }
+]
