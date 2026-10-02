@@ -326,7 +326,10 @@ def _reconcile(plan: Plan, result: BulkResult | None, ex: Execution) -> list[Out
                 o = Outcome(sid, p.target, "refused", note="write failed, not in read-back")
         elif f is None:
             o = Outcome(sid, p.target, "reserved")
-            if held is not None and sid not in held:
+            if held is None:
+                o.status = "unconfirmed"
+                o.note = "API said successful but the read-back failed"
+            elif sid not in held:
                 o.status = "unconfirmed"
                 o.note = "API said successful but GetSchedule does not list it"
                 ex.disagreements.append(f"{p.code} ({sid}): {o.note}")

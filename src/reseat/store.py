@@ -104,7 +104,10 @@ class SweepResult:
 class Store:
     def __init__(self, path: Path | str = ":memory:"):
         self.path = str(path)
-        self.db = sqlite3.connect(self.path)
+        # One thread owns a Store at a time. `reseat serve` opens it on the main thread
+        # and hands it to the watcher thread, which then does all store work. HTTP
+        # threads never touch it. So the connection may move between threads.
+        self.db = sqlite3.connect(self.path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SCHEMA)
 
@@ -180,6 +183,53 @@ class Store:
                             (event_id, sid))
         cur.execute("INSERT INTO sweeps VALUES (?,?,?,?)",
                     (event_id, now, len(sessions), int(with_abstracts)))
+        self.db.commit()
+        return res
+
+    def update_session(self, event_id: str, s: Session, now: float | None = None) -> SweepResult:
+        """Merge one fresh GetSession result. Same bookkeeping as a sweep, for one session.
+
+        Used on site, where GetSession every 20 seconds replaces full sweeps. Never
+        marks anything removed, because it only sees one session.
+        """
+        now = now or time.time()
+        cur = self.db.cursor()
+        old = cur.execute("SELECT band, date, time, room, venue, abstract FROM sessions "
+                          "WHERE event_id=? AND session_id=?", (event_id, s.session_id)).fetchone()
+        res = SweepResult(count=1)
+        st = s.session_time
+        band = s.seat_availability
+        if old is None:
+            res.added.append(s.session_id)
+        else:
+            if old["band"] != band:
+                res.band_changes.append((s.session_id, old["band"], band))
+                cur.execute("INSERT INTO band_history VALUES (?,?,?,?,?)",
+                            (event_id, s.session_id, now, old["band"], band))
+            if (old["date"], old["time"], old["room"], old["venue"]) != (
+                    st.date if st else None, st.time if st else None, s.room, s.venue):
+                res.moved.append(s.session_id)
+                cur.execute("INSERT INTO catalog_changes VALUES (?,?,?,?,?)",
+                            (event_id, s.session_id, now, "moved", json.dumps({
+                                "from": {k: old[k] for k in ("date", "time", "room", "venue")},
+                                "to": {"date": st.date if st else None, "time": st.time if st else None,
+                                       "room": s.room, "venue": s.venue}})))
+        abstract = s.abstract if s.abstract is not None else (old["abstract"] if old else None)
+        cur.execute(
+            """INSERT INTO sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+               ON CONFLICT(event_id, session_id) DO UPDATE SET
+                 abbreviation=excluded.abbreviation, base_code=excluded.base_code,
+                 title=excluded.title, type=excluded.type, level=excluded.level,
+                 venue=excluded.venue, room=excluded.room, date=excluded.date,
+                 time=excluded.time, minutes=excluded.minutes,
+                 reservable=excluded.reservable, band=excluded.band,
+                 abstract=excluded.abstract, raw=excluded.raw,
+                 last_seen=excluded.last_seen""",
+            (event_id, s.session_id, s.abbreviation, s.base_code, s.title, s.type,
+             s.level, s.venue, s.room, st.date if st else None, st.time if st else None,
+             st.minutes if st else None, int(bool(s.is_reservable)), band, abstract,
+             s.model_dump_json(by_alias=True), now, now),
+        )
         self.db.commit()
         return res
 

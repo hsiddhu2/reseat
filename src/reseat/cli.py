@@ -508,6 +508,72 @@ def _print_swap(res: SwapResult) -> None:
 
 
 @app.command()
+def serve(event: str = config.DEFAULT_EVENT,
+          host: str = typer.Option("127.0.0.1", help="Address to listen on. Anything but loopback "
+                                   "needs serve_secret in the rules file."),
+          port: int = typer.Option(8490, help="Port for the phone page."),
+          interval: int = typer.Option(60, help="Seconds between catalog sweeps. At least 30.")):
+    """Run the watcher and serve the phone page. Leave the laptop awake and plugged in."""
+    import socket
+
+    from . import push
+    from . import serve as serve_mod
+    r, c, st = _rules(), _client(), _store()
+
+    def swapper(p: Proposal, approved: bool) -> SwapResult:
+        return Swap(c, st, r, event).run_plan(p, approved=approved)
+
+    try:
+        w = Watcher(c, st, r, event, interval=interval, swapper=swapper)
+        a = serve_mod.App(w, st, r, event, host=host, port=port)
+        server = serve_mod.make_server(a)
+    except (WatchError, serve_mod.ServeError, OSError) as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    w.subscribe(_print_watch_event)
+    pusher = None
+    if r.ntfy_topic:
+        def code_title(sid: str) -> str:
+            s = st.get(event, sid)
+            return f"{s.abbreviation} {s.title}" if s else "a session"
+        pusher = push.Pusher(r.ntfy_topic, code_title=code_title)
+        pusher.start()
+        w.subscribe(pusher)
+        con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
+    if a.auth_required:
+        shown = socket.gethostname() if host == "0.0.0.0" else host
+        con.print(f"Open this once on your phone. It works one time:\n  {a.one_time_link(shown)}")
+        con.print(f"If you lose it, open http://{shown}:{a.port}/login and enter serve_secret.")
+        con.print("This is plain HTTP. Reach it over Tailscale, which encrypts the link, not over open "
+                  "hotel Wi-Fi. Restarting reseat serve signs every phone out.")
+    else:
+        con.print(f"Phone page on this laptop only: http://{host}:{a.port}/")
+    worker = serve_mod.run(a, server)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        con.print("Stopping. A swap in progress finishes first.")
+    finally:
+        w.stop()
+        worker.join(timeout=serve_mod.APPROVE_WAIT)
+        server.server_close()
+        if pusher:
+            pusher.stop()
+
+
+@app.command("mcp")
+def mcp_cmd(event: str = config.DEFAULT_EVENT):
+    """Run the local MCP server on stdio. Needs: pip install "reseat[mcp]"."""
+    from . import mcp_server
+    try:
+        server = mcp_server.build_server(mcp_server.Tools(_client(), _store(), _rules(), event))
+    except ImportError:
+        typer.echo('The MCP server needs the extra: pip install "reseat[mcp]"', err=True)
+        raise typer.Exit(2) from None
+    server.run("stdio")
+
+
+@app.command()
 def swap(held_id: str, wanted_id: str, event: str = config.DEFAULT_EVENT,
          yes: bool = typer.Option(False, "--yes", help="Skip the confirmation.")):
     """Replace a held session with a wanted one. Checks a fallback first, rolls back on failure."""

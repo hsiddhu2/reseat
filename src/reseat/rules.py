@@ -114,6 +114,8 @@ class Rules(BaseModel):
     max_per_day: int = Field(default=5, ge=1, le=20)
     watch_cap: int = Field(default=25, ge=1, le=100)
     home_venue: str | None = None   # where the first walk of each day starts, e.g. your hotel
+    serve_secret: str | None = Field(default=None, min_length=16, max_length=200)
+    ntfy_topic: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{16,64}$")
 
     @field_validator("home_venue")
     @classmethod
@@ -196,6 +198,10 @@ buffer_minutes: 30   # extra time before a session after a venue change
 max_per_day: 5       # reserved sessions per day, at most
 watch_cap: 25        # targets, at most
 home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
+
+# Phone remote. Both optional.
+# serve_secret: a long random string. Needed to open the phone page from another device.
+# ntfy_topic: a random 16 to 64 character name. Push goes to https://ntfy.sh/<topic>.
 """
 
 

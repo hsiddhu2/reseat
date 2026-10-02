@@ -39,11 +39,13 @@ API rules this module exists to respect:
 from __future__ import annotations
 
 import json
+import queue
 import secrets
 import threading
 import time
 from collections import deque
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -51,7 +53,7 @@ import httpx
 from pydantic import ValidationError
 
 from .auth import AuthError
-from .client import ApiError, AuthRequired, EventsClient, Throttled
+from .client import ApiError, AuthRequired, EventsClient, NetworkError, Throttled
 from .router import Router, run_booking
 from .rules import Rules
 from .store import Store
@@ -60,6 +62,8 @@ MIN_INTERVAL = 30
 DEFAULT_INTERVAL = 60
 PROPOSAL_TTL = 600   # seconds a proposed plan id stays valid
 BACKOFF_CAP = 300    # longest wait between sweeps during an outage
+ONSITE_EVERY = 20    # seconds between on-site GetSession polls
+ONSITE_CAP = 40      # sessions polled on site: 40 x 3 a minute stays inside GetSession's 120
 OFFLINE_AFTER = 600  # seconds down before the offline event
 
 
@@ -67,8 +71,12 @@ class WatchError(Exception):
     """The watcher cannot start. The message says what to fix."""
 
 
+class ApprovalFailed(Exception):
+    """An approved proposal did not run. The proposal is kept, so it can be approved again."""
+
+
 EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
-                    "outage", "offline", "back", "signin"]
+                    "outage", "offline", "back", "signin", "leave"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 
@@ -132,11 +140,14 @@ class Watcher:
         self.client, self.store, self.rules, self.event_id = client, store, rules, event_id
         self._stop = threading.Event()
         self.interval, self.clock, self.swapper = interval, clock, swapper
-        self.sleep: Callable[[float], Any] = sleep or self._stop.wait
+        self._custom_sleep = sleep
+        self._jobs: queue.Queue[tuple[Callable[[], Any], Future[Any]] | None] = queue.Queue()
+        self.last_held: set[str] = set()
         self.router = Router(rules, store, event_id)
         self.proposals: dict[str, Proposal] = {}
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
+        self._cap_warned: str | None = None
         self.read_only = False
         self._down_since: float | None = None
         self._down_ticks = 0
@@ -148,6 +159,20 @@ class Watcher:
 
     def subscribe(self, fn: Subscriber) -> None:
         self._subscribers.append(fn)
+
+    @property
+    def stopped(self) -> threading.Event:
+        """Set once stop() is called. Other threads wait on it."""
+        return self._stop
+
+    @property
+    def down_since(self) -> float | None:
+        """When the current outage started, or None while the API is reachable."""
+        return self._down_since
+
+    def emit(self, kind: EventKind, **data: Any) -> None:
+        """Announce an event to every subscriber. The phone server uses it for leave-now."""
+        self._emit(kind, **data)
 
     def _emit(self, kind: EventKind, **data: Any) -> None:
         ev = WatchEvent(kind, self.clock(), data)
@@ -177,30 +202,101 @@ class Watcher:
 
         Returns the swapper's result, or None for an unknown, used or expired plan id.
         """
-        if self.read_only:
-            self._emit("error", message="Sign in needed. Nothing can be approved until then.")
-            return None
         p = self.take(plan_id)
         if p is None or self.swapper is None:
             return None
-        return self._swap(p, approved=True)
+        if self.read_only:
+            self._keep(p)
+            raise ApprovalFailed("Sign in needed on the laptop. Nothing was sent. The proposal is kept.")
+        outcome = self._swap(p, approved=True)
+        if outcome is None:
+            self._keep(p)
+            raise ApprovalFailed("The swap did not run, nothing was sent. The proposal is kept. "
+                                 "Try again in a moment.")
+        return outcome
+
+    def _keep(self, p: Proposal) -> None:
+        if not p.expired(self.clock()):
+            with self._lock:
+                self.proposals[p.plan_id] = p
 
     def stop(self) -> None:
         self._stop.set()
+        self._jobs.put(None)          # wake the loop
+
+    # ---- jobs: work other threads hand to the loop's thread
+
+    def submit(self, fn: Callable[[], Any]) -> Future[Any]:
+        """Run `fn` on the watcher's own thread between polls, so the API client and the
+        store are only ever used from one thread. The HTTP server approves this way."""
+        fut: Future[Any] = Future()
+        self._jobs.put((fn, fut))
+        return fut
+
+    def _run_job(self, item: tuple[Callable[[], Any], Future[Any]] | None) -> None:
+        if item is None:
+            return
+        fn, fut = item
+        if not fut.set_running_or_notify_cancel():
+            return
+        try:
+            fut.set_result(fn())
+        except Exception as e:  # noqa: BLE001  the caller gets the error, the loop goes on
+            fut.set_exception(e)
+
+    def drain(self) -> None:
+        while True:
+            try:
+                self._run_job(self._jobs.get_nowait())
+            except queue.Empty:
+                return
+
+    def _pause(self, seconds: float) -> None:
+        """Wait, running submitted jobs as they arrive. A test clock just advances."""
+        if self._custom_sleep is not None:
+            self._custom_sleep(seconds)
+            self.drain()
+            return
+        deadline = time.monotonic() + seconds
+        while not self._stop.is_set():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return
+            try:
+                self._run_job(self._jobs.get(timeout=left))
+            except queue.Empty:
+                return
 
     # ---- the loop
 
-    def run(self, max_ticks: int | None = None) -> None:
-        """Tick until stop() or max_ticks. A tick that raises anything is reported, not fatal."""
+    def run(self, max_ticks: int | None = None,
+            onsite_day: Callable[[], str | None] | None = None) -> None:
+        """Sweep until stop() or max_ticks. Between sweeps, if `onsite_day()` names an event
+        day, poll that day's sessions every 20 seconds. Nothing raised in a tick is fatal."""
         n = 0
         while not self._stop.is_set() and (max_ticks is None or n < max_ticks):
-            try:
-                self.tick()
-            except Exception as e:  # noqa: BLE001  the watcher runs all week. Report and go on.
-                self._emit("error", message=f"tick failed: {type(e).__name__}: {e}")
+            self._safely(self.tick)
             n += 1
-            if max_ticks is None or n < max_ticks:
-                self.sleep(self.next_delay())
+            if max_ticks is not None and n >= max_ticks:
+                return
+            left = self.next_delay()
+            while left > 0 and not self._stop.is_set():
+                day = onsite_day() if onsite_day else None
+                if day and self._down_since is None:
+                    step = min(ONSITE_EVERY, left)
+                    self._pause(step)
+                    left -= step
+                    if left > 0:
+                        self._safely(lambda d=day: self.onsite_tick(d))
+                else:
+                    self._pause(left)
+                    left = 0
+
+    def _safely(self, fn: Callable[[], Any]) -> None:
+        try:
+            fn()
+        except Exception as e:  # noqa: BLE001  the watcher runs all week. Report and go on.
+            self._emit("error", message=f"tick failed: {type(e).__name__}: {e}")
 
     def next_delay(self) -> float:
         """Normal interval, or during an outage doubling from it up to 5 minutes."""
@@ -209,14 +305,26 @@ class Watcher:
         return float(min(self.interval * 2 ** (self._down_ticks - 1), BACKOFF_CAP))
 
     def tick(self) -> TickResult:
+        """One full sweep of the catalog."""
         now = self.clock()
         res = TickResult(at=now)
+        self._guarded(res, now, lambda: self._tick(res, now))
+        return res
+
+    def onsite_tick(self, day: str) -> TickResult:
+        """On site: GetSession for the day's held and wanted sessions, at most 40, instead of a sweep."""
+        now = self.clock()
+        res = TickResult(at=now)
+        self._guarded(res, now, lambda: self._onsite(res, now, day))
+        return res
+
+    def _guarded(self, res: TickResult, now: float, body: Callable[[], None]) -> None:
         try:
-            self._tick(res, now)
+            body()
         except (AuthError, AuthRequired) as e:
             res.failure = "auth"
             self._problem(res, f"Sign in needed: {e}")
-        except (httpx.TransportError, Throttled) as e:
+        except (httpx.TransportError, NetworkError, Throttled) as e:
             res.failure = "outage"
             self._problem(res, f"{type(e).__name__}: {e}")
         except ApiError as e:
@@ -229,7 +337,6 @@ class Watcher:
         self._emit("sweep", count=res.count, added=len(res.added), opened=len(res.opened),
                    moved=len(res.moved), booked=len(res.booked), proposed=len(res.proposals),
                    error=res.error)
-        return res
 
     def _track(self, res: TickResult, now: float) -> None:
         """Outage and sign-in state across ticks. Journaled so the attendee can see what happened."""
@@ -263,10 +370,7 @@ class Watcher:
     def _tick(self, res: TickResult, now: float) -> None:
         baseline = self.store.last_sweep(self.event_id) is None
         sessions = list(self.client.iter_sessions(self.event_id, include_abstracts=False))
-        if self.read_only:             # an authenticated read just worked: signed in again
-            self.read_only = False
-            self.store.journal(self.event_id, "watcher.signin", None, None, "ok")
-            self._emit("signin", state="ok", message="Signed in again. Booking resumes.")
+        self._signed_in()
         # Read the schedule before saving the sweep. If it fails, the changes stay
         # unsaved and the next tick sees them again, so no opening is lost.
         held = set() if baseline else set(self.client.get_schedule(self.event_id).reserved)
@@ -274,15 +378,70 @@ class Watcher:
         res.count = sweep.count
         if baseline:
             return    # first sweep ever: everything looks new. Record it, act from the next one.
+        self.last_held = held
         res.added, res.opened, res.moved = sweep.added, sweep.opened, sweep.moved
         self._warn_moved(sweep.moved, held, now)
+        self._act(sweep.opened + sweep.added, held, res, now)
+
+    def _onsite(self, res: TickResult, now: float, day: str) -> None:
+        held = set(self.client.get_schedule(self.event_id).reserved)
+        self._signed_in()
+        self.last_held = held
+        prio = self._priorities()
+        held_codes = {s.base_code for s in (self.store.get(self.event_id, i) for i in held) if s}
+
+        def on_day(sid: str) -> bool:
+            s = self.store.get(self.event_id, sid)
+            return bool(s and s.session_time and s.session_time.date == day)
+
+        def wanted(sid: str) -> bool:
+            s = self.store.get(self.event_id, sid)
+            return bool(s and s.base_code not in held_codes)
+
+        ids = sorted(i for i in held if on_day(i)) + [i for i in prio if i not in held and on_day(i)
+                                                       and wanted(i)]
+        if len(ids) > ONSITE_CAP:
+            if self._cap_warned != day:
+                self._cap_warned = day
+                self._emit("error", message=f"{len(ids)} sessions today, polling the first {ONSITE_CAP} "
+                           "to stay inside the GetSession quota.")
+            ids = ids[:ONSITE_CAP]
+        try:
+            for sid in ids:
+                try:
+                    fresh = self.client.get_session(self.event_id, sid)
+                except ApiError as e:
+                    if e.status == 404:     # withdrawn: the next full sweep removes it. Poll the rest.
+                        continue
+                    raise
+                change = self.store.update_session(self.event_id, fresh, now=now)
+                res.opened += change.opened
+                res.moved += change.moved
+        except BaseException:
+            # The openings already saved would never look new again. Keep them for the next poll.
+            self._retry |= set(res.opened)
+            raise
+        res.count = len(ids)
+        self._warn_moved(res.moved, held, now)
+        self._act(res.opened, held, res, now)
+
+    def _signed_in(self) -> None:
+        if self.read_only:             # an authenticated read just worked: signed in again
+            self.read_only = False
+            self.store.journal(self.event_id, "watcher.signin", None, None, "ok")
+            self._emit("signin", state="ok", message="Signed in again. Booking resumes.")
+
+    def _act(self, changed: list[str], held: set[str], res: TickResult, now: float) -> None:
+        """Book or propose for target sittings that opened or appeared, plus any retries."""
         prio = self._priorities()
         retry, self._retry = self._retry - held, set()
-        candidates = [s for s in dict.fromkeys(sweep.opened + sweep.added + sorted(retry)) if s in prio]
+        candidates = [s for s in dict.fromkeys(changed + sorted(retry)) if s in prio]
         if not candidates:
             return
         self._propose(candidates, held, prio, res, now)
         run = run_booking(self.router, self.client, self.store, self.event_id, held, candidates=candidates)
+        if run.schedule is not None:
+            self.last_held = set(run.schedule.reserved)
         for o in run.outcomes:
             if o.status == "reserved":
                 res.booked.append(o.session_id)
@@ -352,6 +511,9 @@ class Watcher:
         except Exception as e:  # noqa: BLE001  SwapBusy, ApiError, anything: report it
             self._emit("error", message=f"Swap {p.plan_id} not run: {type(e).__name__}: {e}")
             return None
+        held_now = getattr(outcome, "held_now", None)
+        if held_now is not None and getattr(outcome, "state", None) != "proposed":
+            self.last_held = set(held_now)
         self._emit("swap", plan_id=p.plan_id, state=getattr(outcome, "state", None),
                    alert=getattr(outcome, "alert", None))
         return outcome

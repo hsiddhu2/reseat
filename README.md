@@ -4,7 +4,7 @@ re:Seat keeps your AWS re:Invent seats. From the day API writes open until the l
 
 Built on the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). Runs on your own machine. Your tokens stay in your OS keychain.
 
-**Status: week three.** Sign-in, catalog sync, the rules file, booking with fallback, favorites sync, the watcher, safe swap and leave-now blocks work today against the fake API. Reservation writes open through the API on 8 October 2026.
+**Status: week four.** Sign-in, catalog sync, the rules file, booking with fallback, favorites sync, the watcher with outage handling, safe swap, leave-now blocks, the phone page and the MCP server work today against the fake API. Reservation writes open through the API on 8 October 2026.
 
 ## Why
 
@@ -64,6 +64,8 @@ reseat favorites sync              # mirror every target sitting into favorites.
 reseat watch                       # sweep every minute, book freed seats and new repeats. --once for cron
 reseat swap <held> <wanted>        # replace a held session safely: fallback checked, rolls back on failure
 reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
+reseat serve                       # watcher plus the phone page. See "Running it all week"
+reseat mcp                         # local MCP server on stdio. Needs pip install -e ".[mcp]"
 reseat logout
 ```
 
@@ -84,24 +86,54 @@ meals:
 max_per_day: 5
 watch_cap: 25
 home_venue: Venetian      # where the first walk of each day starts
+serve_secret: <long random string>   # needed for the phone page off this laptop
+ntfy_topic: <random 16 to 64 characters>   # optional push
 ```
 
 The first target wins a time slot. Within a batch, formats that are not recorded go first, because they fill first: Workshop, Lab and Bootcamp, then Builders' session, Chalk talk, Code talk, Breakout session, then the rest.
 
 ## Running it all week
 
-re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call. Run `reseat watch` there. The phone page, `reseat serve`, is on the way and uses the same watcher.
+re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves a phone page with today's held sessions, a leave-now countdown, queue-or-go advice for the next session you want, and Approve and Skip for proposed swaps.
+
+**Set up the phone page.** Add a long random `serve_secret` to the rules file, then start it on the laptop:
+
+```bash
+reseat serve --host 0.0.0.0
+```
+
+It prints a one-time link. Open it on the phone once. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. Restarting `reseat serve` signs every phone out, and a sign-in lasts 7 days. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Approve and Skip take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
 
 **Keep the laptop awake with the lid closed.**
 
-- macOS. `caffeinate -s reseat watch` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
+- macOS. `caffeinate -s reseat serve --host 0.0.0.0` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
 - Windows. Settings, System, Power and battery: when plugged in, sleep after Never. Control Panel, Power Options, Choose what closing the lid does: when plugged in, Do nothing.
 
-**Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. The phone can then reach the laptop by its Tailscale name from any venue, without exposing it to the hotel network.
+**Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Open the printed link with the laptop's Tailscale name in place of its local name, for example `http://my-laptop:8490/open?k=...`. The phone then reaches the laptop from any venue. To keep the page off the hotel network entirely, use `--host` with the laptop's Tailscale address instead of `0.0.0.0`.
+
+**Push, if you want it.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. The laptop posts to `https://ntfy.sh/<topic>` when a seat is booked, a swap is proposed, done or rolled back, it is time to leave, the API has been unreachable for 10 minutes, it is back, or sign-in is needed. What leaves the laptop: the event type, session codes and titles, and those status lines. Never your token, an abstract, a session id or a plan id. Push is off unless the topic is set.
+
+**On site.** During the event days the laptop also checks the day's held and wanted sessions every 20 seconds, at most 40 of them, so a seat freed by a no-show is booked while you are in the walk-up line.
 
 **When the hotel Wi-Fi drops.** The watcher keeps running. It retries with a growing wait, up to 5 minutes between tries, and goes back to its normal pace as soon as a sweep works. A sweep that fails halfway is not saved, so a seat that opened during the outage is still caught afterwards. Each outage goes in the journal. Your reserved seats stay reserved, because they live in your AWS schedule, not on the laptop. While the laptop is offline it cannot book anything and the phone cannot reach it, so use the official app until it is back. If the AWS API is down but the internet is up, push tells you "re:Seat offline since HH:MM" after 10 minutes and "re:Seat back" when it recovers.
 
 **When sign-in expires.** If the token can no longer be refreshed, re:Seat stops booking, keeps watching for the moment it can read again, and tells you once: "sign in needed". Run `reseat login` on the laptop. Booking resumes on the next sweep.
+
+## MCP server
+
+`reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Install the extra first: `pip install -e ".[mcp]"`. A client config looks like this, with the path to your `reseat` command:
+
+```json
+{
+  "mcpServers": {
+    "reseat": { "command": "/path/to/.venv/bin/reseat", "args": ["mcp"] }
+  }
+}
+```
+
+Tools: `list_targets`, `propose_changes`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`. Every change is two steps. `propose_changes` or `guard_sync` returns a plan id and sends nothing. `approve_changes` carries that plan out once, within 10 minutes, and reserves only what it named. A leave-now plan is refused if what you hold changed after it was shown. Calls run one at a time. No tool takes a list of session ids.
+
+Know the limit: the server tells the agent to ask you before approving, but it cannot check that it did. The agent sees the plan id and could approve on its own. Session titles come from the catalog and reach the agent. Use a client that shows you each tool call before it runs.
 
 ## What it respects
 
@@ -136,9 +168,9 @@ Tests run against an in-process fake of the API that produces every documented f
 
 ## Status
 
-- Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites sync, watcher with new-repeat booking and swap proposals, safe swap, leave-now blocks and queue-or-go advice.
-- Next: live booking when API writes open on 8 October 2026, then the phone remote: `reseat serve`, a page the phone opens while the laptop does the work.
-- Later: local MCP server, hardening.
+- Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites sync, watcher with new-repeat booking, swap proposals and outage handling, safe swap, leave-now blocks, queue-or-go advice, the phone page with push, the local MCP server.
+- Next: live booking when API writes open on 8 October 2026.
+- Later: a fault storm against the fake, demo recordings, hardening.
 
 ## License
 

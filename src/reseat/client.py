@@ -22,6 +22,7 @@ from typing import Any
 import httpx
 
 from . import config
+from .auth import AuthError
 from .models import (
     BulkResult,
     Event,
@@ -65,6 +66,11 @@ class AuthRequired(ApiError):
 
 class NotRegistered(ApiError):
     """403. Signed in but not registered for this event."""
+
+
+class NetworkError(ApiError):
+    """No HTTP answer: refused, reset or timed out. Status 0. On a write it may or may not
+    have landed, so callers read back exactly as they do for a 5xx."""
 
 
 class Throttled(ApiError):
@@ -154,7 +160,12 @@ class EventsClient:
             self.sleep(wait)
         refreshed = False
         for _attempt in range(3):
-            r = self.http.request(method, path, params=params, json=json, headers=self._headers(auth))
+            try:
+                r = self.http.request(method, path, params=params, json=json, headers=self._headers(auth))
+            except httpx.TransportError as e:
+                raise NetworkError(0, f"{type(e).__name__}: {e}", op) from None
+            except AuthError as e:
+                raise AuthRequired(401, str(e), op) from None
             if r.status_code == 429:
                 retry_after = float(r.headers.get("Retry-After", "60"))
                 if _attempt == 0:
@@ -162,7 +173,12 @@ class EventsClient:
                     continue
                 raise Throttled(429, _msg(r), op)
             if r.status_code == 401 and auth and not refreshed and self.on_refresh:
-                self.on_refresh()
+                try:
+                    self.on_refresh()
+                except AuthError as e:
+                    raise AuthRequired(401, f"refresh failed: {e}", op) from None
+                except httpx.TransportError as e:
+                    raise NetworkError(0, f"refresh: {type(e).__name__}: {e}", op) from None
                 refreshed = True
                 continue
             break

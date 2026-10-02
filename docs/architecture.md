@@ -71,18 +71,21 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - Warns when the walk between two held sessions is longer than the gap.
 - Queue or go: for a session not held, advice from session type, overridden by that session's band history once it has three changes. Presented as a heuristic with its basis, never a prediction. The phone page will show it.
 
-**Phone remote** (planned)
+**Phone remote** (built)
 - The token never leaves the laptop, because the API only allows sign-in on the attendee's own machine. So the laptop runs the watcher and serves a small page that the phone opens, over Tailscale or the hotel Wi-Fi.
-- `reseat serve` listens on `127.0.0.1:8490` by default. Binding to the network needs a shared secret. The phone opens a one-time link that sets a cookie and redirects to a clean URL.
+- `reseat serve` listens on `127.0.0.1:8490` by default. Binding to any other address needs `serve_secret` in the rules file, or it refuses to start. The phone opens a one-time link, printed on the laptop, that sets a cookie and redirects to a clean URL. The link carries a single-use code, never the secret. To sign in again, the phone posts the secret in a form, rate limited.
+- Writes need the cookie and an `X-Reseat` header, which a cross-site form cannot send. Without a secret on loopback, the Host header must be the loopback address. Not a security product: it stops a neighbour on hotel Wi-Fi from approving swaps.
 - The page shows today's held sessions, a leave-now countdown, queue-or-go advice and proposed swaps with Approve and Skip. Approve takes a plan id that expires after 10 minutes. No endpoint accepts a raw session id.
-- Optional push through ntfy, off unless a topic is set. Messages carry session codes, titles and the event type only.
-- On site the laptop checks today's sessions every 20 seconds, at most 40 of them, inside the 120 per minute quota.
+- Optional push through ntfy, off unless a topic is set. Seat booked, swap proposed, swap done or rolled back, leave now, offline, back, sign in needed. Messages carry session codes, titles and the event type only. Never a token, an abstract, a session id or a plan id.
+- On site the laptop checks the day's held and wanted sessions with GetSession every 20 seconds, at most 40 of them, inside the 120 per minute quota. A freed seat is booked the moment it shows.
+- One thread owns the API client and the local store. The web server only reads a snapshot it builds and hands approvals to it. Stopping the server lets a swap in progress finish first.
+- A sign-in lasts 7 days and a restart signs every phone out. The page is plain HTTP: use it over Tailscale.
 - Designed for a laptop left in the hotel room, plugged in and awake, reached from the phone over Tailscale. See "Running it all week" in the README.
 
 **Interfaces**
-- CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `favorites sync`, `probe`, `rules`, `book`, `cancel`, `watch`, `swap`, `guard sync`.
-- Phone page (planned), as above.
-- Local MCP server (planned): an agent proposes changes, the human approves.
+- CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `favorites sync`, `probe`, `rules`, `book`, `cancel`, `watch`, `swap`, `guard sync`, `serve`, `mcp`.
+- Phone page (built), as above. `reseat serve`.
+- Local MCP server (built): `reseat mcp`, over stdio. Six tools: `list_targets`, `propose_changes`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`. Every change is two steps. A propose returns a plan id and sends nothing. `approve_changes(plan_id)` carries it out once, within 10 minutes, and reserves only what the plan named. Calls run one at a time. A leave-now plan is refused if holds changed after it was shown. No tool takes a list of session ids. The approval step is an instruction to the agent, not something the server can enforce.
 
 ## Architecture
 
@@ -90,7 +93,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 | Component | Status | Responsibility |
 |---|---|---|
-| Auth | built | PKCE on port 8484, fallback to 8489. OS keychain. Refresh once on 401. Sign-out with revoke. The token is only ever sent to `https://api.awsevents.com`. |
+| Auth | built | PKCE on port 8484, fallback to 8489. OS keychain. Refresh once on 401. Sign-out with revoke. The token is only ever sent to `https://api.awsevents.com`. A dropped connection or a failed refresh on a write is read back like a server error. |
 | API client | built | Typed models that mirror the OpenAPI spec. Quota tracker per operation. Honors `Retry-After` once. Per-session failures as typed results. |
 | Catalog store | built | SQLite. Full sync, then cheap sweeps. Added, removed and moved sessions. Band history. Write journal. |
 | Campus | built | The 2026 venues, a walking-time table, Las Vegas to UTC conversion. |
@@ -101,7 +104,8 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
 | Favorites sync | built | Mirror target sittings into favorites, read back. |
-| Phone remote | planned | Local HTTP server, phone page, approve by plan id, optional push. |
+| Phone remote | built | Local HTTP server, phone page, approve by plan id, on-site polling, optional push. |
+| MCP server | built | Propose, approve by plan id, explain. Optional extra `reseat[mcp]`. |
 
 ## Key flows
 
