@@ -7,8 +7,8 @@ error bodies and per-session bulk results. Faults can be scripted per session:
     fake.closed = True                  -> all writes return 409
     fake.throttle_next("ReserveSessions", retry_after=3)
     fake.fail_next("ReserveSessions", 503)  -> one 5xx, nothing applied
-    fake.ghost.add("S1")                -> reserve says successful, GetSchedule omits S1
-    fake.refuse["S1"] = "seatHeldByCrew" -> any failure code, including unknown ones
+    fake.ghost.add("S1")                -> reserve or favorite says successful, GetSchedule omits S1
+    fake.refuse["S1"] = "seatHeldByCrew" -> any failure code on reserve or favorite, known or not
     fake.schedule.reserved.add("S9")    -> conflicts computed from session times
     FakeEventsApi.from_fixture("tests/fixtures/catalog-2026-10-01.json")  -> real shapes
 
@@ -233,10 +233,14 @@ class FakeEventsApi:
         return None
 
     def _favorite_one(self, sid: str) -> dict | None:
+        if sid in self.refuse:
+            return {"sessionId": sid, "code": self.refuse[sid]}
         if sid not in self.sessions:
             return {"sessionId": sid, "code": "other"}
         if sid in self.schedule.favorites:
             return {"sessionId": sid, "code": "alreadyFavorited"}
+        if sid in self.ghost:
+            return None
         self.schedule.favorites.add(sid)
         return None
 

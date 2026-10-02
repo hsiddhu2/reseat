@@ -15,15 +15,23 @@ from rich.table import Table
 
 from . import auth, config, fixtures
 from . import cancel as cancel_engine
+from . import favorites as favorites_engine
+from . import guard as guard_engine
 from . import rules as rules_mod
 from .client import ApiError, EventsClient, NotRegistered, OperationClosed
 from .router import OP as RESERVE_OP
 from .router import WRITES_CLOSED, Execution, Plan, Router, run_booking
 from .store import Store
+from .swap import Swap, SwapBusy, SwapResult
+from .watcher import Proposal, Watcher, WatchError, WatchEvent
 
 app = typer.Typer(help="re:Seat keeps your re:Invent seats.", no_args_is_help=True)
 rules_app = typer.Typer(help="Create, import and check your rules file.", no_args_is_help=True)
 app.add_typer(rules_app, name="rules")
+guard_app = typer.Typer(help="Leave-now blocks in your official schedule.", no_args_is_help=True)
+app.add_typer(guard_app, name="guard")
+favorites_app = typer.Typer(help="Mirror your rules into the official favorites.", no_args_is_help=True)
+app.add_typer(favorites_app, name="favorites")
 con = Console()
 
 
@@ -217,6 +225,10 @@ def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
             st.journal(event, "AssociateFavorites", batch, {"status": 409}, "closed")
             con.print("[yellow]Favorites are closed (409). Nothing was changed.[/yellow]")
             raise typer.Exit(3) from None
+        except ApiError as e:
+            st.journal(event, "AssociateFavorites", batch, {"error": str(e)}, "error")
+            con.print(f"[red]{e}. Stopped. Reading back below.[/red]")
+            break
         outcome = "partial" if res.failed else "success"
         st.journal(event, "AssociateFavorites", batch, res.model_dump(), outcome)
         for sid in res.successful:
@@ -311,6 +323,59 @@ def rules_check(event: str = config.DEFAULT_EVENT):
     con.print("[green]All targets resolve in the local catalog.[/green]")
 
 
+@favorites_app.command("sync")
+def favorites_sync(event: str = config.DEFAULT_EVENT,
+                   dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be sent.")):
+    """Add every target sitting to favorites, so the official app shows the same plan."""
+    r, c, st = _rules(), _client(), _store()
+    res = favorites_engine.sync(c, st, event, r, dry_run=dry_run)
+    for o in res.outcomes:
+        color = {"added": "green", "already": "dim", "not_sent": "dim"}.get(o.status, "yellow")
+        label = "would add" if dry_run and o.status == "not_sent" else o.status
+        con.print(f"  [{color}]{label}[/{color}] {o.target} {o.session_id}{' ' + o.code if o.code else ''}")
+    con.print(f"{len(res.wanted)} sittings: {res.count('added')} added, {res.count('already')} already "
+              f"favorited, {res.count('failed')} failed, {res.count('unconfirmed')} unconfirmed.")
+    for d in res.disagreements:
+        con.print(f"[red]{d}[/red]")
+    for label in res.missing:
+        con.print(f"[yellow]{label}: not in the local catalog. "
+                  "Run reseat sync, then reseat rules check.[/yellow]")
+    if res.closed:
+        con.print(f"[yellow]{favorites_engine.CLOSED}[/yellow]")
+        raise typer.Exit(3)
+    if res.error:
+        con.print(f"[red]{res.error}[/red]")
+        raise typer.Exit(4)
+    if res.disagreements:
+        raise typer.Exit(4)
+
+
+@guard_app.command("sync")
+def guard_sync(event: str = config.DEFAULT_EVENT,
+               dry_run: bool = typer.Option(False, "--dry-run", help="Print the changes, send nothing.")):
+    """Create, update or delete leave-now blocks so they match what you hold. Idempotent."""
+    r, c, st = _rules(), _client(), _store()
+    res = guard_engine.sync(c, st, event, r, dry_run=dry_run)
+    gp = res.plan
+    verb = "would " if dry_run else ""
+    for b in gp.create:
+        con.print(f"  [green]{verb}create[/green] {b.title} {b.start}Z  {b.description}")
+    for _pid, b in gp.update:
+        con.print(f"  [cyan]{verb}update[/cyan] {b.title} {b.start}Z  {b.description}")
+    for p in gp.delete:
+        con.print(f"  [yellow]{verb}delete[/yellow] {p.title} {p.start_date_time}Z")
+    con.print(f"{len(gp.create)} to create, {len(gp.update)} to update, {len(gp.delete)} to delete, "
+              f"{len(gp.keep)} already right.")
+    for w in gp.warnings:
+        con.print(f"[yellow]venue switch:[/yellow] {w}")
+    for p in res.problems:
+        con.print(f"[red]{p}[/red]")
+    if res.closed:
+        raise typer.Exit(3)
+    if res.problems:
+        raise typer.Exit(4)
+
+
 # --------------------------------------------------------------------------- booking
 
 
@@ -376,6 +441,90 @@ def book(event: str = config.DEFAULT_EVENT,
     if any(e.disagreements for e in run.executions):
         con.print("[red]Read-back disagreed with the API response. See the lines marked unconfirmed.[/red]")
         raise typer.Exit(4)
+
+
+def _print_watch_event(ev: WatchEvent) -> None:
+    d = ev.data
+    if ev.kind == "sweep":
+        when = datetime.fromtimestamp(ev.at).strftime("%H:%M:%S")
+        if d["error"]:
+            con.print(f"{when} [red]sweep failed: {d['error']}[/red]. Retrying next tick.")
+        else:
+            con.print(f"{when} {d['count']} sessions, {d['added']} added, {d['opened']} opened, "
+                      f"{d['moved']} moved, {d['booked']} booked, {d['proposed']} proposed")
+    elif ev.kind == "booked":
+        con.print(f"  [green]booked[/green] {d['target']} {d['code'] or d['session_id']} {d['title'] or ''}")
+    elif ev.kind == "proposed":
+        con.print(f"  [cyan]swap proposed[/cyan] {d['target']}: {d['held_id']} -> {d['wanted_id']} "
+                  f"plan {d['plan_id']}{' (auto)' if d['auto'] else ''}")
+    elif ev.kind == "swap":
+        con.print(f"  [cyan]swap {d['state']}[/cyan] plan {d['plan_id']}")
+    elif ev.kind == "moved":
+        b, a = d["before"], d["after"]
+        con.print(f"  [yellow]moved[/yellow] {d['code'] or d['session_id']}: {b.get('date')} {b.get('time')} "
+                  f"{b.get('room')} -> {a.get('date')} {a.get('time')} {a.get('room')}")
+    elif ev.kind == "error":
+        con.print(f"  [red]{d['message']}[/red]")
+
+
+@app.command()
+def watch(event: str = config.DEFAULT_EVENT,
+          interval: int = typer.Option(60, help="Seconds between sweeps. At least 30."),
+          once: bool = typer.Option(False, "--once", help="One sweep, then exit. For cron.")):
+    """Watch the catalog and book targets as seats free or new sittings appear."""
+    r, c, st = _rules(), _client(), _store()
+    def auto_swap(p: Proposal, approved: bool) -> SwapResult:
+        res = Swap(c, st, r, event).run_plan(p, approved=approved)
+        _print_swap(res)
+        return res
+
+    try:
+        w = Watcher(c, st, r, event, interval=interval, swapper=auto_swap)
+    except WatchError as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    w.subscribe(_print_watch_event)
+    if once:
+        raise typer.Exit(1 if w.tick().error else 0)
+    try:
+        w.run()
+    except KeyboardInterrupt:
+        con.print("Stopped.")
+
+
+def _print_swap(res: SwapResult) -> None:
+    for reason in res.reasons:
+        con.print(f"  [yellow]blocked[/yellow] {reason}")
+    con.print(f"  swap {res.held_id} -> {res.wanted_id}: {' -> '.join(res.steps)}")
+    if res.alert:
+        con.print(f"[bold red]{res.alert}[/bold red]")
+    con.print(f"  held now: {', '.join(res.held_now) or 'nothing'}")
+
+
+@app.command()
+def swap(held_id: str, wanted_id: str, event: str = config.DEFAULT_EVENT,
+         yes: bool = typer.Option(False, "--yes", help="Skip the confirmation.")):
+    """Replace a held session with a wanted one. Checks a fallback first, rolls back on failure."""
+    r, c, st = _rules(), _client(), _store()
+    sw = Swap(c, st, r, event)
+    try:
+        pre = sw.check(held_id, wanted_id, approved=True)
+    except ApiError as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    if pre.reasons:
+        _print_swap(pre)
+        raise typer.Exit(1)
+    con.print(f"Checks passed. Fallbacks for {held_id}: {', '.join(pre.fallbacks)}.")
+    if not yes and not typer.confirm(f"Cancel {held_id} and reserve {wanted_id}?"):
+        raise typer.Exit(1)
+    try:
+        res = sw.run(held_id, wanted_id, approved=True)
+    except (SwapBusy, ApiError) as e:
+        con.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    _print_swap(res)
+    raise typer.Exit({"verified": 0, "rolled_back": 4}.get(res.state, 1 if res.reasons else 4))
 
 
 @app.command()

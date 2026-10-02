@@ -16,7 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from .campus import event_date, session_window
+from .campus import VENUES, event_date, normalize_venue, session_window
 from .store import Store
 
 _REPEAT_SUFFIX = re.compile(r"-R\d*$")
@@ -113,6 +113,17 @@ class Rules(BaseModel):
     buffer_minutes: int = Field(default=30, ge=0, le=180)
     max_per_day: int = Field(default=5, ge=1, le=20)
     watch_cap: int = Field(default=25, ge=1, le=100)
+    home_venue: str | None = None   # where the first walk of each day starts, e.g. your hotel
+
+    @field_validator("home_venue")
+    @classmethod
+    def _venue(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        name = normalize_venue(v)
+        if name not in VENUES:
+            raise ValueError(f"home_venue {v!r} is not on the 2026 campus: {', '.join(VENUES)}")
+        return name
 
     @model_validator(mode="after")
     def _limits(self) -> Rules:
@@ -184,6 +195,7 @@ meals:
 buffer_minutes: 30   # extra time before a session after a venue change
 max_per_day: 5       # reserved sessions per day, at most
 watch_cap: 25        # targets, at most
+home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 """
 
 

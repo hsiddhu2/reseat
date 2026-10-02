@@ -78,6 +78,7 @@ class Skip:
     target: str
     session_id: str
     reason: str
+    blocker: str | None = None   # the held or planned session it overlaps, if that was the reason
 
 
 @dataclass
@@ -115,15 +116,24 @@ class Router:
         return [(s, b) for s, b in out if not (s.session_id in seen or seen.add(s.session_id))]
 
     def _sittings(self, t: Target) -> list[Session]:
+        """Listed sittings first. With repeats on, any other sitting of the code follows.
+
+        Planner exports list the sittings known on export day. AWS adds repeats
+        later, and booking those is the point of the watcher, so `sittings` only
+        restricts the tree when `repeats: false`.
+        """
         pinned = self.store.get(self.event_id, t.session_id) if t.session_id else None
-        if t.sittings:
-            pool = [x for x in (self.store.get(self.event_id, i) for i in t.sittings) if x]
-        elif not t.repeats:
-            pool = [pinned] if pinned else []
+        listed = [x for x in (self.store.get(self.event_id, i) for i in t.sittings) if x]
+        if not t.repeats:
+            pool = listed or ([pinned] if pinned else [])
+            extra: list[Session] = []
         else:
             code = t.code or (pinned.base_code if pinned else None)
-            pool = self.store.by_base_code(self.event_id, code) if code else []
-        ordered = self._by_time(pool, t.prefer)
+            pool = listed or (self.store.by_base_code(self.event_id, code) if code else [])
+            known = {s.session_id for s in pool}
+            extra = [s for s in (self.store.by_base_code(self.event_id, code) if code else [])
+                     if s.session_id not in known] if listed else []
+        ordered = self._by_time(pool, t.prefer) + self._by_time(extra, t.prefer)
         if pinned:
             first = [s for s in ordered if s.session_id == pinned.session_id]
             ordered = first + [s for s in ordered if s.session_id != pinned.session_id]
@@ -146,24 +156,25 @@ class Router:
         return start, start + timedelta(minutes=st.minutes or 60)
 
     def _why_not(self, s: Session, booked: list[Session], codes: set[str], per_day: dict[str, int],
-                 meals: list[Window]) -> str | None:
+                 meals: list[Window]) -> tuple[str, str | None] | None:
+        """(reason, blocking session id) when `s` cannot be planned, else None."""
         if s.is_reservable is False or s.seat_availability in _NO_RESERVATION_BANDS:
-            return "not reservable (walk-up or no reservations)"
+            return "not reservable (walk-up or no reservations)", None
         if s.seat_availability in _FULL_BANDS:
-            return "full (band unavailable)"
+            return "full (band unavailable)", None
         if s.base_code and s.base_code in codes:
-            return f"a sitting of {s.base_code} is already held or planned"
+            return f"a sitting of {s.base_code} is already held or planned", None
         w = self._window(s)
         if w:
             for other in booked:
                 ow = self._window(other)
                 if ow and overlaps(w, ow):
-                    return f"overlaps {other.abbreviation or other.session_id}"
+                    return f"overlaps {other.abbreviation or other.session_id}", other.session_id
             if any(overlaps(w, m) for m in meals):
-                return "overlaps a meal in the rules"
+                return "overlaps a meal in the rules", None
             day = s.session_time.date if s.session_time else None
             if day and per_day.get(day, 0) >= self.rules.max_per_day:
-                return f"max_per_day {self.rules.max_per_day} reached on {day}"
+                return f"max_per_day {self.rules.max_per_day} reached on {day}", None
         return None
 
     # ---- plan
@@ -204,7 +215,7 @@ class Router:
                     continue
                 why = self._why_not(s, booked, codes, per_day, meals)
                 if why:
-                    plan.skipped.append(Skip(t.label, s.session_id, why))
+                    plan.skipped.append(Skip(t.label, s.session_id, why[0], why[1]))
                     continue
                 pick = Planned(s.session_id, s.abbreviation or s.session_id, s.title, s.type,
                                t.label, prio, is_backup, scarcity_rank(s.type))

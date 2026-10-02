@@ -249,3 +249,20 @@ def test_5xx_on_write_is_read_back_not_retried(world):
     assert o.status == "refused" and "not in read-back" in o.note
     assert run.executions[0].error.startswith("503")
     assert store.journal_entries(EV)[0]["outcome"] == "error"
+
+
+def test_listed_sittings_come_first_and_new_repeats_still_allowed(world):
+    _, _, store = world
+    # Planner import listed A2 and A1 only. A3 appeared later. With repeats on it is still in the tree.
+    r = router(store, "targets:\n- code: ARC301\n  session_id: A2\n  sittings: [A2, A1]\n")
+    tree = [s.session_id for s, _ in r.tree(r.rules.targets[0])]
+    assert tree == ["A2", "A1", "A3"]
+    strict = router(store, "targets:\n- code: ARC301\n  repeats: false\n  sittings: [A2, A1]\n")
+    assert [s.session_id for s, _ in strict.tree(strict.rules.targets[0])] == ["A1", "A2"]
+
+
+def test_overlap_skip_names_the_blocking_session(world):
+    _, _, store = world
+    plan = router(store, "targets:\n- code: SVS401\n").plan(held=["A1"])
+    c1 = next(s for s in plan.skipped if s.session_id == "C1")
+    assert c1.blocker == "A1"

@@ -14,6 +14,7 @@ Design rules, all from the developer guide:
 from __future__ import annotations
 
 import time
+import urllib.parse
 from collections import deque
 from collections.abc import Callable, Iterator
 from typing import Any
@@ -31,6 +32,8 @@ from .models import (
 )
 
 # Per-attendee quotas, requests (or sessions) per minute.
+TOKEN_HOST = "https://api.awsevents.com"
+
 QUOTAS: dict[str, int] = {
     "GetSession": 120,
     "ListSessions": 120,
@@ -126,8 +129,12 @@ class EventsClient:
     # ------------------------------------------------------------------ core
 
     def _headers(self, auth: bool) -> dict[str, str]:
+        """The access token goes only to https://api.awsevents.com, whatever the base URL says."""
         h = {"Accept": "application/json"}
         if auth and self.token_provider:
+            if self.base_url != TOKEN_HOST:
+                raise AuthRequired(0, f"Refusing to send the access token to {self.base_url}. "
+                                      f"It goes only to {TOKEN_HOST}.", "auth")
             h["Authorization"] = f"Bearer {self.token_provider()}"
         return h
 
@@ -213,7 +220,7 @@ class EventsClient:
                 return
 
     def get_session(self, event_id: str, session_id: str, locale: str | None = None) -> Session:
-        r = self._request("GetSession", "GET", f"/v1/events/{event_id}/sessions/{session_id}",
+        r = self._request("GetSession", "GET", f"/v1/events/{_seg(event_id)}/sessions/{_seg(session_id)}",
                           params={"locale": locale} if locale else None)
         return Session.model_validate(r.json()["session"])
 
@@ -232,7 +239,7 @@ class EventsClient:
 
     def cancel(self, event_id: str, session_id: str) -> None:
         self._request("CancelReservation", "DELETE",
-                      f"/v1/events/{event_id}/reservations/{session_id}")
+                      f"/v1/events/{_seg(event_id)}/reservations/{_seg(session_id)}")
 
     def favorite(self, event_id: str, session_ids: list[str]) -> BulkResult:
         ids = _check_batch(session_ids)
@@ -242,7 +249,7 @@ class EventsClient:
 
     def unfavorite(self, event_id: str, session_id: str) -> None:
         self._request("DisassociateFavorite", "DELETE",
-                      f"/v1/events/{event_id}/favorites/{session_id}")
+                      f"/v1/events/{_seg(event_id)}/favorites/{_seg(session_id)}")
 
     def create_personal_time(self, event_id: str, body: PersonalTimeInput) -> None:
         self._request("CreatePersonalTime", "POST", f"/v1/events/{event_id}/personal-time",
@@ -250,11 +257,11 @@ class EventsClient:
 
     def update_personal_time(self, event_id: str, pt_id: str, body: PersonalTimeInput) -> None:
         self._request("UpdatePersonalTime", "PUT",
-                      f"/v1/events/{event_id}/personal-time/{pt_id}", json=body.payload())
+                      f"/v1/events/{_seg(event_id)}/personal-time/{_seg(pt_id)}", json=body.payload())
 
     def delete_personal_time(self, event_id: str, pt_id: str) -> None:
         self._request("DeletePersonalTime", "DELETE",
-                      f"/v1/events/{event_id}/personal-time/{pt_id}")
+                      f"/v1/events/{_seg(event_id)}/personal-time/{_seg(pt_id)}")
 
     # ------------------------------------------------------------------ probes
 
@@ -273,6 +280,11 @@ class EventsClient:
             raise
         # A 204 would mean we held it. Treat as open but warn upstream.
         return True
+
+
+def _seg(value: str) -> str:
+    """One URL path segment. An id from the API or a user never adds or escapes a path segment."""
+    return urllib.parse.quote(value, safe="")
 
 
 def _check_batch(ids: list[str]) -> list[str]:

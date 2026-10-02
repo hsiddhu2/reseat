@@ -64,6 +64,12 @@ CREATE TABLE IF NOT EXISTS sweeps (
     with_abstracts INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS locks (
+    name  TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    ts    REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS journal (
     ts        REAL NOT NULL,
     event_id  TEXT NOT NULL,
@@ -223,6 +229,26 @@ class Store:
         r = self.db.execute("SELECT MAX(ts) AS ts FROM sweeps WHERE event_id=?",
                             (event_id,)).fetchone()
         return r["ts"] if r and r["ts"] else None
+
+    # ------------------------------------------------------------------ locks
+
+    def acquire_lock(self, name: str, owner: str, ttl: float = 300, now: float | None = None) -> bool:
+        """Advisory lock shared by every process using this database. False if someone holds it.
+
+        A lock older than `ttl` seconds is treated as left behind by a crashed process.
+        """
+        now = now or time.time()
+        try:
+            with self.db:
+                self.db.execute("DELETE FROM locks WHERE name=? AND ts<?", (name, now - ttl))
+                self.db.execute("INSERT INTO locks VALUES (?,?,?)", (name, owner, now))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def release_lock(self, name: str, owner: str) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM locks WHERE name=? AND owner=?", (name, owner))
 
     # ------------------------------------------------------------------ journal
 

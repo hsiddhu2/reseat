@@ -37,8 +37,9 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 ## What re:Seat does
 
-**Favorites** (planned)
-- `reseat favorites sync` mirrors every target sitting into favorites, so the official app shows the same plan. Works before 8 October, when reservations are still closed.
+**Favorites** (built)
+- `reseat favorites sync` mirrors every target sitting, and each backup's sittings, into favorites, so the official app shows the same plan. Works before 8 October, when reservations are still closed.
+- Skips sessions already favorited, sends 10 per call inside the quota, reports each failure, and reads back once at the end.
 
 **Book** (built)
 - Targets live in a rules file in priority order, with allowed repeats and backups. Each target has a fallback tree.
@@ -47,18 +48,26 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - Never holds two sittings of one talk. Never books over a held session, a meal in the rules or the daily cap.
 - Reads back `GetSchedule` after every write and journals request, response and read-back.
 
-**Watch** (planned)
-- Sweeps the catalog about once a minute without abstracts and records every seat band change.
-- Diffs each sweep to catch new sessions and new repeats, and books a target's new sitting the moment it appears.
+**Watch** (built)
+- `reseat watch` sweeps the catalog about once a minute without abstracts and records every seat band change. The interval has a 30-second floor.
+- Diffs each sweep to catch new sessions and new repeats, and books a target's new sitting the moment it appears. Planner imports list the sittings known on export day. A repeat added later still counts.
+- When a freed sitting overlaps a held session of a lower-priority target, it proposes a swap with a random plan id instead of booking. Plan ids expire after 10 minutes and work once. It never proposes cancelling a seat the rules do not cover.
+- A booking that fails for a reason that is not an answer about the seat, such as a 409 or a server error, is tried again on the next sweep.
+- Warns when a held session moves room, venue or time. It does not act.
+- The first sweep into an empty catalog is a baseline. Initial booking is `reseat book`.
+- Emits typed events (sweep, booked, proposed, swap, moved, error) to any subscriber. The CLI prints them. The phone page will subscribe the same way.
 
-**Swap** (planned)
-- Before replacing held session A with wanted session B, checks three things: B is fresh from `GetSession` and open, A has a fallback, and the attendee allowed auto-swap for this target or approves now.
-- Cancels A, reserves B at once, reads back. If B fails, re-reserves A. If A is gone, books A's fallback and alerts.
-- Ask first by default. Auto mode is opt-in per target.
+**Swap** (built)
+- Before replacing held session A with wanted session B, checks: B is fresh from `GetSession` and open, A has a fallback (A's own band open, or another sitting of A open and free of clashes), B repeats no held code and overlaps no held session but A, and the attendee allowed auto-swap for this target or approves now.
+- Cancels A, reserves B at once, reads back. If B fails, re-reserves A. If A is gone, tries each fallback once and prints a loud alert with what is held now. If a read-back fails mid-swap, it sends nothing more and says the state is unknown.
+- States: proposed, checked, cancelled, reserved, verified, rolled back, failed. Every step is journaled before and after the call. One swap in flight at a time, across processes.
+- Ask first by default. Auto mode is opt-in per target. `reseat swap <held> <wanted>` and the watcher use the same code.
 
-**Guard** (planned)
-- Writes a leave-now block into personal time for each held session, from venue walking times, an 11-minute cutoff and the attendee's buffer.
-- Queue or go: for a session not held, advice from session type, improved by band history. Presented as a heuristic, never a prediction.
+**Guard** (built)
+- `reseat guard sync` writes a 5-minute leave-now block into personal time for each held session, from venue walking times, an 11-minute cutoff and the attendee's buffer. The first walk of a day starts at `home_venue` from the rules file.
+- Creates, updates or deletes blocks to match current holds. A second run sends nothing. It only touches entries tagged `[reseat]`.
+- Warns when the walk between two held sessions is longer than the gap.
+- Queue or go: for a session not held, advice from session type, overridden by that session's band history once it has three changes. Presented as a heuristic with its basis, never a prediction. The phone page will show it.
 
 **Phone remote** (planned)
 - The token never leaves the laptop, because the API only allows sign-in on the attendee's own machine. So the laptop runs the watcher and serves a small page that the phone opens, over Tailscale or the hotel Wi-Fi.
@@ -68,7 +77,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - On site the laptop checks today's sessions every 20 seconds, at most 40 of them, inside the 120 per minute quota.
 
 **Interfaces**
-- CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `probe`, `rules`, `book`, `cancel`.
+- CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `favorites sync`, `probe`, `rules`, `book`, `cancel`, `watch`, `swap`, `guard sync`.
 - Phone page (planned), as above.
 - Local MCP server (planned): an agent proposes changes, the human approves.
 
@@ -78,17 +87,17 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 | Component | Status | Responsibility |
 |---|---|---|
-| Auth | built | PKCE on port 8484, fallback to 8489. OS keychain. Refresh once on 401. Sign-out with revoke. |
+| Auth | built | PKCE on port 8484, fallback to 8489. OS keychain. Refresh once on 401. Sign-out with revoke. The token is only ever sent to `https://api.awsevents.com`. |
 | API client | built | Typed models that mirror the OpenAPI spec. Quota tracker per operation. Honors `Retry-After` once. Per-session failures as typed results. |
 | Catalog store | built | SQLite. Full sync, then cheap sweeps. Added, removed and moved sessions. Band history. Write journal. |
 | Campus | built | The 2026 venues, a walking-time table, Las Vegas to UTC conversion. |
 | Rules | built | `~/.reseat/rules.yaml`, import from reinvent-planner.cloud exports, validation against the catalog. |
 | Order router | built | Priority, quota, fallback trees, scarcity ordering, read-back. |
 | Cancel | built | `GetSession` first, ask first, one DELETE, read-back. |
-| Watcher | planned | Sweep loop. Emits band-change and new-session events to the router. |
-| Safe swap | planned | State machine: proposed, checked, cancelled, reserved, verified, rolled back. |
-| Cutoff guard | planned | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
-| Favorites sync | planned | Mirror target sittings into favorites, read back. |
+| Watcher | built | Sweep loop. Books freed and new sittings through the router. Proposes swaps. Typed events to subscribers. |
+| Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
+| Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
+| Favorites sync | built | Mirror target sittings into favorites, read back. |
 | Phone remote | planned | Local HTTP server, phone page, approve by plan id, optional push. |
 
 ## Key flows
@@ -99,10 +108,10 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 3. On `sessionFull` walk the fallback tree. On `scheduleConflict` record `conflictsWith` and move on.
 4. Read back. Report what landed, what failed and why.
 
-**A seat frees up** (planned)
-1. A sweep shows a target moved from `unavailable` to an open band.
+**A seat frees up** (built)
+1. A sweep shows a target moved from `unavailable` to an open band, or a new sitting of a target appeared.
 2. If the slot is free, reserve and read back.
-3. If the slot holds a lower-priority session, run the safe swap.
+3. If the slot holds a lower-priority target's session, propose a swap. Run it at once only if the target allows auto-swap.
 
 ## API operations used
 
@@ -113,5 +122,5 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | GetSession | Fresh check before any cancel or swap. |
 | GetSchedule | Read-back after every write. Source of truth. |
 | ReserveSessions, CancelReservation | Booking, fallback trees, cancel, swap. |
-| AssociateFavorites, DisassociateFavorite | Favorites from the CLI. |
-| Create, Update, DeletePersonalTime | Leave-now blocks (planned). |
+| AssociateFavorites, DisassociateFavorite | Favorites sync and the `favorite` command. |
+| Create, Update, DeletePersonalTime | Leave-now blocks. |

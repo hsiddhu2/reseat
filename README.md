@@ -4,7 +4,7 @@ re:Seat keeps your AWS re:Invent seats. From the day API writes open until the l
 
 Built on the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). Runs on your own machine. Your tokens stay in your OS keychain.
 
-**Status: week two.** Sign-in, catalog sync, change detection, favorites, schedule views, the rules file and the order router work today against the fake API. Reservation writes open through the API on 8 October 2026.
+**Status: week three.** Sign-in, catalog sync, the rules file, booking with fallback, favorites sync, the watcher, safe swap and leave-now blocks work today against the fake API. Reservation writes open through the API on 8 October 2026.
 
 ## Why
 
@@ -60,6 +60,10 @@ reseat rules check                 # every code resolves in the local catalog?
 reseat book --dry-run              # sweep, then print the plan. Sends nothing
 reseat book                        # reserve, fall back on full sessions, read back. --yes skips the confirmation
 reseat cancel <sessionId>          # shows the seat band, asks first, reads back
+reseat favorites sync              # mirror every target sitting into favorites. Works before 8 October
+reseat watch                       # sweep every minute, book freed seats and new repeats. --once for cron
+reseat swap <held> <wanted>        # replace a held session safely: fallback checked, rolls back on failure
+reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
 reseat logout
 ```
 
@@ -79,6 +83,7 @@ meals:
   - {day: Tuesday, start: "12:00", end: "13:00"}
 max_per_day: 5
 watch_cap: 25
+home_venue: Venetian      # where the first walk of each day starts
 ```
 
 The first target wins a time slot. Within a batch, formats that are not recorded go first, because they fill first: Workshop, Lab and Bootcamp, then Builders' session, Chalk talk, Code talk, Breakout session, then the rest.
@@ -116,9 +121,9 @@ Tests run against an in-process fake of the API that produces every documented f
 
 ## Status
 
-- Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites, schedule.
-- Next: live booking when API writes open on 8 October 2026, then the watcher, safe swap and cutoff guard.
-- Later: phone remote (`reseat serve`, a page the phone opens while the laptop does the work), local MCP server.
+- Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites sync, watcher with new-repeat booking and swap proposals, safe swap, leave-now blocks and queue-or-go advice.
+- Next: live booking when API writes open on 8 October 2026, then the phone remote: `reseat serve`, a page the phone opens while the laptop does the work.
+- Later: local MCP server, hardening.
 
 ## License
 

@@ -1,6 +1,6 @@
 import pytest
 
-from reseat.client import NotRegistered, OperationClosed, QuotaTracker, Throttled
+from reseat.client import AuthRequired, EventsClient, NotRegistered, OperationClosed, QuotaTracker, Throttled
 from reseat.models import FailureCode, PersonalTimeInput
 
 
@@ -163,3 +163,25 @@ def test_personal_time_rejects_bad_length(fake, client):
     with pytest.raises(ApiError) as e:
         client.create_personal_time("reinvent2026", body)
     assert e.value.status == 400
+
+
+def test_token_is_never_sent_to_another_host(fake):
+    other = EventsClient(token_provider=lambda: fake.token, base_url="https://evil.example.com",
+                         transport=fake.transport())
+    with pytest.raises(AuthRequired, match="Refusing to send the access token"):
+        other.get_schedule("reinvent2026")
+    assert fake.counts.get("GetSchedule", 0) == 0
+    assert other.list_events()                     # no token needed, still works
+
+
+def test_ids_cannot_escape_their_path_segment(fake):
+    import httpx
+    sent = []
+
+    def capture(req):
+        sent.append(req.url.raw_path)
+        return fake._handle(req)
+
+    c = EventsClient(token_provider=lambda: fake.token, transport=httpx.MockTransport(capture))
+    c.delete_personal_time("reinvent2026", "../../schedule")
+    assert sent == [b"/v1/events/reinvent2026/personal-time/..%2F..%2Fschedule"]
