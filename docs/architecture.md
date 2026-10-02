@@ -2,7 +2,7 @@
 
 re:Seat manages an attendee's AWS re:Invent seats after the plan is made. It watches for freed seats and newly added repeat sessions, books them within the attendee's rules, upgrades held seats without losing one, and tells the attendee when to leave and whether to queue.
 
-It runs on the attendee's own machine against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). It keeps a journal of every write and its result. The CLI, a local MCP server and a week view all drive the same engine.
+It runs on the attendee's own machine against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). It keeps a journal of every write and its result. The CLI, a phone page served from the laptop, and a local MCP server all drive the same engine.
 
 Status as of 2 October 2026 is marked on each part below: **built** means it is in this repo and tested against the fake API, **planned** means it is not written yet.
 
@@ -37,6 +37,9 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 ## What re:Seat does
 
+**Favorites** (planned)
+- `reseat favorites sync` mirrors every target sitting into favorites, so the official app shows the same plan. Works before 8 October, when reservations are still closed.
+
 **Book** (built)
 - Targets live in a rules file in priority order, with allowed repeats and backups. Each target has a fallback tree.
 - Books in batches of up to 10 inside the 30 per minute budget. On `sessionFull` it moves to the target's next sitting in the same run.
@@ -57,10 +60,17 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - Writes a leave-now block into personal time for each held session, from venue walking times, an 11-minute cutoff and the attendee's buffer.
 - Queue or go: for a session not held, advice from session type, improved by band history. Presented as a heuristic, never a prediction.
 
+**Phone remote** (planned)
+- The token never leaves the laptop, because the API only allows sign-in on the attendee's own machine. So the laptop runs the watcher and serves a small page that the phone opens, over Tailscale or the hotel Wi-Fi.
+- `reseat serve` listens on `127.0.0.1:8490` by default. Binding to the network needs a shared secret. The phone opens a one-time link that sets a cookie and redirects to a clean URL.
+- The page shows today's held sessions, a leave-now countdown, queue-or-go advice and proposed swaps with Approve and Skip. Approve takes a plan id that expires after 10 minutes. No endpoint accepts a raw session id.
+- Optional push through ntfy, off unless a topic is set. Messages carry session codes, titles and the event type only.
+- On site the laptop checks today's sessions every 20 seconds, at most 40 of them, inside the 120 per minute quota.
+
 **Interfaces**
 - CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `probe`, `rules`, `book`, `cancel`.
+- Phone page (planned), as above.
 - Local MCP server (planned): an agent proposes changes, the human approves.
-- Week view and ICS export (planned).
 
 ## Architecture
 
@@ -78,6 +88,8 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Watcher | planned | Sweep loop. Emits band-change and new-session events to the router. |
 | Safe swap | planned | State machine: proposed, checked, cancelled, reserved, verified, rolled back. |
 | Cutoff guard | planned | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
+| Favorites sync | planned | Mirror target sittings into favorites, read back. |
+| Phone remote | planned | Local HTTP server, phone page, approve by plan id, optional push. |
 
 ## Key flows
 

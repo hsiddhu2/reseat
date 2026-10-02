@@ -118,7 +118,7 @@ Tests run against an in-process fake of the API that produces every documented f
 
 - Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites, schedule.
 - Next: live booking when API writes open on 8 October 2026, then the watcher, safe swap and cutoff guard.
-- Later: on-site mode, week view, local MCP server.
+- Later: phone remote (`reseat serve`, a page the phone opens while the laptop does the work), local MCP server.
 
 ## License
 
