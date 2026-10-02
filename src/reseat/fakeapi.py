@@ -6,7 +6,7 @@ error bodies and per-session bulk results. Faults can be scripted per session:
     fake.full.add("S1")                 -> reserve S1 returns sessionFull
     fake.closed = True                  -> all writes return 409
     fake.throttle_next("ReserveSessions", retry_after=3)
-    fake.fail_next("ReserveSessions", 503)  -> one 5xx, nothing applied
+    fake.fail_next("ReserveSessions", 503)  -> one 5xx, nothing applied. times=3 for a storm
     fake.ghost.add("S1")                -> reserve or favorite says successful, GetSchedule omits S1
     fake.refuse["S1"] = "seatHeldByCrew" -> any failure code on reserve or favorite, known or not
     fake.schedule.reserved.add("S9")    -> conflicts computed from session times
@@ -53,7 +53,7 @@ class FakeEventsApi:
         self.ghost: set[str] = set()   # reported successful, never stored
         self.refuse: dict[str, str] = {}  # session -> any failure code, known or not
         self._throttle: dict[str, int] = {}
-        self._fail: dict[str, int] = {}
+        self._fail: dict[str, tuple[int, int]] = {}
         self.calls: list[tuple[str, str]] = []
         self.params: list[tuple[str, dict[str, str]]] = []
         self.counts: dict[str, int] = defaultdict(int)
@@ -71,8 +71,9 @@ class FakeEventsApi:
     def throttle_next(self, op: str, retry_after: int = 5) -> None:
         self._throttle[op] = retry_after
 
-    def fail_next(self, op: str, status: int = 503) -> None:
-        self._fail[op] = status
+    def fail_next(self, op: str, status: int = 503, times: int = 1) -> None:
+        """The next `times` calls to `op` return `status`, with nothing applied."""
+        self._fail[op] = (status, times)
 
     def transport(self) -> httpx.BaseTransport:
         return httpx.MockTransport(self._handle)
@@ -119,7 +120,12 @@ class FakeEventsApi:
             ra = self._throttle.pop(op)
             return self._err(429, "ThrottlingException", headers={"Retry-After": str(ra)})
         if op in self._fail:
-            return self._err(self._fail.pop(op), "Service unavailable. Back off and retry.")
+            status, left = self._fail[op]
+            if left <= 1:
+                del self._fail[op]
+            else:
+                self._fail[op] = (status, left - 1)
+            return self._err(status, "Service unavailable. Back off and retry.")
 
         needs_auth = op not in ("ListEvents", "GetEvent")
         if needs_auth and self.require_auth:

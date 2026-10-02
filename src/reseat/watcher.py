@@ -14,6 +14,13 @@ The first sweep into an empty catalog is a baseline. It records state and acts
 on nothing, so the watcher never mistakes the whole catalog for new sessions.
 Initial booking is `reseat book`.
 
+Outages. The laptop runs all week in a hotel room, so the loop never ends
+on a lost connection, a timeout or a 5xx. The retry delay doubles from the normal
+interval up to 5 minutes and drops back to the normal interval on recovery. Each
+outage is journaled. After 10 minutes down an `offline` event fires, and `back`
+on recovery, for push. A failed token refresh fires `signin` and switches to
+read-only: nothing is booked or approved until a sweep succeeds again.
+
 Proposals live in memory with a random plan id and expire after 10 minutes. An
 expired proposal is raised again only when that sitting changes again. Approval
 goes through `approve(plan_id)`, never through raw session ids.
@@ -43,7 +50,8 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
-from .client import ApiError, EventsClient
+from .auth import AuthError
+from .client import ApiError, AuthRequired, EventsClient, Throttled
 from .router import Router, run_booking
 from .rules import Rules
 from .store import Store
@@ -51,13 +59,16 @@ from .store import Store
 MIN_INTERVAL = 30
 DEFAULT_INTERVAL = 60
 PROPOSAL_TTL = 600   # seconds a proposed plan id stays valid
+BACKOFF_CAP = 300    # longest wait between sweeps during an outage
+OFFLINE_AFTER = 600  # seconds down before the offline event
 
 
 class WatchError(Exception):
     """The watcher cannot start. The message says what to fix."""
 
 
-EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error"]
+EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
+                    "outage", "offline", "back", "signin"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 
@@ -94,6 +105,7 @@ class TickResult:
     booked: list[str] = field(default_factory=list)
     proposals: list[Proposal] = field(default_factory=list)
     error: str | None = None
+    failure: str | None = None   # outage | auth | other, when the sweep itself failed
 
     def line(self) -> str:
         when = time.strftime("%H:%M:%S", time.localtime(self.at))
@@ -125,6 +137,10 @@ class Watcher:
         self.proposals: dict[str, Proposal] = {}
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
+        self.read_only = False
+        self._down_since: float | None = None
+        self._down_ticks = 0
+        self._offline_sent = False
         self._subscribers: list[Subscriber] = []
         self.subscriber_errors: deque[str] = deque(maxlen=100)
 
@@ -161,6 +177,9 @@ class Watcher:
 
         Returns the swapper's result, or None for an unknown, used or expired plan id.
         """
+        if self.read_only:
+            self._emit("error", message="Sign in needed. Nothing can be approved until then.")
+            return None
         p = self.take(plan_id)
         if p is None or self.swapper is None:
             return None
@@ -181,19 +200,61 @@ class Watcher:
                 self._emit("error", message=f"tick failed: {type(e).__name__}: {e}")
             n += 1
             if max_ticks is None or n < max_ticks:
-                self.sleep(self.interval)
+                self.sleep(self.next_delay())
+
+    def next_delay(self) -> float:
+        """Normal interval, or during an outage doubling from it up to 5 minutes."""
+        if self._down_since is None:
+            return self.interval
+        return float(min(self.interval * 2 ** (self._down_ticks - 1), BACKOFF_CAP))
 
     def tick(self) -> TickResult:
         now = self.clock()
         res = TickResult(at=now)
         try:
             self._tick(res, now)
+        except (AuthError, AuthRequired) as e:
+            res.failure = "auth"
+            self._problem(res, f"Sign in needed: {e}")
+        except (httpx.TransportError, Throttled) as e:
+            res.failure = "outage"
+            self._problem(res, f"{type(e).__name__}: {e}")
+        except ApiError as e:
+            res.failure = "outage" if e.status >= 500 else "other"
+            self._problem(res, f"{e.status} {e}")
         except _ERRORS as e:
-            self._problem(res, f"{getattr(e, 'status', type(e).__name__)} {e}")
+            res.failure = "other"
+            self._problem(res, f"{type(e).__name__}: {e}")
+        self._track(res, now)
         self._emit("sweep", count=res.count, added=len(res.added), opened=len(res.opened),
                    moved=len(res.moved), booked=len(res.booked), proposed=len(res.proposals),
                    error=res.error)
         return res
+
+    def _track(self, res: TickResult, now: float) -> None:
+        """Outage and sign-in state across ticks. Journaled so the attendee can see what happened."""
+        if res.failure == "auth" and not self.read_only:
+            self.read_only = True
+            self.store.journal(self.event_id, "watcher.signin", None, {"error": res.error}, "needed")
+            self._emit("signin", state="needed", message="Sign in needed. Run reseat login on the laptop. "
+                       "Reads only until then.")
+        if res.failure == "outage":
+            if self._down_since is None:
+                self._down_since, self._down_ticks, self._offline_sent = now, 0, False
+                self.store.journal(self.event_id, "watcher.outage", None, {"error": res.error}, "start")
+                self._emit("outage", since=now, message=res.error)
+            self._down_ticks += 1
+            if not self._offline_sent and now - self._down_since >= OFFLINE_AFTER:
+                self._offline_sent = True
+                since = time.strftime("%H:%M", time.localtime(self._down_since))
+                self._emit("offline", since=self._down_since, message=f"re:Seat offline since {since}")
+        elif self._down_since is not None and res.failure is None:
+            minutes = int((now - self._down_since) // 60)
+            self.store.journal(self.event_id, "watcher.outage", None,
+                               {"minutes": minutes, "ticks": self._down_ticks}, "end")
+            self._emit("back", since=self._down_since, minutes=minutes, announced=self._offline_sent,
+                       message="re:Seat back")
+            self._down_since, self._down_ticks, self._offline_sent = None, 0, False
 
     def _problem(self, res: TickResult, message: str) -> None:
         res.error = f"{res.error}; {message}" if res.error else message
@@ -202,6 +263,10 @@ class Watcher:
     def _tick(self, res: TickResult, now: float) -> None:
         baseline = self.store.last_sweep(self.event_id) is None
         sessions = list(self.client.iter_sessions(self.event_id, include_abstracts=False))
+        if self.read_only:             # an authenticated read just worked: signed in again
+            self.read_only = False
+            self.store.journal(self.event_id, "watcher.signin", None, None, "ok")
+            self._emit("signin", state="ok", message="Signed in again. Booking resumes.")
         # Read the schedule before saving the sweep. If it fails, the changes stay
         # unsaved and the next tick sees them again, so no opening is lost.
         held = set() if baseline else set(self.client.get_schedule(self.event_id).reserved)

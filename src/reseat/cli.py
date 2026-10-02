@@ -465,6 +465,12 @@ def _print_watch_event(ev: WatchEvent) -> None:
                   f"{b.get('room')} -> {a.get('date')} {a.get('time')} {a.get('room')}")
     elif ev.kind == "error":
         con.print(f"  [red]{d['message']}[/red]")
+    elif ev.kind in ("outage", "offline"):
+        con.print(f"  [yellow]{ev.kind}: {d['message']}[/yellow]")
+    elif ev.kind == "back":
+        con.print(f"  [green]back after {d['minutes']} min[/green]")
+    elif ev.kind == "signin":
+        con.print(f"  [{'red' if d['state'] == 'needed' else 'green'}]{d['message']}[/]")
 
 
 @app.command()

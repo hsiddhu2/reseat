@@ -55,7 +55,9 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - A booking that fails for a reason that is not an answer about the seat, such as a 409 or a server error, is tried again on the next sweep.
 - Warns when a held session moves room, venue or time. It does not act.
 - The first sweep into an empty catalog is a baseline. Initial booking is `reseat book`.
-- Emits typed events (sweep, booked, proposed, swap, moved, error) to any subscriber. The CLI prints them. The phone page will subscribe the same way.
+- Survives outages. A refused connection, a timeout or any 5xx never ends the loop. The wait between sweeps doubles from the normal interval up to 5 minutes and drops back on recovery. A sweep that fails halfway is not saved, so no opening is lost. Each outage is journaled.
+- After 10 minutes down it reports `offline`, and `back` on recovery. A failed token refresh reports `signin` once and switches to read-only until a sweep works again.
+- Emits typed events (sweep, booked, proposed, swap, moved, error, outage, offline, back, signin) to any subscriber. The CLI prints them. The phone page will subscribe the same way.
 
 **Swap** (built)
 - Before replacing held session A with wanted session B, checks: B is fresh from `GetSession` and open, A has a fallback (A's own band open, or another sitting of A open and free of clashes), B repeats no held code and overlaps no held session but A, and the attendee allowed auto-swap for this target or approves now.
@@ -75,6 +77,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - The page shows today's held sessions, a leave-now countdown, queue-or-go advice and proposed swaps with Approve and Skip. Approve takes a plan id that expires after 10 minutes. No endpoint accepts a raw session id.
 - Optional push through ntfy, off unless a topic is set. Messages carry session codes, titles and the event type only.
 - On site the laptop checks today's sessions every 20 seconds, at most 40 of them, inside the 120 per minute quota.
+- Designed for a laptop left in the hotel room, plugged in and awake, reached from the phone over Tailscale. See "Running it all week" in the README.
 
 **Interfaces**
 - CLI (built): `login`, `whoami`, `sync`, `search`, `show`, `schedule`, `favorite`, `favorites sync`, `probe`, `rules`, `book`, `cancel`, `watch`, `swap`, `guard sync`.
