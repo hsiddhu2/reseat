@@ -62,6 +62,7 @@ class SwapResult:
     fallbacks: list[str] = field(default_factory=list)
     held_now: list[str] = field(default_factory=list)
     alert: str | None = None
+    closed: bool = False      # the API answered 409: writes are closed, nothing changed
 
     @property
     def fallback_id(self) -> str | None:
@@ -180,6 +181,7 @@ class Swap:
         try:
             self.client.cancel(self.event_id, a)
         except OperationClosed:
+            res.closed = True
             self._go(res, "failed", {"cancel": 409})
             res.alert = f"Writes are closed (409). Nothing changed. {a} is still held."
             res.held_now = self._held() or []
@@ -202,6 +204,15 @@ class Swap:
             self._go(res, "reserved", response)
             self._go(res, "verified")
             res.held_now = self._held() or []
+            return res
+        if res.closed:
+            # Writes closed between the cancel and the reserve. Every further write would get the
+            # same 409, so none is sent. A is released. Say exactly that.
+            self._go(res, "failed", {"reserve": 409})
+            res.held_now = self._held() or []
+            res.alert = (f"SWAP STOPPED. Reservation writes closed (409) right after {a} was cancelled. "
+                         f"{a} is released and {b} was not reserved. Nothing more was sent. Reserve {a} "
+                         "again when writes reopen.")
             return res
 
         landed, response = self._reserve(res, a, "rollback")
@@ -243,6 +254,9 @@ class Swap:
         response: object
         try:
             response = self.client.reserve(self.event_id, [sid]).model_dump(by_alias=True)
+        except OperationClosed as e:
+            res.closed = True                 # writes were switched off mid-swap
+            response = {"status": 409, "message": str(e)}
         except ApiError as e:
             response = {"status": e.status, "message": str(e)}
         held = self._held()

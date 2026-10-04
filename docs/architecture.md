@@ -52,7 +52,9 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - `reseat watch` sweeps the catalog about once a minute without abstracts and records every seat band change. The interval has a 30-second floor.
 - Diffs each sweep to catch new sessions and new repeats, and books a target's new sitting the moment it appears. Planner imports list the sittings known on export day. A repeat added later still counts.
 - When a freed sitting overlaps a held session of a lower-priority target, it proposes a swap with a random plan id instead of booking. Plan ids expire after 10 minutes and work once. It never proposes cancelling a seat the rules do not cover.
-- A booking that fails for a reason that is not an answer about the seat, such as a 409 or a server error, is tried again on the next sweep.
+- A booking that fails for a reason that is not an answer about the seat, such as a server error, is tried again on the next sweep.
+- A 409 means writes are switched off. The watcher keeps sweeping and keeps every opening queued, but sends no reserve and runs no swap for 15 minutes, then tries once. With a `probe_session` that can never be held, it checks every minute and resumes the moment writes open. It reports paused and resumed once each, and push carries both. A 409 between a swap's cancel and its reserve stops the swap at once and says the released seat needs reserving again.
+- It proposes a swap only when replacing that one held seat would free the slot, so it never proposes a swap that cannot run.
 - Warns when a held session moves room, venue or time. It does not act.
 - The first sweep into an empty catalog is a baseline. Initial booking is `reseat book`.
 - Survives outages. A refused connection, a timeout or any 5xx never ends the loop. The wait between sweeps doubles from the normal interval up to 5 minutes and drops back on recovery. A sweep that fails halfway is not saved, so no opening is lost. Each outage is journaled.
@@ -119,6 +121,10 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 1. A sweep shows a target moved from `unavailable` to an open band, or a new sitting of a target appeared.
 2. If the slot is free, reserve and read back.
 3. If the slot holds a lower-priority target's session, propose a swap. Run it at once only if the target allows auto-swap.
+
+## How it is tested
+
+Every test runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409 while writes are closed, 429 with `Retry-After`, 5xx, dropped connections, expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real per-operation quotas enforced. It checks that no request exceeds a quota, no state holds two sittings of one talk, only sessions the rules ask for are held, and every reservation write is read back. Checks run against the real API are in [proof/](proof/).
 
 ## API operations used
 

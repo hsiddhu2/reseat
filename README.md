@@ -88,6 +88,7 @@ watch_cap: 25
 home_venue: Venetian      # where the first walk of each day starts
 serve_secret: <long random string>   # needed for the phone page off this laptop
 ntfy_topic: <random 16 to 64 characters>   # optional push
+probe_session: <id of a session that takes no reservations>   # resume the moment writes open
 ```
 
 The first target wins a time slot. Within a batch, formats that are not recorded go first, because they fill first: Workshop, Lab and Bootcamp, then Builders' session, Chalk talk, Code talk, Breakout session, then the rest.
@@ -112,6 +113,8 @@ It prints a one-time link. Open it on the phone once. It sets a cookie and the a
 **Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Open the printed link with the laptop's Tailscale name in place of its local name, for example `http://my-laptop:8490/open?k=...`. The phone then reaches the laptop from any venue. To keep the page off the hotel network entirely, use `--host` with the laptop's Tailscale address instead of `0.0.0.0`.
 
 **Push, if you want it.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. The laptop posts to `https://ntfy.sh/<topic>` when a seat is booked, a swap is proposed, done or rolled back, it is time to leave, the API has been unreachable for 10 minutes, it is back, or sign-in is needed. What leaves the laptop: the event type, session codes and titles, and those status lines. Never your token, an abstract, a session id or a plan id. Push is off unless the topic is set.
+
+**When writes are switched off.** A 409 means the API has reservation writes turned off, and retrying will not help until they are back. re:Seat keeps watching and keeps every opening queued, but sends no reserve and runs no swap. It tries once after 15 minutes. With `probe_session` set to a session that takes no reservations, it checks every minute instead and resumes the moment writes open. Push says "Booking paused" and "Booking resumed".
 
 **On site.** During the event days the laptop also checks the day's held and wanted sessions every 20 seconds, at most 40 of them, so a seat freed by a no-show is booked while you are in the walk-up line.
 
@@ -157,7 +160,7 @@ pytest
 ruff check .
 ```
 
-Tests run against an in-process fake of the API that produces every documented failure: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
+A fault storm runs the whole flow for an hour on the real catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, quotas enforced. Tests run against an in-process fake of the API that produces every documented failure: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
 
 `tests/fixtures/catalog-2026-10-01.json` is a real catalog pull (no abstracts, no speaker names). `FakeEventsApi.from_fixture(path)` serves it, so tests see the real venue, room and type strings.
 
@@ -170,7 +173,7 @@ Tests run against an in-process fake of the API that produces every documented f
 
 - Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites sync, watcher with new-repeat booking, swap proposals and outage handling, safe swap, leave-now blocks, queue-or-go advice, the phone page with push, the local MCP server.
 - Next: live booking when API writes open on 8 October 2026.
-- Later: a fault storm against the fake, demo recordings, hardening.
+- Later: demo recordings, the write-up. Live checks against the real API are collected in [docs/proof](docs/proof/).
 
 ## License
 

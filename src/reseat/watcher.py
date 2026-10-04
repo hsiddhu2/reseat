@@ -21,6 +21,14 @@ outage is journaled. After 10 minutes down an `offline` event fires, and `back`
 on recovery, for push. A failed token refresh fires `signin` and switches to
 read-only: nothing is booked or approved until a sweep succeeds again.
 
+Writes closed. A 409 means the API is "intentionally disabled" for writes and
+retrying will not help until it is re-enabled. So after a 409 the watcher keeps
+sweeping and keeps every opening queued, but sends no reserve and runs no swap for
+15 minutes, then tries once. With `probe_session` set it checks every tick with
+EventsClient.writes_open() on that session, which can never be held, and resumes
+the moment writes open. It emits one `writes` event when writes close and one when
+they open again.
+
 Proposals live in memory with a random plan id and expire after 10 minutes. An
 expired proposal is raised again only when that sitting changes again. Approval
 goes through `approve(plan_id)`, never through raw session ids.
@@ -53,6 +61,7 @@ import httpx
 from pydantic import ValidationError
 
 from .auth import AuthError
+from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, NetworkError, Throttled
 from .router import Router, run_booking
 from .rules import Rules
@@ -64,6 +73,7 @@ PROPOSAL_TTL = 600   # seconds a proposed plan id stays valid
 BACKOFF_CAP = 300    # longest wait between sweeps during an outage
 ONSITE_EVERY = 20    # seconds between on-site GetSession polls
 ONSITE_CAP = 40      # sessions polled on site: 40 x 3 a minute stays inside GetSession's 120
+CLOSED_RECHECK = 900  # after a 409, wait this long before sending another write
 OFFLINE_AFTER = 600  # seconds down before the offline event
 
 
@@ -76,7 +86,7 @@ class ApprovalFailed(Exception):
 
 
 EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
-                    "outage", "offline", "back", "signin", "leave"]
+                    "outage", "offline", "back", "signin", "leave", "writes"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 
@@ -148,6 +158,8 @@ class Watcher:
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
         self._cap_warned: str | None = None
+        self.writes_closed_until: float | None = None
+        self._closed_announced = False
         self.read_only = False
         self._down_since: float | None = None
         self._down_ticks = 0
@@ -188,7 +200,11 @@ class Watcher:
         with self._lock:
             now = self.clock()
             for pid in [p for p, x in self.proposals.items() if x.expired(now)]:
-                del self.proposals[pid]
+                gone = self.proposals.pop(pid)
+                if self._closed_announced:
+                    # It expired while writes were closed, so it could not be approved.
+                    # Queue its sitting so it is proposed again once that is possible.
+                    self._retry.add(gone.wanted_id)
             return list(self.proposals.values())
 
     def take(self, plan_id: str) -> Proposal | None:
@@ -208,6 +224,10 @@ class Watcher:
         if self.read_only:
             self._keep(p)
             raise ApprovalFailed("Sign in needed on the laptop. Nothing was sent. The proposal is kept.")
+        if self._writes_closed():
+            self._keep(p)
+            raise ApprovalFailed("Reservation writes are closed (409) right now. Nothing was sent. "
+                                 "The proposal is kept.")
         outcome = self._swap(p, approved=True)
         if outcome is None:
             self._keep(p)
@@ -431,6 +451,42 @@ class Watcher:
             self.store.journal(self.event_id, "watcher.signin", None, None, "ok")
             self._emit("signin", state="ok", message="Signed in again. Booking resumes.")
 
+    def _writes_closed(self) -> bool:
+        if self.writes_closed_until is None:
+            return False
+        now = self.clock()
+        # A clock that jumped backwards must not stretch the hold past one recheck.
+        self.writes_closed_until = min(self.writes_closed_until, now + CLOSED_RECHECK)
+        return now < self.writes_closed_until
+
+    def _closed(self, now: float) -> None:
+        """A 409 arrived. Hold reserves and swaps for CLOSED_RECHECK seconds. Say so once."""
+        self.writes_closed_until = now + CLOSED_RECHECK
+        if not self._closed_announced:
+            self._closed_announced = True
+            self.store.journal(self.event_id, "watcher.writes", None, {"status": 409}, "closed")
+            self._emit("writes", state="closed", message="Booking paused: reservation writes are closed "
+                       "(409). re:Seat keeps watching and keeps every opening queued.")
+
+    def _opened(self) -> None:
+        """A write was answered by the API without a 409: writes are open."""
+        self.writes_closed_until = None
+        if self._closed_announced:
+            self._closed_announced = False
+            self.store.journal(self.event_id, "watcher.writes", None, None, "open")
+            self._emit("writes", state="open", message="Booking resumed: reservation writes are open.")
+
+    def _probe(self, held: set[str]) -> None:
+        """During a hold, ask the API whether writes are open, with a session that cannot be held."""
+        sid = self.rules.probe_session
+        if not sid or not self._writes_closed() or sid in held:
+            return
+        try:
+            if self.client.writes_open(self.event_id, sid):
+                self._opened()
+        except ApiError:
+            pass                                     # unclear answer: keep the hold
+
     def _act(self, changed: list[str], held: set[str], res: TickResult, now: float) -> None:
         """Book or propose for target sittings that opened or appeared, plus any retries."""
         prio = self._priorities()
@@ -438,7 +494,17 @@ class Watcher:
         candidates = [s for s in dict.fromkeys(changed + sorted(retry)) if s in prio]
         if not candidates:
             return
+        self._probe(held)
+        if self._writes_closed():
+            # Nothing is sent until the recheck time. Proposals for the phone are still made,
+            # because making one sends nothing. Auto swaps wait.
+            self._propose(candidates, held, prio, res, now)
+            self._retry |= set(candidates)
+            return
         self._propose(candidates, held, prio, res, now)
+        if self._writes_closed():                   # an auto swap just met a 409
+            self._retry |= set(candidates)
+            return
         run = run_booking(self.router, self.client, self.store, self.event_id, held, candidates=candidates)
         if run.schedule is not None:
             self.last_held = set(run.schedule.reserved)
@@ -453,9 +519,12 @@ class Watcher:
             # Full, conflict and other refusals are answers, so they are not carried over.
             answered = {o.session_id for o in run.outcomes
                         if o.status not in ("not_sent",) and o.code is not None}
-            self._retry = {c for c in candidates if c not in answered} - set(res.booked)
+            self._retry |= {c for c in candidates if c not in answered} - set(res.booked)
         if run.closed:
-            self._problem(res, "Reservation writes are closed (409). Nothing was reserved.")
+            res.error = res.error or "Reservation writes are closed (409). Nothing was reserved."
+            self._closed(now)
+        elif any(not ex.error and not ex.closed and ex.schedule is not None for ex in run.executions):
+            self._opened()                          # the API answered a write: writes are open
         for ex in run.executions:
             if ex.error and not ex.closed:
                 self._problem(res, f"Reserve failed: {ex.error}")
@@ -486,7 +555,11 @@ class Watcher:
             mine = index[sk.target]    # the target that wanted this sitting, not the first tree holding it
             if prio[blocker] <= mine or (blocker, sk.session_id) in open_pairs:
                 continue
+            if self._other_clashes(sk.session_id, blocker, held):
+                continue      # replacing the blocker alone would not free the slot: the swap could never run
             t = self.rules.targets[mine]
+            if t.auto_swap and self._writes_closed():
+                continue          # an auto swap waits out the hold. The opening stays queued.
             p = Proposal(secrets.token_urlsafe(16), t.label, blocker, sk.session_id, now,
                          now + PROPOSAL_TTL, t.auto_swap)
             with self._lock:
@@ -495,13 +568,30 @@ class Watcher:
             res.proposals.append(p)
             self._emit("proposed", plan_id=p.plan_id, target=p.target, held_id=blocker,
                        wanted_id=sk.session_id, auto=p.auto, expires=p.expires)
-            if p.auto and self.swapper:
+            if p.auto and self.swapper and not self._writes_closed():
                 with self._lock:
                     self.proposals.pop(p.plan_id, None)
                 if self._swap(p, approved=True) is None:
                     with self._lock:
                         self.proposals[p.plan_id] = p      # keep it for a manual approve
                     self._problem(res, f"Auto swap for {t.label} did not run. Proposal {p.plan_id} kept.")
+
+    def _other_clashes(self, wanted: str, blocker: str, held: set[str]) -> bool:
+        """True if `wanted` overlaps, or repeats the code of, any held session but `blocker`."""
+        w = self.store.get(self.event_id, wanted)
+        if not w:
+            return True
+        ww = self.router._window(w)
+        for sid in held - {blocker}:
+            other = self.store.get(self.event_id, sid)
+            if not other:
+                return True
+            if w.base_code and other.base_code == w.base_code:
+                return True
+            wo = self.router._window(other)
+            if ww and wo and overlaps(ww, wo):
+                return True
+        return False
 
     def _swap(self, p: Proposal, approved: bool) -> Any:
         """Run the swapper. Any failure becomes an error event, never a dead watcher."""
@@ -511,6 +601,10 @@ class Watcher:
         except Exception as e:  # noqa: BLE001  SwapBusy, ApiError, anything: report it
             self._emit("error", message=f"Swap {p.plan_id} not run: {type(e).__name__}: {e}")
             return None
+        if getattr(outcome, "closed", False):
+            self._closed(self.clock())
+        elif "cancelled" in getattr(outcome, "steps", []):
+            self._opened()                          # the cancel was answered: writes are open
         held_now = getattr(outcome, "held_now", None)
         if held_now is not None and getattr(outcome, "state", None) != "proposed":
             self.last_held = set(held_now)

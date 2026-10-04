@@ -11,6 +11,7 @@ error bodies and per-session bulk results. Faults can be scripted per session:
     fake.refuse["S1"] = "seatHeldByCrew" -> any failure code on reserve or favorite, known or not
     fake.schedule.reserved.add("S9")    -> conflicts computed from session times
     FakeEventsApi.from_fixture("tests/fixtures/catalog-2026-10-01.json")  -> real shapes
+    fake.storm(clock, full_rate=0.3, fail_503_at=40, closed=(t0, t1))  -> a fault storm, see storm()
 
 Use it as an httpx transport:  EventsClient(transport=fake.transport())
 """
@@ -18,7 +19,9 @@ Use it as an httpx transport:  EventsClient(transport=fake.transport())
 from __future__ import annotations
 
 import json
-from collections import defaultdict
+import random
+from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -59,6 +62,11 @@ class FakeEventsApi:
         self.counts: dict[str, int] = defaultdict(int)
         self._pt_seq = 0
         self.token = "test-token"
+        self.log: list[tuple[str, int]] = []          # (operation, status) for every request
+        self._storm: dict[str, object] | None = None
+        self.quota_violations: list[str] = []
+        self.two_sittings: list[str] = []             # held states with two sittings of one code
+        self.full_draws = 0                           # reserves the storm refused as full
 
     @classmethod
     def from_fixture(cls, path: str | Path, **kwargs: Any) -> FakeEventsApi:
@@ -70,6 +78,58 @@ class FakeEventsApi:
 
     def throttle_next(self, op: str, retry_after: int = 5) -> None:
         self._throttle[op] = retry_after
+
+    def storm(self, clock: Callable[[], float], seed: int = 7, full_rate: float = 0.3,
+              fail_503_at: int | None = 40, closed: tuple[float, float] | None = None,
+              throttle_every_minute: bool = True) -> None:
+        """A fault storm. Every random draw comes from `seed`, so a failing run repeats.
+
+        - `full_rate` of reserve attempts come back sessionFull, even when the band is open.
+        - The first request in each minute of `clock` gets a 429 with Retry-After 2.
+        - Request number `fail_503_at` gets a 503.
+        - Writes return 409 while `closed[0] <= clock() < closed[1]`.
+        - The real per-operation quotas are enforced: a request over the quota left in
+          the last 60 seconds gets a 429 and is recorded in `quota_violations`, because
+          a correct client never sends one.
+        """
+        self._storm = {"clock": clock, "rng": random.Random(seed), "full_rate": full_rate,
+                       "fail_503_at": fail_503_at, "closed": closed, "minutes": set(),
+                       "throttle": throttle_every_minute, "used": defaultdict(deque), "n": 0}
+
+    def _storm_check(self, req: httpx.Request, op: str) -> httpx.Response | None:
+        st = self._storm
+        if st is None:
+            return None
+        from .client import QUOTAS
+        now = st["clock"]()  # type: ignore[operator]
+        st["n"] = int(st["n"]) + 1  # type: ignore[call-overload]
+        minute = int(now // 60)
+        if st["fail_503_at"] is not None and st["n"] == st["fail_503_at"]:
+            return self._err(503, "Service unavailable. Back off and retry.")
+        if st["throttle"] and minute not in st["minutes"]:  # type: ignore[operator]
+            st["minutes"].add(minute)  # type: ignore[union-attr]
+            return self._err(429, "ThrottlingException", headers={"Retry-After": "2"})
+        closed = st["closed"]
+        if closed and closed[0] <= now < closed[1] and req.method != "GET":  # type: ignore[index]
+            return self._err(409, "This operation is not accepting requests at this time.")
+        if op in QUOTAS:
+            units = 1
+            if op in ("ReserveSessions", "AssociateFavorites"):
+                units = len(json.loads(req.content or b"{}").get("sessionIds", [])) or 1
+            used = st["used"][op]  # type: ignore[index]
+            while used and used[0][0] <= now - 60:
+                used.popleft()
+            if sum(u for _, u in used) + units > QUOTAS[op]:
+                self.quota_violations.append(f"{op} at {now:.0f}: {units} over the quota left")
+                return self._err(429, "ThrottlingException", headers={"Retry-After": "60"})
+            used.append((now, units))
+        return None
+
+    def _full_draw(self) -> bool:
+        st = self._storm
+        full = bool(st and st["rng"].random() < st["full_rate"])  # type: ignore[union-attr,operator]
+        self.full_draws += full
+        return full
 
     def fail_next(self, op: str, status: int = 503, times: int = 1) -> None:
         """The next `times` calls to `op` return `status`, with nothing applied."""
@@ -115,7 +175,11 @@ class FakeEventsApi:
         self.calls.append((op, path))
         self.params.append((op, dict(req.url.params)))
         self.counts[op] += 1
+        r = self._storm_check(req, op) or self._dispatch(req, op, parts, path)
+        self.log.append((op, r.status_code))
+        return r
 
+    def _dispatch(self, req: httpx.Request, op: str, parts: list[str], path: str) -> httpx.Response:
         if op in self._throttle:
             ra = self._throttle.pop(op)
             return self._err(429, "ThrottlingException", headers={"Retry-After": str(ra)})
@@ -231,11 +295,14 @@ class FakeEventsApi:
         c = self._conflicts(sid)
         if c:
             return {"sessionId": sid, "code": "scheduleConflict", "conflictsWith": c}
-        if sid in self.full or self.sessions[sid].seat_availability == "unavailable":
+        if sid in self.full or self.sessions[sid].seat_availability == "unavailable" or self._full_draw():
             return {"sessionId": sid, "code": "sessionFull"}
         if sid in self.ghost:
             return None
         self.schedule.reserved.add(sid)
+        codes = [self.sessions[h].base_code for h in self.schedule.reserved if h in self.sessions]
+        if len(codes) != len(set(codes)):
+            self.two_sittings.append(f"after reserving {sid}: {sorted(self.schedule.reserved)}")
         return None
 
     def _favorite_one(self, sid: str) -> dict | None:

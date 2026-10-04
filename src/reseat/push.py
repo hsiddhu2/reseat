@@ -42,6 +42,8 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         return d["message"], d["message"]
     if ev.kind == "signin" and d.get("state") == "needed":
         return "Sign in needed", "Run reseat login on the laptop. Nothing is booked until then."
+    if ev.kind == "writes":
+        return ("Booking paused" if d.get("state") == "closed" else "Booking resumed"), d["message"]
     if ev.kind == "leave":
         return f"Leave now for {d['code']}", d["message"]
     return None

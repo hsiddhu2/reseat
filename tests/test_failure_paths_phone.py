@@ -407,7 +407,11 @@ def test_onsite_writes_closed_is_reported_and_retried_when_open(clock):
     res = e.w.onsite_tick(DAY)
     assert res.booked == [] and "409" in res.error
     e.fake.closed = False
-    assert e.w.onsite_tick(DAY).booked == ["W1"]
+    sent = e.fake.counts["ReserveSessions"]
+    assert e.w.onsite_tick(DAY).booked == []                  # inside the 15-minute hold: no write
+    assert e.fake.counts["ReserveSessions"] == sent
+    clock.sleep(15 * 60)
+    assert e.w.onsite_tick(DAY).booked == ["W1"]              # the queued opening, after the hold
     assert e.net.read_back_after_last("ReserveSessions")
 
 

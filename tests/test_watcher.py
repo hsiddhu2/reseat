@@ -239,9 +239,14 @@ def test_writes_closed_is_reported_not_crashed(env):
     fake.set_band("A2", "available")
     res = w.tick()
     assert res.booked == [] and "409" in res.error
-    assert any("409" in e.data.get("message", "") for e in events if e.kind == "error")
+    assert [e.data["state"] for e in events if e.kind == "writes"] == ["closed"]
     fake.closed = False
-    assert w.tick().booked == ["A2"]            # no band change needed: carried over and retried
+    sent = fake.counts["ReserveSessions"]
+    assert w.tick().booked == []                # a 409 holds writes for 15 minutes
+    assert fake.counts["ReserveSessions"] == sent
+    w.clock.sleep(15 * 60)
+    assert w.tick().booked == ["A2"]            # no band change needed: queued and sent after the hold
+    assert [e.data["state"] for e in events if e.kind == "writes"] == ["closed", "open"]   # once each
 
 
 def test_cli_watch_once(env, tmp_path, monkeypatch):
@@ -304,3 +309,36 @@ def test_stop_ends_run(env):
     w = Watcher(client, store, R.parse("targets: []\n"), EV, interval=30)
     w.subscribe(lambda ev: w.stop())
     w.run()                                        # returns after the first tick, no real sleep
+
+
+def test_no_proposal_when_the_wanted_sitting_also_clashes_with_another_hold(env):
+    fake, client, store, clock = env
+    fake.add_session(mk("D1", "DOP302", "2026-12-01", "10:15"))        # overlaps A1 too
+    store.apply_sweep(EV, list(fake.sessions.values()), with_abstracts=False)
+    fake.schedule.reserved.update({"C1", "D1"})
+    w, events = watcher(env, "targets:\n- code: ARC301\n- code: SVS401\n- code: DOP302\n")
+    fake.set_band("A1", "available")
+    res = w.tick()
+    assert res.proposals == []                  # replacing C1 alone would not free 10:00
+    assert fake.counts.get("CancelReservation", 0) == 0
+
+
+def test_auto_swap_meeting_a_409_holds_all_writes(env):
+    from reseat.swap import Swap
+    fake, client, store, clock = env
+    fake.schedule.reserved.add("C1")
+    rules = R.parse("targets:\n- code: ARC301\n  auto_swap: true\n- code: SVS401\n")
+    w = Watcher(client, store, rules, EV, clock=clock, sleep=clock.sleep,
+                swapper=lambda p, ok: Swap(client, store, rules, EV).run_plan(p, approved=ok))
+    w.tick()
+    clock.sleep(60)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    assert fake.counts["CancelReservation"] == 1 and w.writes_closed_until is not None
+    for band in ("unavailable", "available", "unavailable", "available"):
+        clock.sleep(60)
+        fake.set_band("A1", band)
+        w.tick()
+    assert fake.counts["CancelReservation"] == 1   # no swap retried into the 409
+    assert fake.schedule.reserved == {"C1"}
