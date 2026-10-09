@@ -1,6 +1,8 @@
+
 """Boundaries of the sweep guards: the shrink limit, tiny catalogs, partial re-keys,
 the watcher across a long refusal, and the CLI paths for --force and partial answers."""
 
+import re
 from pathlib import Path
 
 import pytest
@@ -300,7 +302,8 @@ def test_cli_book_refuses_a_partial_catalog(cenv):
 
 def test_cli_sync_help_lists_force():
     r = CliRunner().invoke(cli.app, ["sync", "--help"])
-    assert "--force" in r.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.output)   # CI terminals add colour codes
+    assert "--force" in plain
 
 
 # ---------------------------------------------------------------- 1 October catalog

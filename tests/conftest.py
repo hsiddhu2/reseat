@@ -1,4 +1,5 @@
 import pytest
+from rich.console import Console
 
 from reseat.client import EventsClient, QuotaTracker
 from reseat.fakeapi import FakeEventsApi, sample_sessions
@@ -40,3 +41,12 @@ def client(fake, clock):
 @pytest.fixture
 def store():
     return Store(":memory:")
+
+
+@pytest.fixture(autouse=True)
+def plain_cli_output(monkeypatch):
+    """CLI tests read the printed text. Colour codes and terminal width must not change it."""
+    from reseat import cli
+    monkeypatch.setattr(cli, "con", Console(color_system=None, highlight=False, width=200))
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setenv("TERM", "dumb")
