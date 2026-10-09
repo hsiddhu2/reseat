@@ -5,7 +5,9 @@ Week one commands. Reads are live today. Writes to reservations open 8 October.
 
 from __future__ import annotations
 
+import re
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from . import guard as guard_engine
 from . import rules as rules_mod
 from .client import ApiError, EventsClient, NotRegistered, OperationClosed
 from .router import OP as RESERVE_OP
-from .router import WRITES_CLOSED, Execution, Plan, Router, run_booking
+from .router import WRITES_CLOSED, Execution, Outcome, Plan, Router, run_booking
 from .store import Store, SweepRefused
 from .swap import Swap, SwapBusy, SwapResult
 from .watcher import Proposal, Watcher, WatchError, WatchEvent
@@ -36,9 +38,13 @@ app.add_typer(favorites_app, name="favorites")
 con = Console(emoji=False)   # ":word:" in a session title must stay text
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
 def _esc(v: object) -> str:
-    """Catalog titles, personal time and API messages are not ours: show "[" as text, never as markup."""
-    return escape(str(v))
+    """Catalog titles, personal time and API messages are not ours: show "[" as text, never as
+    markup, and drop control characters so no text can recolour the terminal. Newlines stay."""
+    return escape(_CONTROL.sub("?", str(v)))
 
 
 def _row(t: Table, *cells: str) -> None:
@@ -483,6 +489,12 @@ def _print_plan(plan: Plan, store: Store, event: str) -> None:
                   f"{_esc(sk.reason)}[/dim]")
 
 
+def _print_fallback_hints(router: Router, plans: list[Plan], outcomes: list[Outcome],
+                          held: Iterable[str]) -> None:
+    for hint in router.fallback_hints(plans, outcomes, held):
+        con.print(f"[yellow]{_esc(hint)}[/yellow]")
+
+
 def _print_round(plan: Plan, ex: Execution, st: Store | None = None,
                  event: str = config.DEFAULT_EVENT) -> None:
     for o in ex.outcomes:
@@ -522,6 +534,7 @@ def book(event: str = config.DEFAULT_EVENT,
         raise typer.Exit(4)
     _print_plan(plan, st, event)
     if dry_run or not plan.batch:
+        _print_fallback_hints(router, [plan], [], held)
         if not plan.batch:
             con.print("Nothing to reserve.")
         return
@@ -531,6 +544,8 @@ def book(event: str = config.DEFAULT_EVENT,
     if run.closed:
         con.print(f"[yellow]{WRITES_CLOSED}[/yellow]")
         raise typer.Exit(3)
+    _print_fallback_hints(router, [plan, *run.plans], run.outcomes,
+                          run.schedule.reserved if run.schedule else held)
     got = [o for o in run.outcomes if o.status in ("reserved", "already")]
     con.print(f"Reserved {len(got)} of {len(r.targets)} targets. "
               f"GetSchedule now lists {_esc(len(run.schedule.reserved) if run.schedule else '?')} reserved.")

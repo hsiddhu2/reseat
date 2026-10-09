@@ -51,6 +51,7 @@ OTHER_RANK = 5
 
 # Bands. The API had sent none as of 1 Oct 2026. Unknown or missing means try.
 _FULL_BANDS = {"unavailable"}
+FULL_SKIP = "full (band unavailable)"
 _NO_RESERVATION_BANDS = {"walkUp"}
 
 
@@ -147,6 +148,50 @@ class Router:
             return (st.date or "9999", st.time or "99:99") if st else ("9999", "99:99")
         return sorted(sessions, key=key, reverse=(prefer == "latest"))
 
+    def fallback_hints(self, plans: Iterable[Plan], outcomes: Iterable[Outcome],
+                       held: Iterable[str]) -> list[str]:
+        """One line per exact-sitting target (repeats false) that came back full, is still not
+        held, and whose talk has another sitting that could be booked now. Fallback to another
+        sitting is opt-in per target, so re:Seat never moves a target silently: it says the
+        option exists and how to turn it on. Silent when the attendee already holds a sitting of
+        the talk, or when every other sitting is full or takes no reservations."""
+        held_ids = set(held)
+        outcomes = list(outcomes)
+        got = {o.target for o in outcomes if o.status in ("reserved", "already", "unconfirmed")}
+        full = [(o.target, o.session_id) for o in outcomes if o.status == "full"]
+        for p in plans:
+            got |= set(p.held_targets)
+            full += [(sk.target, sk.session_id) for sk in p.skipped if sk.reason == FULL_SKIP]
+        labels = [t.label for t in self.rules.targets]
+        by_label = {t.label: t for t in self.rules.targets if labels.count(t.label) == 1}
+        out: list[str] = []
+        seen: set[str] = set()
+        for label, sid in full:
+            t = by_label.get(label)            # an ambiguous label gets no hint, never a wrong one
+            if not t or t.repeats or label in seen or label in got:
+                continue
+            if sid not in {t.session_id, *t.sittings}:   # a full backup: repeats does not govern it
+                continue
+            s = self.store.get(self.event_id, sid)
+            if not s or not s.base_code:
+                continue
+            talk = self.store.by_base_code(self.event_id, s.base_code)
+            if any(o.session_id in held_ids for o in talk):
+                continue
+            mine = {sid, *t.sittings}
+            others = [o for o in self._by_time(talk, t.prefer) if o.session_id not in mine
+                      and o.is_reservable is not False
+                      and o.seat_availability not in _FULL_BANDS | _NO_RESERVATION_BANDS]
+            if not others:
+                continue
+            seen.add(label)
+            when = ", ".join(f"{o.abbreviation or o.session_id}"
+                             f"{f' {o.session_time.date} {o.session_time.time}' if o.session_time else ''}"
+                             for o in others)
+            out.append(f"{s.abbreviation or sid} is full. Other sittings of {s.base_code} have seats: "
+                       f"{when}. To allow them, set repeats: true on target {label} in rules.yaml.")
+        return out
+
     # ---- constraints
 
     def missing_held(self, held: Iterable[str]) -> list[str]:
@@ -167,7 +212,7 @@ class Router:
         if s.is_reservable is False or s.seat_availability in _NO_RESERVATION_BANDS:
             return "not reservable (walk-up or no reservations)", None
         if s.seat_availability in _FULL_BANDS:
-            return "full (band unavailable)", None
+            return FULL_SKIP, None
         if s.base_code and s.base_code in codes:
             return f"a sitting of {s.base_code} is already held or planned", None
         w = self._window(s)

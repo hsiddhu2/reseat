@@ -77,3 +77,8 @@ def test_markup_in_a_freshly_synced_title_does_not_stop_sync(env):
     r = CliRunner().invoke(cli.app, ["sync", "--no-abstracts"])
     assert r.exit_code == 0, r.output
     assert "new NEW100 [/red] new [bold" in r.output
+
+
+def test_control_characters_in_api_text_cannot_reach_the_terminal():
+    assert cli._esc("X\x1b[2JY\x07") == "X?[2JY?"
+    assert cli._esc("a\nb") == "a\nb"

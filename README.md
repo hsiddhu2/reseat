@@ -63,7 +63,15 @@ Sign-in only works on your own machine, so the token stays on the laptop and the
 
 ## Seen live
 
-On 8 October, the day writes were scheduled to open through the API, the API served an empty catalog: zero sessions, and 404 for the attendee's own held seats, while the schedule still answered. re:Seat sent no write. It now refuses an empty or partial catalog, keeps the one it has, and books nothing while it cannot see a held seat. The record, with commands and output, is in [docs/proof](docs/proof/). Live booking through the API has not been proven yet. It will be recorded there when the catalog returns.
+On 8 October 2026, between 20:19 and 20:28 PDT, on the day writes were scheduled to open, the Events API answered GetSchedule but served no sessions:
+
+```
+ListSessions                -> 200, totalCount 0, items 0
+GetSession <held session>   -> 404 "No session was found with the requested id"
+GetSchedule                 -> 200, reserved 14, favorites 16
+```
+
+re:Seat's sync read the empty answer as every session removed and emptied its local copy of the catalog. It sent no write, and nothing on the attendee's AWS schedule changed. Three fixes followed, each tested against the fake: a sweep that comes back empty, or would drop more than half the catalog without bringing back one of about the same size, is refused and the local copy kept, a sweep of about the same size whose ids are mostly new is recorded as a new baseline, and nothing is booked while a held session is missing from the local catalog. The record, with commands and output, is in [docs/proof/2026-10-08-catalog-empty.md](docs/proof/2026-10-08-catalog-empty.md). It shows nothing about booking through the API.
 
 ## Limits
 
@@ -115,7 +123,7 @@ Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it.
 
 `~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else.
 
-If you built your schedule in the AWS portal, `reseat rules from-schedule` writes the file for you. Your reserved sessions come first, then your favorites, in the order the API lists them. The API does not promise that order, so reorder the targets to set your priority. Each target is the exact sitting you picked, by session id with `repeats: false`, so the file can be written even while the catalog is empty. `favorites sync` and `book` still need `reseat sync` first. Every reserved session is listed. A favorite past `watch_cap` is written as a comment, not dropped. Other settings are the `rules init` defaults, with its example lunch left as a comment. Without `--force` it never replaces an existing file. With `--force` the old file is kept as `rules.yaml.bak`, because its settings, `serve_secret` included, are reset.
+If you built your schedule in the AWS portal, `reseat rules from-schedule` writes the file for you. Your reserved sessions come first, then your favorites, in the order the API lists them. The API does not promise that order, so reorder the targets to set your priority. Each target is the exact sitting you picked, by session id with `repeats: false`, so the file can be written even while the catalog is empty. `favorites sync` and `book` still need `reseat sync` first. Every reserved session is listed. A favorite past `watch_cap` is written as a comment, not dropped. The API treats a favorite as interest only, not a reservation. This command turns your favorites into booking targets on purpose, and says how many, so delete any you only want to keep an eye on. When an exact sitting is full and the talk has other sittings, `book` says so in one line. Nothing moves to another sitting unless you set `repeats: true` on that target. Other settings are the `rules init` defaults, with its example lunch left as a comment. Without `--force` it never replaces an existing file. With `--force` the old file is kept as `rules.yaml.bak`, because its settings, `serve_secret` included, are reset.
 
 ```yaml
 targets:

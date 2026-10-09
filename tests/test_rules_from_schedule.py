@@ -12,6 +12,7 @@ from reseat.auth import AuthError
 from reseat.client import EventsClient, QuotaTracker
 from reseat.fakeapi import FakeEventsApi
 from reseat.models import Session
+from reseat.router import Outcome
 from reseat.store import Store
 
 EV = "reinvent2026"
@@ -313,3 +314,121 @@ def test_write_new_never_leaves_a_partial_file(tmp_path, monkeypatch):
     assert not R.write_new(path, "b: 2\n") and path.read_text() == "a: 1\n"
     assert R.write_new(path, "b: 2\n", replace=True) and path.read_text() == "b: 2\n"
     assert [p.name for p in tmp_path.iterdir()] == ["rules.yaml"]       # no temp file left
+
+
+def _book(*args):
+    return CliRunner().invoke(cli.app, ["book", "--yes", *args])
+
+
+def test_a_full_exact_sitting_says_other_sittings_exist_once(env):
+    fake, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    run()
+    fake.full.add("F1")
+    r = _book()
+    out = " ".join(r.output.split())
+    assert r.exit_code == 0, r.output
+    assert ("CMP401-R is full. Other sittings of CMP401 have seats: CMP401-R1 2026-12-03 11:00. "
+            "To allow them, set repeats: true on target F1 in rules.yaml.") in out
+    assert out.count("Other sittings of") == 1
+    assert "F3" not in fake.schedule.reserved                    # nothing moved
+
+
+def test_the_hint_shows_on_a_dry_run_for_a_sitting_already_unavailable(env):
+    fake, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    run()
+    fake.set_band("F1", "unavailable")                          # book sweeps first and sees it
+    r = CliRunner().invoke(cli.app, ["book", "--dry-run"])
+    assert "CMP401-R is full. Other sittings of CMP401" in " ".join(r.output.split())
+    assert fake.counts.get("ReserveSessions", 0) == 0
+
+
+def test_no_hint_when_the_talk_has_no_other_sitting(env):
+    fake, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    run()
+    fake.full.add("F2")                                          # DOP302 has one sitting
+    assert "Other sittings" not in _book().output
+
+
+def test_opting_in_per_target_lets_that_target_fall_back(env):
+    fake, store, path = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    run()
+    path.write_text(path.read_text().replace('{session_id: "F1", repeats: false}',
+                                             '{session_id: "F1", repeats: true}'))
+    fake.full.add("F1")
+    r = _book()
+    assert r.exit_code == 0, r.output
+    assert "F3" in fake.schedule.reserved and "Other sittings" not in r.output
+
+
+def test_hints_never_come_for_targets_that_already_allow_repeats(env):
+    _, store, _ = env
+    from reseat.router import Router
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    rules = R.parse('targets:\n  - {session_id: "F1"}\n')
+    full = [Outcome("F1", "F1", "full")]
+    assert Router(rules, store, EV).fallback_hints([], full, set()) == []
+
+
+def _hints(store, body, outcomes, held=(), plans=()):
+    from reseat.router import Router
+    return Router(R.parse(body), store, EV).fallback_hints(list(plans), outcomes, held)
+
+
+EXACT = 'targets:\n  - {session_id: "F1", repeats: false}\n'
+
+
+def test_no_hint_when_a_sitting_of_the_talk_is_already_held(env):
+    _, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    assert _hints(store, EXACT, [Outcome("F1", "F1", "full")], held={"F3"}) == []
+    assert len(_hints(store, EXACT, [Outcome("F1", "F1", "full")], held=set())) == 1
+
+
+@pytest.mark.parametrize("band", ["unavailable", "walkUp"])
+def test_no_hint_when_every_other_sitting_is_full_or_walk_up(env, band):
+    _, store, _ = env
+    store.apply_sweep(EV, [*CATALOG[:-1], mk("F3", "CMP401-R1", "2026-12-03", "11:00", band=band)],
+                      with_abstracts=False)
+    assert _hints(store, EXACT, [Outcome("F1", "F1", "full")]) == []
+
+
+def test_no_hint_when_the_target_ended_up_held_by_a_backup(env):
+    _, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    body = 'targets:\n  - {session_id: "F1", repeats: false, backups: [DOP302]}\n'
+    outs = [Outcome("F1", "F1", "full"), Outcome("F2", "F1", "reserved")]
+    assert _hints(store, body, outs, held={"F2"}) == []
+
+
+def test_no_hint_for_a_conflict_or_an_unknown_failure_code(env):
+    _, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    for status in ("conflict", "refused", "unconfirmed"):
+        assert _hints(store, EXACT, [Outcome("F1", "F1", status)]) == []
+
+
+
+def test_no_hint_for_a_full_backup_sitting(env):
+    _, store, _ = env
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    body = 'targets:\n  - {session_id: "F2", repeats: false, backups: [CMP401]}\n'
+    outs = [Outcome("F2", "F2", "full"), Outcome("F1", "F2", "full")]
+    assert _hints(store, body, outs) == []                     # F2 has no other sitting, F1 is a backup
+
+
+def test_hints_through_book_for_two_targets_across_rounds_once_each(env):
+    fake, store, _ = env
+    more = [mk("G1", "SVC101-R", "2026-12-04", "09:00"), mk("G2", "SVC101-R1", "2026-12-04", "13:00")]
+    fake.add_session(more[0])
+    fake.add_session(more[1])
+    store.apply_sweep(EV, [*CATALOG, *more], with_abstracts=False)
+    fake.schedule.favorites.add("G1")
+    run("--force")
+    fake.full |= {"F1", "G1"}
+    out = " ".join(_book().output.split())
+    assert out.count("CMP401-R is full") == 1 and out.count("SVC101-R is full") == 1
+    assert not {"F3", "G2"} & fake.schedule.reserved
