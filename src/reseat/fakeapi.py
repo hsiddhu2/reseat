@@ -38,6 +38,12 @@ class FakeSchedule:
     reserved: set[str] = field(default_factory=set)
     favorites: set[str] = field(default_factory=set)
     personal_time: dict[str, dict] = field(default_factory=dict)
+    order: list[str] = field(default_factory=list)   # GetSchedule lists these first, in this order
+
+    def listed(self, ids: set[str]) -> list[str]:
+        """The API's order is not documented as sorted. Tests set `order` to prove it is kept."""
+        rank = {sid: i for i, sid in enumerate(self.order)}
+        return sorted(ids, key=lambda sid: (rank.get(sid, len(rank)), sid))
 
 
 class FakeEventsApi:
@@ -212,8 +218,8 @@ class FakeEventsApi:
             return self._json(200, {"session": _dump(s)}) if s else self._err(404, "No such session.")
         if op == "GetSchedule":
             return self._json(200, {"schedule": {
-                "reserved": sorted(self.schedule.reserved),
-                "favorites": sorted(self.schedule.favorites),
+                "reserved": self.schedule.listed(self.schedule.reserved),
+                "favorites": self.schedule.listed(self.schedule.favorites),
                 "personalTime": list(self.schedule.personal_time.values()),
             }})
 

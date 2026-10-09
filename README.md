@@ -26,7 +26,7 @@ Python 3.11 or newer. `login` opens your AWS Builder ID sign-in. Use the Builder
 
 ```bash
 reseat sync                                  # the catalog, about 9 calls
-reseat rules import my-planner-export.json   # or: reseat rules init, then edit ~/.reseat/rules.yaml
+reseat rules from-schedule                   # your reserved sessions and favorites from the AWS portal
 reseat favorites sync                        # mirror them into the official app
 reseat book --dry-run                        # see the plan. Nothing is sent
 ```
@@ -35,7 +35,7 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 
 | When | What re:Seat does |
 |---|---|
-| Before writes open | Imports your targets from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export and mirrors them into your favorites. |
+| Before writes open | Takes your targets from the schedule you built in the AWS portal, or from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export, and mirrors them into your favorites. |
 | The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
 | Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal on your phone. Leave-now reminders go into your official schedule. |
 | At re:Invent | The laptop stays in the hotel room. Your phone shows today's seats, a leave-now countdown and whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
@@ -95,6 +95,7 @@ reseat probe --session-id <id>     # are reservation writes open yet? never chan
 reseat save-fixture                # dev: save a catalog pull for tests, no abstracts or speakers
 reseat rules init                  # write a commented ~/.reseat/rules.yaml
 reseat rules import export.json    # targets from a reinvent-planner.cloud export, in its order
+reseat rules from-schedule         # targets from your official schedule: reserved first, then favorites
 reseat rules check                 # every code resolves in the local catalog?
 reseat book --dry-run              # sweep, then print the plan. Sends nothing
 reseat book                        # reserve, fall back on full sessions, read back. --yes skips the confirmation
@@ -113,6 +114,8 @@ Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it.
 ### Rules file
 
 `~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else.
+
+If you built your schedule in the AWS portal, `reseat rules from-schedule` writes the file for you. Your reserved sessions come first, then your favorites, in the order the API lists them. The API does not promise that order, so reorder the targets to set your priority. Each target is the exact sitting you picked, by session id with `repeats: false`, so the file can be written even while the catalog is empty. `favorites sync` and `book` still need `reseat sync` first. Every reserved session is listed. A favorite past `watch_cap` is written as a comment, not dropped. Other settings are the `rules init` defaults, with its example lunch left as a comment. Without `--force` it never replaces an existing file. With `--force` the old file is kept as `rules.yaml.bak`, because its settings, `serve_secret` included, are reset.
 
 ```yaml
 targets:

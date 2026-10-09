@@ -109,6 +109,7 @@ Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). 
 
 - On the evening of 8 October, the day writes were scheduled to open through the API, ListSessions answered 200 with `totalCount` 0 and no items, and GetSession answered 404 for every session tried, including held ones. GetSchedule, GetEvent and ListEvents still worked.
 - Reservations made after seating opened carry session ids beginning `17842318`. No id in the 1 October catalog begins that way.
+- GetSchedule lists `reserved` and `favorites` as arrays of unique ids. The spec does not define their order.
 - The same condition was reported publicly on 3 October in [reinvent-scout issue 17](https://github.com/jasonwadsworth/reinvent-scout/issues/17).
 - re:Seat therefore refuses a sweep that comes back empty or loses most of the catalog without bringing back one of about the same size, checks each walk against `totalCount`, records a re-keyed catalog as a new baseline rather than as news, and books nothing while a held session is missing from its local catalog.
 

@@ -8,7 +8,9 @@ on one attendee's behalf.
 from __future__ import annotations
 
 import json
+import os
 import re
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -174,6 +176,28 @@ def dump(rules: Rules) -> str:
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
+def write_new(path: Path, text: str, replace: bool = False) -> bool:
+    """Write the whole file or nothing: a temp file, then a rename. Without `replace`, an existing
+    file is never overwritten, even one created a moment ago. False when it already exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        if replace:
+            os.replace(tmp, path)
+            return True
+        try:
+            os.link(tmp, path)                      # fails if path exists: no clobber, no race
+        except FileExistsError:
+            return False
+        return True
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def save(rules: Rules, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(dump(rules), encoding="utf-8")
@@ -206,6 +230,79 @@ home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 # probe_session: id of a session that takes no reservations, so it can never be held.
 #   While writes are closed, re:Seat checks with it once a minute and resumes at once.
 """
+
+
+# ---------------------------------------------------------------------- official schedule import
+
+# The spec gives session ids a 128 character limit and no pattern. This is stricter on purpose:
+# an id goes into YAML, so only characters that can never change its meaning are accepted.
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,128}")
+_EXAMPLE_MEAL = '  - {day: Tuesday, start: "12:00", end: "13:00"}   # Las Vegas local time\n'
+_EXAMPLE_CAP = "watch_cap: 25        # targets, at most\n"
+# The settings rules init writes, with its example lunch kept as a comment: an active
+# lunch block would quietly stop booking any favorite the attendee picked at that hour.
+SCHEDULE_SETTINGS = EXAMPLE[EXAMPLE.index("meals:"):].replace(
+    "meals:\n" + _EXAMPLE_MEAL,
+    "meals: []\n#  - {day: Tuesday, start: \"12:00\", end: \"13:00\"}   # Las Vegas local time. "
+    "Blocks booking then\n")
+assert _EXAMPLE_MEAL in EXAMPLE and _EXAMPLE_CAP in EXAMPLE, "rules init example changed"
+
+
+@dataclass
+class ScheduleImport:
+    text: str
+    reserved: list[str] = field(default_factory=list)
+    favorites: list[str] = field(default_factory=list)
+    left_out: list[str] = field(default_factory=list)    # favorites over watch_cap, written as comments
+    full_days: list[str] = field(default_factory=list)   # days whose reserved seats reach max_per_day
+    watch_cap: int = 25
+
+
+def from_schedule(reserved: list[str], favorites: list[str], store: Store | None = None,
+                  event_id: str = "") -> ScheduleImport:
+    """Targets from the attendee's official schedule: reserved first, then favorites, in the
+    order GetSchedule returns them (the spec does not define that order). Each target is the
+    exact sitting, a session_id with repeats false: the catalog may be empty, codes may not
+    resolve, and the attendee picked that sitting. A favorite that is also reserved is listed
+    once. Reserved seats are always listed, raising watch_cap if they need it. Favorites past
+    the cap are written as comments, never dropped silently.
+    """
+    res_ids = list(dict.fromkeys(reserved))
+    fav_ids = [s for s in dict.fromkeys(favorites) if s not in set(res_ids)]
+    for sid in res_ids + fav_ids:
+        if not _SAFE_ID.fullmatch(sid):
+            raise RulesError(f"GetSchedule returned an unexpected session id {sid!r}. Nothing written.")
+    if not res_ids and not fav_ids:
+        raise RulesError("Your schedule has no reserved sessions and no favorites. Nothing written. "
+                         "Add favorites in the AWS portal or app, then run this again.")
+    defaults = parse(EXAMPLE)
+    cap = max(defaults.watch_cap, len(res_ids))
+    lines = ["# re:Seat rules, written by reseat rules from-schedule from your official schedule.",
+             "# Targets are in priority order: reserved first, then favorites, as GetSchedule lists them.",
+             "# Reorder them to change priority. re:Seat reserves only what is listed here.",
+             "# repeats: false keeps each target to the sitting you picked. Set it to true, or replace",
+             "# session_id with the talk's code, to let re:Seat take another sitting of that talk.", "",
+             "targets:"]
+    left_out = []
+    per_day: dict[str, int] = {}
+    rows = [(sid, "reserved") for sid in res_ids] + [(sid, "favorite") for sid in fav_ids]
+    for i, (sid, kind) in enumerate(rows):
+        s = store.get(event_id, sid) if store else None
+        code = s.abbreviation if s and s.abbreviation and _SAFE_ID.fullmatch(s.abbreviation) else None
+        note = f"{kind}, {code}" if code else kind          # catalog text never shapes the YAML
+        entry = f'- {{session_id: "{sid}", repeats: false}}   # {note}'
+        if i < cap:
+            lines.append("  " + entry)
+        else:
+            left_out.append(sid)
+            lines.append("#  " + entry + ". Over watch_cap, raise it to include")
+        if kind == "reserved" and s and s.session_time and s.session_time.date:
+            per_day[s.session_time.date] = per_day.get(s.session_time.date, 0) + 1
+    settings = SCHEDULE_SETTINGS.replace(_EXAMPLE_CAP, f"watch_cap: {cap}        # targets, at most\n")
+    text = "\n".join(lines) + "\n\n" + settings
+    parse(text, "the generated rules")            # never write a file that will not load
+    full = sorted(d for d, n in per_day.items() if n >= defaults.max_per_day)
+    return ScheduleImport(text, res_ids, fav_ids, left_out, full, cap)
 
 
 # ---------------------------------------------------------------------- planner import

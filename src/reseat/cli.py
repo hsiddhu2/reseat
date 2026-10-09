@@ -345,6 +345,53 @@ def rules_import(file: Path,
     con.print(f"Imported {len(new.targets)} targets into {_esc(config.RULES_PATH)}.")
 
 
+@rules_app.command("from-schedule")
+def rules_from_schedule(event: str = config.DEFAULT_EVENT,
+                        force: bool = typer.Option(False, "--force",
+                                                   help="Overwrite an existing rules file.")):
+    """Write targets from your official schedule: reserved first, then favorites."""
+    config.ensure_home()
+    if config.RULES_PATH.exists() and not force:
+        con.print(f"{_esc(config.RULES_PATH)} exists. Use --force to replace it.")
+        raise typer.Exit(1)
+    c, st = _client(), _store()
+    try:
+        s = c.get_schedule(event)
+        imp = rules_mod.from_schedule(s.reserved, s.favorites, st, event)
+    except ApiError as e:
+        con.print(f"[red]{_esc(e)}[/red] Nothing written.")
+        raise typer.Exit(2) from None
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red]")
+        raise typer.Exit(1) from None
+    backup = None
+    if config.RULES_PATH.exists():                  # only with --force: keep the old file beside it
+        backup = config.RULES_PATH.with_name(config.RULES_PATH.name + ".bak")
+        backup.write_bytes(config.RULES_PATH.read_bytes())
+    if not rules_mod.write_new(config.RULES_PATH, imp.text, replace=force):
+        con.print(f"{_esc(config.RULES_PATH)} appeared while reading the schedule. Nothing written.")
+        raise typer.Exit(1)
+    con.print(f"Wrote {len(imp.reserved)} reserved and {len(imp.favorites)} favorites as targets "
+              f"to {_esc(config.RULES_PATH)}, reserved first. Each is the exact sitting you picked.")
+    if backup:
+        con.print(f"[yellow]The old file is at {_esc(backup)}. Its settings, such as serve_secret, "
+                  "ntfy_topic, meals and limits, were reset to the defaults. Copy back any you need."
+                  "[/yellow]")
+    if imp.watch_cap > 25:
+        con.print(f"watch_cap is {imp.watch_cap} so every reserved session is listed.")
+    if imp.left_out:
+        con.print(f"[yellow]{len(imp.left_out)} favorites are past watch_cap and are written as "
+                  "comments. Raise watch_cap in the file and uncomment them to include them.[/yellow]")
+    booked = len(imp.favorites) - len(imp.left_out)
+    if booked:
+        con.print(f"{booked} favorites are now targets: reseat book and reseat serve will try to "
+                  "reserve them. Delete any you only wanted to keep an eye on.")
+    for day in imp.full_days:
+        con.print(f"[yellow]{_esc(day)} already holds max_per_day reserved sessions, so no favorite "
+                  "that day will be booked. Raise max_per_day to allow it.[/yellow]")
+    con.print("Next: reseat favorites sync, then reseat book --dry-run.")
+
+
 @rules_app.command("check")
 def rules_check(event: str = config.DEFAULT_EVENT):
     """Validate the rules file against the local catalog and list unresolved codes."""

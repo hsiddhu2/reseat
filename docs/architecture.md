@@ -100,7 +100,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | API client | built | Typed models that mirror the OpenAPI spec. Quota tracker per operation. Honors `Retry-After` once. Per-session failures as typed results. |
 | Catalog store | built | SQLite. Full sync, then cheap sweeps. Added, removed and moved sessions. Band history. Write journal. |
 | Campus | built | The 2026 venues, a walking-time table, Las Vegas to UTC conversion. |
-| Rules | built | `~/.reseat/rules.yaml`, import from reinvent-planner.cloud exports, validation against the catalog. |
+| Rules | built | `~/.reseat/rules.yaml`. Targets come from the official schedule (reserved first, then favorites, by session id) or a reinvent-planner.cloud export. Validation against the catalog. |
 | Order router | built | Priority, quota, fallback trees, scarcity ordering, read-back. |
 | Cancel | built | `GetSession` first, ask first, one DELETE, read-back. |
 | Watcher | built | Sweep loop. Books freed and new sittings through the router. Proposes swaps. Typed events to subscribers. |

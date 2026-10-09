@@ -77,6 +77,20 @@ class IncompleteCatalog(ApiError):
     """A catalog walk ended with fewer sessions than the API's totalCount. Status 0."""
 
 
+class MalformedResponse(ApiError):
+    """A 2xx read whose body does not match the spec. Treated like any failed read."""
+
+
+def _body(r: httpx.Response, op: str, parse: Callable[[Any], Any]) -> Any:
+    """Parse a read response. A body that is not the documented shape must fail as an ApiError,
+    so every caller's read-failure handling applies, never an unexpected traceback."""
+    try:
+        return parse(r.json())
+    except (ValueError, KeyError, TypeError) as e:   # JSON errors and pydantic ValidationError
+        raise MalformedResponse(r.status_code, f"response body does not match the spec "
+                                               f"({type(e).__name__})", op) from None
+
+
 class Throttled(ApiError):
     """429 after waiting once."""
 
@@ -208,11 +222,11 @@ class EventsClient:
     def list_events(self, include_past: bool = False) -> list[Event]:
         r = self._request("ListEvents", "GET", "/v1/events", auth=False,
                           params={"includePast": "true"} if include_past else None)
-        return [Event.model_validate(e) for e in r.json()["items"]]
+        return _body(r, "ListEvents", lambda j: [Event.model_validate(e) for e in j["items"]])
 
     def get_event(self, event_id: str) -> Event:
         r = self._request("GetEvent", "GET", f"/v1/events/{event_id}", auth=False)
-        return Event.model_validate(r.json()["event"])
+        return _body(r, "GetEvent", lambda j: Event.model_validate(j["event"]))
 
     def list_sessions_page(
         self, event_id: str, *, next_token: str | None = None,
@@ -226,7 +240,7 @@ class EventsClient:
         if locale:
             params["locale"] = locale
         r = self._request("ListSessions", "GET", f"/v1/events/{event_id}/sessions", params=params)
-        return ListSessionsPage.model_validate(r.json())
+        return _body(r, "ListSessions", ListSessionsPage.model_validate)
 
     def iter_sessions(self, event_id: str, *, include_abstracts: bool = True,
                       locale: str | None = None) -> Iterator[Session]:
@@ -248,11 +262,11 @@ class EventsClient:
     def get_session(self, event_id: str, session_id: str, locale: str | None = None) -> Session:
         r = self._request("GetSession", "GET", f"/v1/events/{_seg(event_id)}/sessions/{_seg(session_id)}",
                           params={"locale": locale} if locale else None)
-        return Session.model_validate(r.json()["session"])
+        return _body(r, "GetSession", lambda j: Session.model_validate(j["session"]))
 
     def get_schedule(self, event_id: str) -> Schedule:
         r = self._request("GetSchedule", "GET", f"/v1/events/{event_id}/schedule")
-        return Schedule.model_validate(r.json()["schedule"])
+        return _body(r, "GetSchedule", lambda j: Schedule.model_validate(j["schedule"]))
 
     # ------------------------------------------------------------------ writes
 

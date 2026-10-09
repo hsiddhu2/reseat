@@ -94,7 +94,7 @@ The storm found two bugs. The watcher proposed swaps that could never run, and i
 
 ## Limits
 
-- It manages seats you already chose. For choosing, use a planner. re:Seat imports reinvent-planner.cloud exports.
+- It manages seats you already chose. For choosing, use the AWS portal or a planner. re:Seat reads your official schedule, or imports reinvent-planner.cloud exports.
 - It cannot help with the portal's opening rush.
 - The phone page is plain HTTP. Use it over Tailscale.
 - Designed for a laptop left in the hotel room. [LIVE] Tailscale run from home.
