@@ -66,4 +66,5 @@ One line per check until the catalog returns, as `date time, command, result`. T
 2026-10-08 20:19 PDT  reseat sync --no-abstracts  ListSessions 200, totalCount 0 (the run above)
 2026-10-08 20:28 PDT  ListSessions read            200, totalCount 0
 2026-10-08 21:07 PDT  reseat sync --no-abstracts  refused: the API returned an empty catalog
+2026-10-09 08:33 PDT  reseat sync --no-abstracts  refused: the API returned an empty catalog
 ```

@@ -121,7 +121,7 @@ Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it.
 
 ### Rules file
 
-`~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else.
+`~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else. re:Seat writes it readable by you only, because it can hold `serve_secret`, and refuses to write through a symbolic link. If you made the file yourself and others on the machine can read a secret in it, re:Seat says so and gives the `chmod` to run.
 
 If you built your schedule in the AWS portal, `reseat rules from-schedule` writes the file for you. Your reserved sessions come first, then your favorites, in the order the API lists them. The API does not promise that order, so reorder the targets to set your priority. Each target is the exact sitting you picked, by session id with `repeats: false`, so the file can be written even while the catalog is empty. `favorites sync` and `book` still need `reseat sync` first. Every reserved session is listed. A favorite past `watch_cap` is written as a comment, not dropped. The API treats a favorite as interest only, not a reservation. This command turns your favorites into booking targets on purpose, and says how many, so delete any you only want to keep an eye on. When an exact sitting is full and the talk has other sittings, `book` says so in one line. Nothing moves to another sitting unless you set `repeats: true` on that target. Other settings are the `rules init` defaults, with its example lunch left as a comment. Without `--force` it never replaces an existing file. With `--force` the old file is kept as `rules.yaml.bak`, because its settings, `serve_secret` included, are reset.
 

@@ -176,31 +176,101 @@ def dump(rules: Rules) -> str:
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
 
 
+def exposure_warning(path: Path, rules: Rules) -> str | None:
+    """The file may have been made by hand, under a umask that lets others read it. re:Seat does
+    not change a file it did not write, but says so when it holds a secret others can read."""
+    if not (rules.serve_secret or rules.ntfy_topic) or os.name != "posix":
+        return None
+    try:
+        loose = os.stat(path).st_mode & 0o077
+    except OSError:
+        return None
+    if not loose:
+        return None
+    return (f"{path} holds serve_secret or ntfy_topic and other users on this machine can read it. "
+            f"Run: chmod 600 {path}")
+
+
+def read_nofollow(path: Path) -> str:
+    """Read a file without following a symbolic link, even one swapped in after a check."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as e:
+        raise RulesError(f"{path} could not be read safely ({e.strerror}). "
+                         "Replace it with a regular file.") from None
+    with os.fdopen(fd, encoding="utf-8") as f:
+        return f.read()
+
+
+def refuse_symlink(path: Path) -> None:
+    if path.is_symlink():
+        raise RulesError(f"{path} is a symbolic link. re:Seat will not write through it. "
+                         "Replace it with a regular file.")
+
+
+_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+_BINARY = getattr(os, "O_BINARY", 0)            # Windows: the text layer is fdopen's, not the CRT's
+
+
+def _create(path: Path, text: str) -> None:
+    """Create `path` owner-only. Fails if anything, a dangling link included, is already there."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _NOFOLLOW | _BINARY, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+
+
 def write_new(path: Path, text: str, replace: bool = False) -> bool:
     """Write the whole file or nothing: a temp file, then a rename. Without `replace`, an existing
-    file is never overwritten, even one created a moment ago. False when it already exists."""
-    path.parent.mkdir(parents=True, exist_ok=True)
+    file is never overwritten, even one created a moment ago. False when it already exists.
+
+    The rules file can hold serve_secret, so it is created readable by its owner only (0600),
+    and a symbolic link in its place is refused rather than written through. Any OS failure is
+    a RulesError saying nothing was written, never a traceback.
+    """
+    refuse_symlink(path)
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
-        with tmp.open("w", encoding="utf-8") as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        if replace:
-            os.replace(tmp, path)
-            return True
-        try:
-            os.link(tmp, path)                      # fails if path exists: no clobber, no race
-        except FileExistsError:
-            return False
-        return True
-    finally:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not replace:
+            # A hard link publishes the finished temp file without clobbering. Filesystems with
+            # no hard links fall back to an exclusive create, which also never clobbers.
+            try:
+                tmp.unlink(missing_ok=True)
+                _create(tmp, text)
+                os.link(tmp, path)
+                return True
+            except FileExistsError:
+                if path.exists() or path.is_symlink():
+                    return False
+                raise
+            except OSError:
+                if path.exists() or path.is_symlink():
+                    return False
+                _create(path, text)
+                return True
         tmp.unlink(missing_ok=True)
+        _create(tmp, text)
+        os.replace(tmp, path)                       # renames over a link, never follows it
+        return True
+    except FileExistsError:
+        if path.exists() or path.is_symlink():
+            return False
+        raise RulesError(f"Could not write {path}: a temporary file is in the way. Nothing written.") \
+            from None
+    except OSError as e:
+        raise RulesError(f"Could not write {path} ({e.strerror or e}). Nothing written.") from None
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def save(rules: Rules, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump(rules), encoding="utf-8")
+    write_new(path, dump(rules), replace=True)
 
 
 EXAMPLE = """\

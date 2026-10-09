@@ -308,11 +308,15 @@ def probe(event: str = config.DEFAULT_EVENT,
 
 
 def _rules(path: Path | None = None) -> rules_mod.Rules:
+    path = path or config.RULES_PATH
     try:
-        return rules_mod.load(path or config.RULES_PATH)
+        r = rules_mod.load(path)
     except rules_mod.RulesError as e:
         con.print(f"[red]{_esc(e)}[/red]")
         raise typer.Exit(2) from None
+    if warning := rules_mod.exposure_warning(path, r):
+        con.print(f"[yellow]{_esc(warning)}[/yellow]")
+    return r
 
 
 @rules_app.command("init")
@@ -322,7 +326,14 @@ def rules_init(force: bool = typer.Option(False, help="Overwrite an existing rul
     if config.RULES_PATH.exists() and not force:
         con.print(f"{_esc(config.RULES_PATH)} exists. Use --force to overwrite it.")
         raise typer.Exit(1)
-    config.RULES_PATH.write_text(rules_mod.EXAMPLE, encoding="utf-8")
+    try:
+        written = rules_mod.write_new(config.RULES_PATH, rules_mod.EXAMPLE, replace=force)
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red]")
+        raise typer.Exit(2) from None
+    if not written:
+        con.print(f"{_esc(config.RULES_PATH)} exists. Use --force to overwrite it.")
+        raise typer.Exit(1)
     con.print(f"Wrote {_esc(config.RULES_PATH)}. Edit it, then run: reseat rules check")
 
 
@@ -336,6 +347,11 @@ def rules_import(file: Path,
         con.print(f"[red]{_esc(e)}[/red]")
         raise typer.Exit(2) from None
     config.ensure_home()
+    try:
+        rules_mod.refuse_symlink(config.RULES_PATH)  # this command writes, so check before reading
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red]")
+        raise typer.Exit(2) from None
     if config.RULES_PATH.exists():
         old = _rules()
         if old.targets and not force:
@@ -347,7 +363,11 @@ def rules_import(file: Path,
         except ValueError as e:
             con.print(f"[red]{_esc(e)}[/red]")
             raise typer.Exit(2) from None
-    rules_mod.save(new, config.RULES_PATH)
+    try:
+        rules_mod.save(new, config.RULES_PATH)
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red]")
+        raise typer.Exit(2) from None
     con.print(f"Imported {len(new.targets)} targets into {_esc(config.RULES_PATH)}.")
 
 
@@ -360,6 +380,12 @@ def rules_from_schedule(event: str = config.DEFAULT_EVENT,
     if config.RULES_PATH.exists() and not force:
         con.print(f"{_esc(config.RULES_PATH)} exists. Use --force to replace it.")
         raise typer.Exit(1)
+    try:                                            # refuse before spending an API call
+        rules_mod.refuse_symlink(config.RULES_PATH)
+        rules_mod.refuse_symlink(config.RULES_PATH.with_name(config.RULES_PATH.name + ".bak"))
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red] Nothing written.")
+        raise typer.Exit(2) from None
     c, st = _client(), _store()
     try:
         s = c.get_schedule(event)
@@ -373,8 +399,15 @@ def rules_from_schedule(event: str = config.DEFAULT_EVENT,
     backup = None
     if config.RULES_PATH.exists():                  # only with --force: keep the old file beside it
         backup = config.RULES_PATH.with_name(config.RULES_PATH.name + ".bak")
-        backup.write_bytes(config.RULES_PATH.read_bytes())
-    if not rules_mod.write_new(config.RULES_PATH, imp.text, replace=force):
+    try:
+        if backup:
+            rules_mod.refuse_symlink(config.RULES_PATH)  # before reading through it
+            rules_mod.write_new(backup, rules_mod.read_nofollow(config.RULES_PATH), replace=True)
+        written = rules_mod.write_new(config.RULES_PATH, imp.text, replace=force)
+    except rules_mod.RulesError as e:
+        con.print(f"[red]{_esc(e)}[/red] Nothing written.")
+        raise typer.Exit(2) from None
+    if not written:
         con.print(f"{_esc(config.RULES_PATH)} appeared while reading the schedule. Nothing written.")
         raise typer.Exit(1)
     con.print(f"Wrote {len(imp.reserved)} reserved and {len(imp.favorites)} favorites as targets "
