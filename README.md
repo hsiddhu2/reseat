@@ -1,14 +1,10 @@
 # re:Seat
 
-re:Seat keeps your AWS re:Invent seats. From the day API writes open until the last session ends, it watches for freed seats and newly added repeats, books them within your rules, upgrades held seats without ever losing one, and tells you when to leave and whether to queue.
+re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and your phone is the remote.
 
-Built on the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). Runs on your own machine. Your tokens stay in your OS keychain.
+## The problem
 
-**Status: week four.** Sign-in, catalog sync, the rules file, booking with fallback, favorites sync, the watcher with outage handling, safe swap, leave-now blocks, the phone page and the MCP server work today against the fake API. Reservation writes open through the API on 8 October 2026.
-
-## Why
-
-Every planner stops when the plan is built. Attendees say the trouble starts after that:
+Planners help you pick sessions. Attendees say the trouble starts after that:
 
 - "Most things were full by 10:03am." (2022)
 - "Some stuff that was full yesterday I was able to reserve right now." (2024)
@@ -16,33 +12,75 @@ Every planner stops when the plan is built. Attendees say the trouble starts aft
 - "Get in line and keep refreshing the app. Most sessions will have no shows." (2022)
 - "I was the 50th person on the walk-up line. They only accepted 20." (2023)
 
-re:Seat does that refreshing for you, and acts on it.
+Seats free up, repeats get added, rooms move. Catching that means refreshing the app all week. re:Seat does the refreshing and acts on what it finds, within rules you set.
 
-## Install
-
-Python 3.11 or newer.
+## Install in three commands
 
 ```bash
-git clone https://github.com/<you>/reseat
-cd reseat
+git clone https://github.com/hsiddhu2/reseat && cd reseat
 pip install -e .
-```
-
-## Sign in
-
-```bash
 reseat login
 ```
 
-Your browser opens an AWS Builder ID sign-in. If it does not open, copy the printed URL. Use the Builder ID that your re:Invent registration is tied to. Then check:
+Python 3.11 or newer. `login` opens your AWS Builder ID sign-in. Use the Builder ID your re:Invent registration is under: `reseat whoami` should then say `Registered for reinvent2026`. The tokens stay in your OS keychain and are sent only to `api.awsevents.com`. Then point re:Seat at the sessions you want:
 
 ```bash
-reseat whoami
+reseat sync                                  # the catalog, about 9 calls
+reseat rules import my-planner-export.json   # or: reseat rules init, then edit ~/.reseat/rules.yaml
+reseat favorites sync                        # mirror them into the official app
+reseat book --dry-run                        # see the plan. Nothing is sent
 ```
 
-You should see `Registered for reinvent2026`. If you see `not registered`, your registration is under a different Builder ID.
+## Your week with re:Seat
 
-## Use
+| When | What re:Seat does |
+|---|---|
+| Before writes open | Imports your targets from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export and mirrors them into your favorites. |
+| The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
+| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal on your phone. Leave-now reminders go into your official schedule. |
+| At re:Invent | The laptop stays in the hotel room. Your phone shows today's seats, a leave-now countdown and whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
+
+## Safe swap
+
+The API has no swap. To move from held session A to a better B at the same time, A must be cancelled before B can be reserved, and for that moment you hold neither. re:Seat only starts when B is open right now, A has a fallback (its own seat or another open sitting), and you approved or allowed auto-swap for that target. If B fails, it re-reserves A. If A is gone, it books A's fallback and tells you exactly what you hold. One swap at a time, every step journaled.
+
+## The phone remote
+
+Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. `reseat serve` also serves a small page your phone opens over [Tailscale](https://tailscale.com): held sessions, the next leave time, queue-or-go advice, and Approve or Skip for a proposed swap. Optional push through ntfy. Designed for a laptop left in the hotel room. See [Running it all week](#running-it-all-week).
+
+## What the API requires, and what re:Seat does
+
+| The API says | re:Seat |
+|---|---|
+| Quotas are per operation per minute, and reserve counts each session | Keeps its own count per operation and never sends a batch larger than what is left. |
+| A 200 on reserve can still carry per-session failures | Reads every `failed` entry, then reads back your schedule after every write. |
+| Reserve and cancel are not safe to retry | Never retries a write. A failure is resolved by reading the schedule back. |
+| 429 carries `Retry-After` | Waits that long, once. |
+| 409 means writes are switched off | Stops writing, keeps every opening queued, resumes when writes open. |
+| Seat availability is a band, not a count | Treats a move from `unavailable` to an open band as a freed seat. |
+| There is no search | Pulls the whole catalog, about 9 calls, and works locally. |
+| Personal time is UTC in 5-minute steps | Writes leave-now blocks exactly that way. |
+
+## Seen live
+
+On 8 October, the day writes were scheduled to open through the API, the API served an empty catalog: zero sessions, and 404 for the attendee's own held seats, while the schedule still answered. re:Seat sent no write. It now refuses an empty or partial catalog, keeps the one it has, and books nothing while it cannot see a held seat. The record, with commands and output, is in [docs/proof](docs/proof/). Live booking through the API has not been proven yet. It will be recorded there when the catalog returns.
+
+## Limits
+
+- It manages seats you already chose. It does not recommend sessions or solve your schedule.
+- Queue-or-go advice is a rule by session type, improved by seat band history once there is some. It is a heuristic, never a prediction.
+- Walking times between venues are conservative estimates, not official figures. Wynn and Encore come from the API as one venue and are split by room name.
+- The phone page is plain HTTP. Use it over Tailscale, not open hotel Wi-Fi. It is access control, not a security product.
+- It cannot help with the first rush when reserved seating opens in the portal, two days before the API opens.
+- The MCP server tells an agent to ask before approving a change, but cannot check that it did.
+
+## How it is tested
+
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. Details in [How re:Seat works](docs/architecture.md).
+
+## Reference
+
+### Use
 
 ```bash
 reseat events                      # list events, no sign-in needed
@@ -72,7 +110,7 @@ reseat logout
 
 Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it.
 
-## Rules file
+### Rules file
 
 `~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else.
 
@@ -94,7 +132,7 @@ probe_session: <id of a session that takes no reservations>   # resume the momen
 
 The first target wins a time slot. Within a batch, formats that are not recorded go first, because they fill first: Workshop, Lab and Bootcamp, then Builders' session, Chalk talk, Code talk, Breakout session, then the rest.
 
-## Running it all week
+### Running it all week
 
 re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves a phone page with today's held sessions, a leave-now countdown, queue-or-go advice for the next session you want, and Approve and Skip for proposed swaps.
 
@@ -123,7 +161,7 @@ It prints a one-time link. Open it on the phone once. It sets a cookie and the a
 
 **When sign-in expires.** If the token can no longer be refreshed, re:Seat stops booking, keeps watching for the moment it can read again, and tells you once: "sign in needed". Run `reseat login` on the laptop. Booking resumes on the next sweep.
 
-## MCP server
+### MCP server
 
 `reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Install the extra first: `pip install -e ".[mcp]"`. A client config looks like this, with the path to your `reseat` command:
 
@@ -139,21 +177,11 @@ Tools: `list_targets`, `propose_changes`, `approve_changes`, `explain_drift`, `g
 
 Know the limit: the server tells the agent to ask you before approving, but it cannot check that it did. The agent sees the plan id and could approve on its own. Session titles come from the catalog and reach the agent. Use a client that shows you each tool call before it runs.
 
-## What it respects
-
-The API has rules and re:Seat follows them.
-
-- Per-operation quotas per minute. Reserve and favorite count sessions, not requests. re:Seat keeps a token bucket per operation and waits rather than getting throttled.
-- 429 carries `Retry-After`. re:Seat waits exactly that long, once.
-- Reserve and favorite succeed per session. A 200 is not "done". re:Seat reads every `failed` entry and reads back your schedule after every write.
-- Writes are not safe to blind-retry. re:Seat never does.
-- Personal time is UTC to the minute in 5-minute steps. Sessions are in Las Vegas local time. re:Seat converts.
-
-## Good citizen rules
+### Good citizen rules
 
 re:Seat only reserves what you asked for. It never holds two sittings of one talk. Watch lists are capped. It does not scrape or redistribute the catalog. Seats it frees during a swap go back to the pool at once.
 
-## Development
+### Development
 
 ```bash
 pip install -e ".[dev]"
@@ -165,16 +193,12 @@ A fault storm runs the whole flow for an hour on the real catalog: 30 percent of
 
 `tests/fixtures/catalog-2026-10-01.json` is a real catalog pull (no abstracts, no speaker names). `FakeEventsApi.from_fixture(path)` serves it, so tests see the real venue, room and type strings.
 
-## Docs
+### Docs
 
-- [How re:Seat works](docs/architecture.md): the problem, the design, each part marked built or planned.
+- [How re:Seat works](docs/architecture.md): the design, each part marked built or planned, and how it is tested.
 - [AWS Events API facts](docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
-
-## Status
-
-- Built: sign-in, catalog sync and change detection, rules file, order router with fallback, cancel, favorites sync, watcher with new-repeat booking, swap proposals and outage handling, safe swap, leave-now blocks, queue-or-go advice, the phone page with push, the local MCP server.
-- Next: live booking when API writes open on 8 October 2026.
-- Later: demo recordings, the write-up. Live checks against the real API are collected in [docs/proof](docs/proof/).
+- [Live proof](docs/proof/): checks run against the real API.
+- [Demo scripts](demo/): recordable demos against the fake API.
 
 ## License
 

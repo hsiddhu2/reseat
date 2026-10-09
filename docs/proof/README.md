@@ -8,6 +8,7 @@ Everything else in this repo is tested against an in-process fake of the AWS Eve
 - Screenshots sit next to it with the same name and a suffix: `2026-10-08-live-booking-portal.png`.
 - The command exactly as run, and its output pasted unedited, except for the redactions below.
 - Say what the check proves and what it does not.
+- A check repeated daily with the same result, such as the empty catalog, appends one dated line to its file instead of a new file.
 
 ## Redact before committing
 

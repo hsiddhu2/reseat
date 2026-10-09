@@ -38,11 +38,13 @@ GetEvent reinvent2026           -> 200, 2026-11-30 to 2026-12-04, authentication
 ListEvents                      -> reinvent2026 listed with two other events
 ```
 
-The 14 reservations were made in the AWS portal after seating opened on 6 October. Their session ids begin `17842318`, a range that does not appear in the 1 October catalog, whose ids begin `1780` and `1790`.
+The 14 reservations were made in the AWS portal after seating opened on 6 October. Their session ids begin `17842318`. No id in the 1 October catalog begins that way: those begin `1780` and `1790`.
 
 ## Result
 
-On the evening of 8 October the Events API answered GetSchedule but served no sessions: an empty catalog and 404 for every session tried, including held ones. The schedule's session ids differ in range from the 1 October catalog, which suggests the catalog was re-keyed when seating opened.
+On the evening of 8 October the Events API answered GetSchedule but served no sessions: an empty catalog and 404 for every session tried, including held ones.
+
+The same condition was reported publicly on 3 October by another re:Invent tool, in [reinvent-scout issue 17](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, GetSession 404 for every id in its user's favorites, GetSchedule still returning the user's favorites, and the official MCP server returning the same empty list.
 
 Three re:Seat fixes came from this, each tested against the fake:
 
@@ -53,5 +55,15 @@ Three re:Seat fixes came from this, each tested against the fake:
 ## What it does not prove
 
 - Why the catalog was empty, or for how long. It may have been a short outage on the API side.
-- That the catalog was re-keyed. The id ranges suggest it. A sync once the catalog is back will show it.
+- Whether session ids changed. A sync once the catalog is back will show that.
 - Anything about booking through the API. No write was sent.
+
+## Daily checks
+
+One line per check until the catalog returns, as `date time, command, result`. The first sync that returns sessions is the band inspection and gets its own file.
+
+```
+2026-10-08 20:19 PDT  reseat sync --no-abstracts  ListSessions 200, totalCount 0 (the run above)
+2026-10-08 20:28 PDT  ListSessions read            200, totalCount 0
+2026-10-08 21:07 PDT  reseat sync --no-abstracts  refused: the API returned an empty catalog
+```

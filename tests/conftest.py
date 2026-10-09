@@ -47,6 +47,6 @@ def store():
 def plain_cli_output(monkeypatch):
     """CLI tests read the printed text. Colour codes and terminal width must not change it."""
     from reseat import cli
-    monkeypatch.setattr(cli, "con", Console(color_system=None, highlight=False, width=200))
+    monkeypatch.setattr(cli, "con", Console(color_system=None, highlight=False, width=200, emoji=False))
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.setenv("TERM", "dumb")
