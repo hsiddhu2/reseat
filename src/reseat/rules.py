@@ -182,6 +182,8 @@ def exposure_warning(path: Path, rules: Rules) -> str | None:
     if not (rules.serve_secret or rules.ntfy_topic) or os.name != "posix":
         return None
     try:
+        # The file's own mode decides. An owner-only folder may hide it, but links, hard links
+        # and ACLs can open another way in, and a missed warning is worse than a spare one.
         loose = os.stat(path).st_mode & 0o077
     except OSError:
         return None

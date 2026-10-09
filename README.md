@@ -117,7 +117,7 @@ reseat mcp                         # local MCP server on stdio. Needs pip instal
 reseat logout
 ```
 
-Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it.
+Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it. On macOS and Linux, re:Seat creates the folder readable by you only and the database the same way, and tightens an existing `~/.reseat`. A folder you name with `RESEAT_HOME` that already exists, or a symbolic link, keeps its own permissions.
 
 ### Rules file
 

@@ -100,11 +100,15 @@ def test_a_hand_made_readable_file_with_a_secret_is_flagged_not_changed(home):
     path = tmp / "rules.yaml"
     path.write_text("targets: []\nserve_secret: abcdefghijklmnopqrstu\n")
     os.chmod(path, 0o644)
+    os.chmod(tmp, 0o755)                                        # others can enter the folder
     r = CliRunner().invoke(cli.app, ["rules", "check"])
     assert "other users on this machine can read it" in " ".join(r.output.split())
     assert mode(path) == 0o644                                  # warned, never changed behind you
     os.chmod(path, 0o600)
-    assert "other users" not in CliRunner().invoke(cli.app, ["rules", "check"]).output
+    assert "other users" not in " ".join(CliRunner().invoke(cli.app, ["rules", "check"]).output.split())
+    os.chmod(path, 0o644)
+    os.chmod(tmp, 0o700)              # the file's own mode decides, whatever the folder allows
+    assert "other users" in " ".join(CliRunner().invoke(cli.app, ["rules", "check"]).output.split())
 
 
 def test_no_warning_without_a_secret(home):
@@ -112,7 +116,7 @@ def test_no_warning_without_a_secret(home):
     path = tmp / "rules.yaml"
     path.write_text("targets: []\n")
     os.chmod(path, 0o644)
-    assert "other users" not in CliRunner().invoke(cli.app, ["rules", "check"]).output
+    assert "other users" not in " ".join(CliRunner().invoke(cli.app, ["rules", "check"]).output.split())
 
 
 def test_read_nofollow_refuses_a_link(tmp_path):
@@ -180,3 +184,94 @@ def test_import_refuses_a_link_before_reading_it(home):
     r = CliRunner().invoke(cli.app, ["rules", "import", str(export), "--force"])
     assert r.exit_code == 2 and "symbolic link" in " ".join(r.output.split())
     assert target.read_text() == "targets: [not, valid\n"
+
+
+def test_a_new_home_folder_is_owner_only(tmp_path, monkeypatch):
+    home = tmp_path / "new" / ".reseat"
+    monkeypatch.setattr(config, "HOME", home)
+    config.ensure_home()
+    assert mode(home) == 0o700
+
+
+def test_the_default_home_is_tightened_but_a_chosen_folder_is_left_alone(tmp_path, monkeypatch):
+    default, chosen = tmp_path / "default", tmp_path / "chosen"
+    for d in (default, chosen):
+        d.mkdir()
+        os.chmod(d, 0o755)
+    monkeypatch.setattr(config, "DEFAULT_HOME", default)
+    monkeypatch.setattr(config, "HOME", default)
+    config.ensure_home()
+    assert mode(default) == 0o700
+    monkeypatch.setattr(config, "HOME", chosen)                 # RESEAT_HOME, already there
+    config.ensure_home()
+    assert mode(chosen) == 0o755
+
+
+def test_the_database_is_owner_only_new_or_existing(tmp_path):
+    new = tmp_path / "new.db"
+    Store(new).close()
+    assert mode(new) == 0o600
+    old = tmp_path / "old.db"
+    Store(old).close()
+    os.chmod(old, 0o644)                                        # made before this rule
+    st = Store(old)
+    st.apply_sweep("e", [], with_abstracts=False, force=True)
+    st.close()
+    assert mode(old) == 0o600
+
+
+def test_a_symlinked_database_is_not_chmodded_through(tmp_path):
+    real = tmp_path / "real.db"
+    real.touch()
+    os.chmod(real, 0o644)
+    (tmp_path / "link.db").symlink_to(real)
+    Store(tmp_path / "link.db").close()
+    assert mode(real) == 0o644
+
+
+SECRET = "targets: []\nserve_secret: abcdefghijklmnopqrstu\n"
+
+
+def test_a_link_to_a_readable_file_elsewhere_is_still_flagged(tmp_path):
+    private, open_dir = tmp_path / "private", tmp_path / "open"
+    private.mkdir(mode=0o700)
+    open_dir.mkdir()
+    os.chmod(open_dir, 0o755)
+    target = open_dir / "rules.yaml"
+    target.write_text(SECRET)
+    os.chmod(target, 0o644)
+    link = private / "rules.yaml"
+    link.symlink_to(target)
+    os.chmod(private, 0o700)
+    assert R.exposure_warning(link, R.load(link))
+    hard = private / "hard.yaml"
+    os.link(target, hard)                                       # a second way in from an open folder
+    assert R.exposure_warning(hard, R.load(hard))
+
+
+def test_a_symlinked_default_home_is_not_chmodded_through(tmp_path, monkeypatch):
+    real = tmp_path / "real"
+    real.mkdir()
+    os.chmod(real, 0o755)
+    link = tmp_path / ".reseat"
+    link.symlink_to(real)
+    monkeypatch.setattr(config, "DEFAULT_HOME", link)
+    monkeypatch.setattr(config, "HOME", link)
+    config.ensure_home()
+    assert mode(real) == 0o755
+
+
+def test_leftover_sqlite_side_files_are_tightened(tmp_path):
+    db = tmp_path / "reseat.db"
+    Store(db).close()
+    side = tmp_path / "reseat.db-journal"
+    side.write_text("")
+    os.chmod(side, 0o644)
+    Store(db).close()
+    assert mode(side) == 0o600
+
+
+def test_reseat_home_expands_a_tilde(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert config.home_from({"RESEAT_HOME": "~/rs"}) == tmp_path / "rs"
+    assert config.home_from({}) == config.DEFAULT_HOME

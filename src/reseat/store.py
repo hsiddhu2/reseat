@@ -8,6 +8,7 @@ what the watcher, the swap engine and the queue-or-go advice read.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -110,9 +111,31 @@ class SweepResult:
         return out
 
 
+def _owner_only_file(path: Path) -> None:
+    """The database holds the catalog, the attendee's schedule and the write journal. Create it
+    owner-only (0600), and tighten one re:Seat made before this rule. SQLite gives its journal
+    and WAL files the database file's mode."""
+    if os.name != "posix":
+        return
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    for p, create in ((path, True), *((Path(f"{path}{s}"), False) for s in ("-journal", "-wal", "-shm"))):
+        if p.is_symlink() or (not create and not p.exists()):
+            continue
+        try:
+            fd = os.open(p, os.O_RDWR | nofollow | (os.O_CREAT if create else 0), 0o600)
+            try:
+                os.fchmod(fd, 0o600)             # the file just opened, never a swapped-in link
+            finally:
+                os.close(fd)
+        except OSError:
+            pass                 # SQLite reports any real problem opening it
+
+
 class Store:
     def __init__(self, path: Path | str = ":memory:"):
         self.path = str(path)
+        if self.path != ":memory:":
+            _owner_only_file(Path(self.path))
         # One thread owns a Store at a time. `reseat serve` opens it on the main thread
         # and hands it to the watcher thread, which then does all store work. HTTP
         # threads never touch it. So the connection may move between threads.
