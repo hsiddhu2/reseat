@@ -1,9 +1,11 @@
+import json
+
 import pytest
 from typer.testing import CliRunner
 
 from reseat import cli, config
 from reseat import rules as R
-from reseat.client import EventsClient, QuotaTracker
+from reseat.client import ApiError, EventsClient, QuotaTracker
 from reseat.fakeapi import FakeEventsApi
 from reseat.models import Session
 from reseat.store import Store
@@ -66,23 +68,61 @@ def test_happy_path_verified_and_every_transition_journaled(env):
     assert ops[-1] == ("swap.verified", "state:verified")
 
 
-def test_b_full_after_cancel_then_a_recovered(env):
+def test_every_read_comes_before_the_cancel(env):
     fake, *_ = env
+    swap(env).run("H1", "B1", approved=True)
+    ops = [op for op, _ in fake.log]
+    cut = ops.index("CancelReservation")
+    assert ops[:cut] == ["GetSchedule"] + ["GetSession"] * 4   # B, A, then A's other sittings H2 and O2
+    assert "GetSession" not in ops[cut:] and "ReserveSessions" not in ops[:cut]
+
+
+def test_b_full_after_cancel_then_a_recovered(env):
+    fake, _, store, _ = env
     fake.full.add("B1")                        # band still reads open, the reserve says full
     res = swap(env).run("H1", "B1", approved=True)
     assert res.state == "rolled_back" and res.alert is None
+    assert res.steps == ["proposed", "checked", "cancelled", "rolled_back"]
     assert fake.schedule.reserved == {"H1"}
     assert fake.counts["ReserveSessions"] == 2   # B once, A once. Nothing re-sent.
+    ops = journal_ops(store)
+    assert ("swap.rollback", "before:cancelled") in ops and ("swap.rollback", "after:cancelled") in ops
+    assert ops[-1] == ("swap.rolled_back", "state:rolled_back")
 
 
 def test_b_full_and_a_gone_then_fallback_booked(env):
-    fake, *_ = env
+    fake, _, store, _ = env
     fake.set_band("H1", "unavailable")         # A's room is full: once released it is gone
     fake.full.add("B1")
     res = swap(env).run("H1", "B1", approved=True)
     assert res.fallback_id == "H2"
     assert res.state == "failed" and fake.schedule.reserved == {"H2"}
     assert res.alert.startswith("SWAP FAILED") and "H2 is now held" in res.alert
+    ops = journal_ops(store)
+    assert ("swap.fallback", "after:cancelled") in ops
+    assert ops[-1] == ("swap.failed", "state:failed")
+    assert json.loads(store.journal_entries(EV, 1)[0]["response"]) == {"fallback_held": "H2"}
+
+
+def test_409_on_the_reserve_after_the_cancel_stops_and_says_a_is_released(env):
+    fake, _, store, _ = env
+    fake.fail_next("ReserveSessions", 409)
+    res = swap(env).run("H1", "B1", approved=True)
+    assert res.state == "failed" and res.closed
+    assert fake.counts["ReserveSessions"] == 1   # no rollback into a 409: nothing more is sent
+    assert fake.schedule.reserved == set() and res.held_now == []
+    assert res.alert.startswith("SWAP STOPPED") and "H1 is released" in res.alert
+    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+
+
+def test_a_failed_read_in_the_checks_is_journaled_and_nothing_cancelled(env):
+    fake, _, store, _ = env
+    fake.fail_next("GetSession", 503)
+    with pytest.raises(ApiError):
+        swap(env).run("H1", "B1", approved=True)
+    assert cancels(fake) == 0 and fake.schedule.reserved == {"H1"}
+    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+    assert json.loads(store.journal_entries(EV, 1)[0]["response"]) == {"read": "GetSession", "status": 503}
 
 
 def test_b_full_a_gone_and_every_fallback_gone_alerts_with_nothing_held(env):
@@ -233,3 +273,110 @@ def test_held_session_missing_from_local_catalog_blocks_the_cancel(env):
     fake.schedule.reserved.add("UNKNOWN-1")
     res = swap(env).run("H1", "B1", approved=True)
     assert any("not in the local catalog" in r for r in res.reasons) and cancels(fake) == 0
+
+
+def fault_on_call(fake, op, n, outcome):
+    """The nth call to `op` meets `outcome`. 'timeout' and 'garbled' apply the call first,
+    as when the server acts and the response is lost or mangled. 'fail' and 'closed' (409)
+    apply nothing."""
+    import httpx
+    real, seen = fake._dispatch, {"n": 0}
+
+    def wrapped(req, op_, parts, path):
+        if op_ == op:
+            seen["n"] += 1
+            if seen["n"] == n:
+                if outcome == "fail":
+                    return httpx.Response(503, json={"message": "unavailable"})
+                if outcome == "closed":
+                    return httpx.Response(409, json={"message": "not accepting requests"})
+                real(req, op_, parts, path)
+                if outcome == "timeout":
+                    raise httpx.ReadTimeout("response lost")
+                return httpx.Response(200, json={"unexpected": True})
+        return real(req, op_, parts, path)
+
+    fake._dispatch = wrapped
+
+
+def test_garbled_reserve_body_after_the_cancel_is_read_back_not_raised(env):
+    fake, _, store, _ = env
+    fault_on_call(fake, "ReserveSessions", 1, "garbled")    # B landed, body off-spec
+    res = swap(env).run("H1", "B1", approved=True)
+    assert res.state == "verified" and fake.schedule.reserved == {"B1"}
+    assert journal_ops(store)[-1] == ("swap.verified", "state:verified")
+
+
+def test_dropped_connection_on_a_cancel_that_landed_carries_on_to_b(env):
+    fake, *_ = env
+    fault_on_call(fake, "CancelReservation", 1, "timeout")
+    res = swap(env).run("H1", "B1", approved=True)
+    assert res.state == "verified" and fake.schedule.reserved == {"B1"}
+    assert fake.counts["CancelReservation"] == 1 and fake.counts["ReserveSessions"] == 1
+
+
+def test_timeout_on_a_reserve_of_b_that_landed_is_verified_not_rolled_back(env):
+    fake, *_ = env
+    fault_on_call(fake, "ReserveSessions", 1, "timeout")
+    res = swap(env).run("H1", "B1", approved=True)
+    assert res.state == "verified" and fake.schedule.reserved == {"B1"}
+    assert fake.counts["ReserveSessions"] == 1             # A not re-reserved next to B
+
+
+def test_read_back_failure_after_the_rollback_sends_nothing_more(env):
+    fake, _, store, _ = env
+    fake.full.add("B1")
+    fault_on_call(fake, "GetSchedule", 3, "fail")          # 1 check, 2 after B, 3 after A
+    res = swap(env).run("H1", "B1", approved=True)
+    assert fake.counts["ReserveSessions"] == 2             # B, then A. No fallback after unknown
+    assert res.state == "failed" and res.alert.startswith("SWAP STATE UNKNOWN") and "H1 was sent" in res.alert
+    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+
+
+def test_409_on_the_rollback_stops_before_any_fallback(env):
+    fake, _, store, _ = env
+    fake.full.add("B1")
+    fault_on_call(fake, "ReserveSessions", 2, "closed")    # B full, then writes close on A
+    res = swap(env).run("H1", "B1", approved=True)
+    assert fake.counts["ReserveSessions"] == 2              # B, A. No fallback into the 409
+    assert res.state == "failed" and res.closed and fake.schedule.reserved == set()
+    assert res.alert.startswith("SWAP STOPPED") and "on the reserve of H1" in res.alert
+    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+
+
+def test_409_on_a_fallback_stops_before_the_next_one(env):
+    fake, *_ = env
+    fake.set_band("H1", "unavailable")
+    fake.full.update({"B1", "H1"})
+    fault_on_call(fake, "ReserveSessions", 3, "closed")    # B full, A full, then 409 on H2
+    res = swap(env).run("H1", "B1", approved=True)
+    assert res.fallbacks == ["H2", "O2"]
+    assert fake.counts["ReserveSessions"] == 3              # O2 never sent
+    assert res.state == "failed" and res.closed and "on the reserve of H2" in res.alert
+
+
+def test_the_cancel_is_journaled_before_and_after(env):
+    _, _, store, _ = env
+    swap(env).run("H1", "B1", approved=True)
+    ops = journal_ops(store)
+    assert ops.index(("swap.cancel", "before:checked")) < ops.index(("swap.cancel", "after:checked")) \
+        < ops.index(("swap.cancelled", "state:cancelled"))
+
+
+def test_cli_swap_declined_is_journaled_as_failed(env, tmp_path, monkeypatch):
+    fake, client, store, _ = env
+    monkeypatch.setattr(config, "RULES_PATH", tmp_path / "rules.yaml")
+    monkeypatch.setattr(cli, "_client", lambda: client)
+    monkeypatch.setattr(cli, "_store", lambda: store)
+    (tmp_path / "rules.yaml").write_text(RULES)
+    r = CliRunner().invoke(cli.app, ["swap", "H1", "B1"], input="n\n")
+    assert r.exit_code == 1 and cancels(fake) == 0
+    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+    assert json.loads(store.journal_entries(EV, 1)[0]["response"]) == {"declined": True}
+
+
+def test_garbled_favorites_body_is_an_api_error(env):
+    fake, client, *_ = env
+    fault_on_call(fake, "AssociateFavorites", 1, "garbled")
+    with pytest.raises(ApiError, match="does not match the spec"):
+        client.favorite(EV, ["B1"])

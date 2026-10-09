@@ -239,7 +239,7 @@ def test_swap_read_back_failure_after_b_does_not_book_more(senv):
     res = s.run("H1", "B1", approved=True)
     assert fake.counts["ReserveSessions"] == 1             # no rollback or fallback after unknown
     assert fake.schedule.reserved == {"B1"}
-    assert res.state != "failed" or "unknown" in (res.alert or "").lower()
+    assert res.state == "failed" and res.alert.startswith("SWAP STATE UNKNOWN")
 
 
 def test_swap_fallback_that_overlaps_a_held_session_is_not_a_fallback(clock):

@@ -82,8 +82,9 @@ class MalformedResponse(ApiError):
 
 
 def _body(r: httpx.Response, op: str, parse: Callable[[Any], Any]) -> Any:
-    """Parse a read response. A body that is not the documented shape must fail as an ApiError,
-    so every caller's read-failure handling applies, never an unexpected traceback."""
+    """Parse a response body. A body that is not the documented shape must fail as an ApiError,
+    so every caller's failure handling applies, never an unexpected traceback. After a write,
+    that handling is the read-back, since the write may have landed."""
     try:
         return parse(r.json())
     except (ValueError, KeyError, TypeError) as e:   # JSON errors and pydantic ValidationError
@@ -275,7 +276,7 @@ class EventsClient:
         ids = _check_batch(session_ids)
         r = self._request("ReserveSessions", "POST", f"/v1/events/{event_id}/reservations",
                           units=len(ids), json={"sessionIds": ids})
-        return BulkResult.model_validate(r.json()["result"])
+        return _body(r, "ReserveSessions", lambda j: BulkResult.model_validate(j["result"]))
 
     def cancel(self, event_id: str, session_id: str) -> None:
         self._request("CancelReservation", "DELETE",
@@ -285,7 +286,7 @@ class EventsClient:
         ids = _check_batch(session_ids)
         r = self._request("AssociateFavorites", "POST", f"/v1/events/{event_id}/favorites",
                           units=len(ids), json={"sessionIds": ids})
-        return BulkResult.model_validate(r.json()["result"])
+        return _body(r, "AssociateFavorites", lambda j: BulkResult.model_validate(j["result"]))
 
     def unfavorite(self, event_id: str, session_id: str) -> None:
         self._request("DisassociateFavorite", "DELETE",

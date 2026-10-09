@@ -741,6 +741,7 @@ def swap(held_id: str, wanted_id: str, event: str = config.DEFAULT_EVENT,
     con.print(f"Checks passed. Fallbacks if this fails: {_esc(named)}.")
     if not yes and not typer.confirm(f"Cancel {_code(st, event, held_id)} and reserve "
                                      f"{_code(st, event, wanted_id)}?"):
+        sw.decline(pre)
         raise typer.Exit(1)
     try:
         res = sw.run(held_id, wanted_id, approved=True)

@@ -372,5 +372,5 @@ class Store:
 
     def journal_entries(self, event_id: str, limit: int = 100) -> list[sqlite3.Row]:
         return self.db.execute(
-            "SELECT * FROM journal WHERE event_id=? ORDER BY ts DESC LIMIT ?",
+            "SELECT * FROM journal WHERE event_id=? ORDER BY rowid DESC LIMIT ?",
             (event_id, limit)).fetchall()

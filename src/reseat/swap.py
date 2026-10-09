@@ -91,9 +91,26 @@ class Swap:
     # ---- preconditions
 
     def check(self, held_id: str, wanted_id: str, *, approved: bool) -> SwapResult:
-        """Fresh reads only. No writes. Fills `reasons` when the cancel must not happen."""
+        """Fresh reads only. No writes. Fills `reasons` when the cancel must not happen.
+
+        A read that fails is journaled as failed, then raised. Nothing was cancelled.
+        """
         res = SwapResult(held_id, wanted_id)
         self._go(res, "proposed")
+        try:
+            self._checks(res, approved)
+        except Exception as e:  # noqa: BLE001  journal the end state, then let the caller see it
+            self._go(res, "failed", {"read": getattr(e, "operation", type(e).__name__),
+                                     "status": getattr(e, "status", None)})
+            raise
+        return res
+
+    def decline(self, res: SwapResult) -> None:
+        """The attendee said no after the checks. Journal it so the swap has an end state."""
+        self._go(res, "failed", {"declined": True})
+
+    def _checks(self, res: SwapResult, approved: bool) -> None:
+        held_id, wanted_id = res.held_id, res.wanted_id
         sched = self.client.get_schedule(self.event_id)
         b = self.client.get_session(self.event_id, wanted_id)
         a = self.client.get_session(self.event_id, held_id)
@@ -115,7 +132,6 @@ class Swap:
             res.reasons.append("not approved, and the target does not allow auto_swap")
         if not res.reasons:
             self._go(res, "checked", {"band": b.seat_availability, "fallbacks": res.fallbacks})
-        return res
 
     def _clashes(self, s: Session, except_id: str, sched: Schedule) -> list[str]:
         """Reasons `s` cannot be held next to everything held except `except_id`."""
@@ -182,12 +198,14 @@ class Swap:
             self.client.cancel(self.event_id, a)
         except OperationClosed:
             res.closed = True
+            self._log(res, "cancel", "after", {"status": 409})
             self._go(res, "failed", {"cancel": 409})
             res.alert = f"Writes are closed (409). Nothing changed. {a} is still held."
             res.held_now = self._held() or []
             return res
         except ApiError as e:
             held = self._held()
+            self._log(res, "cancel", "after", {"status": e.status, "readBack": held})
             if held is None or a in held:
                 self._go(res, "failed", {"cancel": e.status, "readBack": held})
                 res.alert = (f"Cancel failed ({e.status}). " + (f"{a} is still held." if held is not None
@@ -195,6 +213,8 @@ class Swap:
                 res.held_now = held or []
                 return res
             # The cancel landed despite the error. Carry on to reserve B.
+        else:
+            self._log(res, "cancel", "after", {"status": 200})
         self._go(res, "cancelled")
 
         landed, response = self._reserve(res, b, "reserve")
@@ -206,18 +226,13 @@ class Swap:
             res.held_now = self._held() or []
             return res
         if res.closed:
-            # Writes closed between the cancel and the reserve. Every further write would get the
-            # same 409, so none is sent. A is released. Say exactly that.
-            self._go(res, "failed", {"reserve": 409})
-            res.held_now = self._held() or []
-            res.alert = (f"SWAP STOPPED. Reservation writes closed (409) right after {a} was cancelled. "
-                         f"{a} is released and {b} was not reserved. Nothing more was sent. Reserve {a} "
-                         "again when writes reopen.")
-            return res
+            return self._stopped(res, b)
 
         landed, response = self._reserve(res, a, "rollback")
         if landed is None:
             return self._unknown(res, a)
+        if res.closed:
+            return self._stopped(res, a)
         if landed:
             self._go(res, "rolled_back", response)
             res.held_now = self._held() or []
@@ -229,6 +244,8 @@ class Swap:
             landed, response = self._reserve(res, fb, "fallback")
             if landed is None:
                 return self._unknown(res, fb)
+            if res.closed:
+                return self._stopped(res, fb)
             if landed:
                 return self._failed(res, f"Fallback {fb} is now held", fb)
         then = f"Fallback {', '.join(tried)} also failed" if tried else "No other sitting to fall back to"
@@ -239,6 +256,17 @@ class Swap:
         res.held_now = self._held() or []
         res.alert = (f"SWAP FAILED. {res.held_id} was released and could not be re-reserved. {then}. "
                      f"Held now: {', '.join(res.held_now) or 'nothing'}.")
+        return res
+
+    def _stopped(self, res: SwapResult, sid: str) -> SwapResult:
+        """Writes closed (409) after A was cancelled. Every further write would get the same 409,
+        so none is sent. A is released. Say exactly that."""
+        a = res.held_id
+        self._go(res, "failed", {"reserve": 409, "session": sid})
+        res.held_now = self._held() or []
+        res.alert = (f"SWAP STOPPED. Reservation writes closed (409) after {a} was cancelled, on the "
+                     f"reserve of {sid}. {a} is released and nothing more was sent. Reserve {a} again "
+                     f"when writes reopen. Held now: {', '.join(res.held_now) or 'nothing'}.")
         return res
 
     def _unknown(self, res: SwapResult, sid: str) -> SwapResult:

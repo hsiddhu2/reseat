@@ -63,9 +63,9 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - Emits typed events (sweep, booked, proposed, swap, moved, error, outage, offline, back, signin) to any subscriber. The CLI prints them. The phone page will subscribe the same way.
 
 **Swap** (built)
-- Before replacing held session A with wanted session B, checks: B is fresh from `GetSession` and open, A has a fallback (A's own band open, or another sitting of A open and free of clashes), B repeats no held code and overlaps no held session but A, and the attendee allowed auto-swap for this target or approves now.
-- Cancels A, reserves B at once, reads back. If B fails, re-reserves A. If A is gone, tries each fallback once and prints a loud alert with what is held now. If a read-back fails mid-swap, it sends nothing more and says the state is unknown.
-- States: proposed, checked, cancelled, reserved, verified, rolled back, failed. Every step is journaled before and after the call. One swap in flight at a time, across processes.
+- Before replacing held session A with wanted session B, checks: B is open in a fresh `GetSession` read and takes reservations, A has a fallback (A's own band open, or another sitting of A open and free of clashes), B repeats no held code and overlaps no held session but A, and the attendee allowed auto-swap for this target or approves now.
+- Cancels A, reserves B at once, reads back. If B fails, re-reserves A. If A is gone, tries each fallback once and prints a loud alert with what is held now. If a read-back fails mid-swap, it sends nothing more and says the state is unknown. If any reserve after the cancel returns 409, it sends nothing more and says A was released. Bands are read fresh. Session times for the clash checks, and the list of A's other sittings, come from the last sync.
+- States: proposed, checked, cancelled, reserved, verified, rolled back, failed. Every state is journaled, and every write before and after it is sent. A read that fails during the checks is journaled as failed, and nothing is cancelled. One swap in flight at a time, across processes.
 - Ask first by default. Auto mode is opt-in per target. `reseat swap <held> <wanted>` and the watcher use the same code.
 
 **Guard** (built)

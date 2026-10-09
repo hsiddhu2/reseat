@@ -42,7 +42,7 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 
 ## Safe swap
 
-The API has no swap. To move from held session A to a better B at the same time, A must be cancelled before B can be reserved, and for that moment you hold neither. re:Seat only starts when B is open right now, A has a fallback (its own seat or another open sitting), and you approved or allowed auto-swap for that target. If B fails, it re-reserves A. If A is gone, it books A's fallback and tells you exactly what you hold. One swap at a time, every step journaled.
+The API has no swap. To move from held session A to a better B at the same time, A must be cancelled before B can be reserved, and for that moment you hold neither. re:Seat cancels A only when a fresh read shows B open, B clashes with nothing else you hold, A has a fallback (its own open seat or another open sitting of A, read fresh), and you approved or allowed auto-swap for that target. If B fails, it re-reserves A. If A is gone too, it tries each fallback once and tells you exactly what you hold. If a read-back fails, or writes close mid-swap, it stops and says so. One swap at a time, every step journaled.
 
 ## The phone remote
 
