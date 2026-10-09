@@ -14,6 +14,27 @@ Planners help you pick sessions. Attendees say the trouble starts after that:
 
 Seats free up, repeats get added, rooms move. Catching that means refreshing the app all week. re:Seat does the refreshing and acts on what it finds, within rules you set.
 
+## Open the dashboard
+
+```bash
+pip install -e .
+reseat serve --demo        # a scripted week on a fake Events API. No sign-in. Open http://127.0.0.1:8491/
+```
+
+Demo mode runs the real watcher, router and swap code against an in-process fake of the API, with a week of real sessions from the 1 October catalog. Within two minutes a seat opens and a swap waits for your approval, a new sitting is booked, and a held session changes room. Nothing is sent to AWS, nothing is read from the keychain, and nothing is written to `~/.reseat`. Every page says "Demo data".
+
+With your own seats, `reseat serve` runs the watcher and the same web app at `http://127.0.0.1:8490/`, in one process.
+
+| Dashboard, laptop width | Approve, phone width | Today, phone width |
+|---|---|---|
+| ![Dashboard: status line, a swap waiting for approval, the week grid, last changes and the journal](docs/screenshots/dashboard.png) | ![Approve: the held and opened sessions side by side, the checks and one button](docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](docs/screenshots/today.png) |
+
+- **Dashboard** (`/`). Watching or paused, the last sweep and its session count, the next sweep, held and wanted counts, and ListSessions quota left. Swaps that need you, each with its checks from the last sweep: the target's band, a fallback, no overlap, and whether the rules allow it or ask first. A week grid of held, wanted, proposed and fallback sessions with leave-now strips, a badge where the walk is longer than the gap, and a note on a held session that changed room. Last changes and the journal.
+- **Approve** (`/approve`). One proposal at a time: what you hold and what opened, side by side, the checks, and one button. Bookings within your rules happen at once and show here and under Last changes.
+- **Today** (`/today`). How long until you leave for the next held session, with the walk and when the doors close. The rest of today, your own personal time included. Wanted sessions you do not hold, with queue-or-go advice, its basis, and any clash with a held session's walk.
+
+Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
+
 ## Install in three commands
 
 ```bash
@@ -37,16 +58,20 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 |---|---|
 | Before writes open | Takes your targets from the schedule you built in the AWS portal, or from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export, and mirrors them into your favorites. |
 | The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
-| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal on your phone. Leave-now reminders go into your official schedule. |
+| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal on the dashboard and your phone. Leave-now reminders go into your official schedule. |
 | At re:Invent | The laptop stays in the hotel room. Your phone shows today's seats, a leave-now countdown and whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
 
 ## Safe swap
 
-The API has no swap. To move from held session A to a better B at the same time, A must be cancelled before B can be reserved, and for that moment you hold neither. re:Seat cancels A only when a fresh read shows B open, B clashes with nothing else you hold, A has a fallback (its own open seat or another open sitting of A, read fresh), and you approved or allowed auto-swap for that target. If B fails, it re-reserves A. If A is gone too, it tries each fallback once and tells you exactly what you hold. If a read-back fails, or writes close mid-swap, it stops and says so. One swap at a time, every step journaled.
+The API has no swap. To move from held session A to a better B at the same time, A must be cancelled before B can be reserved, and for that moment you hold neither. re:Seat cancels A only when a fresh read shows B open, B clashes with nothing else you hold, A has a fallback (its own open seat or another open sitting of A, read fresh), and you approved or allowed auto-swap for that target. If the cancel fails and A is still held, it stops. If B fails, it re-reserves A. If A is gone too, it tries each fallback once and tells you exactly what you hold. If a read-back fails, or writes close mid-swap, it stops and says so. One swap at a time, every step journaled.
 
 ## The phone remote
 
-Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. `reseat serve` also serves a small page your phone opens over [Tailscale](https://tailscale.com): held sessions, the next leave time, queue-or-go advice, and Approve or Skip for a proposed swap. Optional push through ntfy. Designed for a laptop left in the hotel room. See [Running it all week](#running-it-all-week).
+Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. The web app that `reseat serve` runs also works at phone width, over [Tailscale](https://tailscale.com): approve a swap, see when to leave, and see what is wanted today. Optional push through ntfy. Designed for a laptop left in the hotel room. See [Running it all week](#running-it-all-week).
+
+## Why re:Seat runs on your machine
+
+The Events API signs you in with OAuth and PKCE, using your own Builder ID, through a callback on a loopback port of the machine you sign in on. It has no hosted sign-in. A hosted re:Seat would have to hold other attendees' tokens, and those tokens can cancel their seats. So re:Seat runs on your laptop, keeps your token in the OS keychain, sends it only to `api.awsevents.com`, and your phone talks only to your laptop.
 
 ## What the API requires, and what re:Seat does
 
@@ -78,7 +103,7 @@ re:Seat's sync read the empty answer as every session removed and emptied its lo
 - It manages seats you already chose. It does not recommend sessions or solve your schedule.
 - Queue-or-go advice is a rule by session type, improved by seat band history once there is some. It is a heuristic, never a prediction.
 - Walking times between venues are conservative estimates, not official figures. Wynn and Encore come from the API as one venue and are split by room name.
-- The phone page is plain HTTP. Use it over Tailscale, not open hotel Wi-Fi. It is access control, not a security product.
+- The web app is plain HTTP. Use it over Tailscale, not open hotel Wi-Fi. It is access control, not a security product.
 - It cannot help with the first rush when reserved seating opens in the portal, two days before the API opens.
 - The MCP server tells an agent to ask before approving a change, but cannot check that it did.
 
@@ -112,7 +137,8 @@ reseat favorites sync              # mirror every target sitting into favorites.
 reseat watch                       # sweep every minute, book freed seats and new repeats. --once for cron
 reseat swap <held> <wanted>        # replace a held session safely: fallback checked, rolls back on failure
 reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
-reseat serve                       # watcher plus the phone page. See "Running it all week"
+reseat serve                       # watcher plus the web app: dashboard, approve, today. See "Running it all week"
+reseat serve --demo                # the web app on a fake API with a scripted week. No sign-in
 reseat mcp                         # local MCP server on stdio. Needs pip install -e ".[mcp]"
 reseat logout
 ```
@@ -136,7 +162,7 @@ meals:
 max_per_day: 5
 watch_cap: 25
 home_venue: Venetian      # where the first walk of each day starts
-serve_secret: <long random string>   # needed for the phone page off this laptop
+serve_secret: <long random string>   # needed for the web app off this laptop
 ntfy_topic: <random 16 to 64 characters>   # optional push
 probe_session: <id of a session that takes no reservations>   # resume the moment writes open
 ```
@@ -145,22 +171,22 @@ The first target wins a time slot. Within a batch, formats that are not recorded
 
 ### Running it all week
 
-re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves a phone page with today's held sessions, a leave-now countdown, queue-or-go advice for the next session you want, and Approve and Skip for proposed swaps.
+re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves the web app: the dashboard, approve and today.
 
-**Set up the phone page.** Add a long random `serve_secret` to the rules file, then start it on the laptop:
+**Set up the phone.** Add a long random `serve_secret` to the rules file, then start it on the laptop with its Tailscale address (`tailscale ip -4` prints it):
 
 ```bash
-reseat serve --host 0.0.0.0
+reseat serve --host "$(tailscale ip -4)"
 ```
 
-It prints a one-time link. Open it on the phone once. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. Restarting `reseat serve` signs every phone out, and a sign-in lasts 7 days. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Approve and Skip take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
+It prints a one-time link. Open it once on each device. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. A sign-in lasts 7 days. To sign every device out, stop and restart `reseat serve`: sign-ins live only in the running process. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. It never listens on every interface: `--host 0.0.0.0` is refused. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Swap now and Dismiss take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
 
 **Keep the laptop awake with the lid closed.**
 
-- macOS. `caffeinate -s reseat serve --host 0.0.0.0` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
+- macOS. `caffeinate -s reseat serve --host <Tailscale address>` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
 - Windows. Settings, System, Power and battery: when plugged in, sleep after Never. Control Panel, Power Options, Choose what closing the lid does: when plugged in, Do nothing.
 
-**Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Open the printed link with the laptop's Tailscale name in place of its local name, for example `http://my-laptop:8490/open?k=...`. The phone then reaches the laptop from any venue. To keep the page off the hotel network entirely, use `--host` with the laptop's Tailscale address instead of `0.0.0.0`.
+**Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Start `reseat serve` with the laptop's Tailscale address and open the printed link on the phone. The phone then reaches the laptop from any venue, and the page is not offered on the hotel network.
 
 **Push, if you want it.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. The laptop posts to `https://ntfy.sh/<topic>` when a seat is booked, a swap is proposed, done or rolled back, it is time to leave, the API has been unreachable for 10 minutes, it is back, or sign-in is needed. What leaves the laptop: the event type, session codes and titles, and those status lines. Never your token, an abstract, a session id or a plan id. Push is off unless the topic is set.
 
@@ -184,7 +210,7 @@ It prints a one-time link. Open it on the phone once. It sets a cookie and the a
 }
 ```
 
-Tools: `list_targets`, `propose_changes`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`. Every change is two steps. `propose_changes` or `guard_sync` returns a plan id and sends nothing. `approve_changes` carries that plan out once, within 10 minutes, and reserves only what it named. A leave-now plan is refused if what you hold changed after it was shown. Calls run one at a time. No tool takes a list of session ids.
+Tools: `list_targets`, `propose_changes`, `propose_swap`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`. Every change is two steps. `propose_changes`, `propose_swap` or `guard_sync` returns a plan id and sends nothing. `propose_swap(held_code)` finds the open sitting of a held talk that your rules prefer to the one you hold, runs the swap's checks with fresh reads, and lists them. Approving it runs the same checked swap as `reseat swap`. `approve_changes` carries that plan out once, within 10 minutes, and reserves only what it named. A leave-now plan is refused if what you hold changed after it was shown. Calls run one at a time. No tool takes a list of session ids.
 
 Know the limit: the server tells the agent to ask you before approving, but it cannot check that it did. The agent sees the plan id and could approve on its own. Session titles come from the catalog and reach the agent. Use a client that shows you each tool call before it runs.
 
@@ -209,7 +235,7 @@ A fault storm runs the whole flow for an hour on the real catalog: 30 percent of
 - [How re:Seat works](docs/architecture.md): the design, each part marked built or planned, and how it is tested.
 - [AWS Events API facts](docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
 - [Live proof](docs/proof/): checks run against the real API.
-- [Demo scripts](demo/): recordable demos against the fake API.
+- [Demo scripts](demo/): recordable demos against the fake API. `reseat serve --demo` is the web app version.
 
 ## License
 

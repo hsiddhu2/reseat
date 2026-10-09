@@ -46,6 +46,8 @@ class Block:
     title: str
     description: str
     location: str | None
+    origin: str | None = None     # where the walk starts: the previous held venue, or home_venue
+    walk: int | None = None       # walking minutes from origin, None when unknown
 
     def body(self) -> PersonalTimeInput:
         return PersonalTimeInput(startDateTime=self.start, endDateTime=self.end, title=self.title,
@@ -131,7 +133,7 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
             start=to_personal_time(leave), end=to_personal_time(leave + timedelta(minutes=BLOCK_MINUTES)),
             title=f"Leave for {code}"[:128],
             description=f"{PREFIX} {how[:250 - len(PREFIX) - len(TAG) - 2]} {TAG}",
-            location=(dest or None) and dest[:255]))
+            location=(dest or None) and dest[:255], origin=origin, walk=walk))
         prev = s
     return blocks, warnings
 

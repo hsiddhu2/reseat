@@ -33,7 +33,7 @@ Proposals live in memory with a random plan id and expire after 10 minutes. An
 expired proposal is raised again only when that sitting changes again. Approval
 goes through `approve(plan_id)`, never through raw session ids.
 
-The CLI prints them. The phone page and push subscribe the same way.
+The CLI prints them. The web app and push subscribe the same way.
 
 API rules this module exists to respect:
 - ListSessions is 120 per minute. A full sweep is about 9 calls, so the
@@ -63,6 +63,7 @@ from pydantic import ValidationError
 from .auth import AuthError
 from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
+from .models import PersonalTime
 from .router import Router, run_booking
 from .rules import Rules, unresolved
 from .store import Store, SweepRefused
@@ -153,6 +154,7 @@ class Watcher:
         self._custom_sleep = sleep
         self._jobs: queue.Queue[tuple[Callable[[], Any], Future[Any]] | None] = queue.Queue()
         self.last_held: set[str] = set()
+        self.personal_time: list[PersonalTime] = []   # from the GetSchedule each sweep already reads
         self.router = Router(rules, store, event_id)
         self.proposals: dict[str, Proposal] = {}
         self._lock = threading.RLock()
@@ -216,7 +218,7 @@ class Watcher:
         return p if p and not p.expired(self.clock()) else None
 
     def approve(self, plan_id: str) -> Any:
-        """Run a pending proposal the attendee approved. The only way in for the phone page and MCP.
+        """Run a pending proposal the attendee approved. The only way in for the web app.
 
         Returns the swapper's result, or None for an unknown, used or expired plan id.
         """
@@ -400,10 +402,12 @@ class Watcher:
         self._signed_in()
         # Read the schedule before saving the sweep. If it fails, the changes stay
         # unsaved and the next tick sees them again, so no opening is lost.
-        held = set(self.client.get_schedule(self.event_id).reserved)
+        sched = self.client.get_schedule(self.event_id)
+        held = set(sched.reserved)
         sweep = self.store.apply_sweep(self.event_id, sessions, with_abstracts=False, now=now)
         res.count = sweep.count
         self.last_held = held
+        self.personal_time = list(sched.personal_time)
         if sweep.baseline:
             # New ids are not news: a first, re-keyed or forced catalog. Sessions that kept
             # their id can still open or move, so those are handled as usual.
@@ -430,9 +434,11 @@ class Watcher:
                        f"example {dead[0]}. Run reseat rules check.")
 
     def _onsite(self, res: TickResult, now: float, day: str) -> None:
-        held = set(self.client.get_schedule(self.event_id).reserved)
+        sched = self.client.get_schedule(self.event_id)
+        held = set(sched.reserved)
         self._signed_in()
         self.last_held = held
+        self.personal_time = list(sched.personal_time)
         prio = self._priorities()
         held_codes = {s.base_code for s in (self.store.get(self.event_id, i) for i in held) if s}
 

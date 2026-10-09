@@ -1,14 +1,16 @@
-"""The phone remote: a small HTTP server on the laptop, for the phone.
+"""The web app: a small HTTP server on the laptop, for the laptop's browser and the phone.
 
 The API only allows sign-in on the attendee's own machine, so the token stays on
-the laptop and the laptop makes every API call. The phone only ever talks to
-this server, which shows a snapshot and accepts approvals by plan id.
+the laptop and the laptop makes every API call. The browser only ever talks to
+this server, which shows a snapshot and accepts approvals by plan id. Three views:
+the dashboard at `/`, approve at `/approve` and today at `/today` (pages.py).
 
 Rules this module exists to respect:
 - No endpoint takes a session id. Approve and Skip take a plan id the watcher
   proposed. Plan ids are random, expire after 10 minutes and work once.
 - Bound to loopback by default. Any other address needs `serve_secret` in the
-  rules file, or the server refuses to start.
+  rules file, or the server refuses to start. 0.0.0.0 is always refused: name
+  the one address to listen on, such as the laptop's Tailscale address.
 - The secret never goes in a URL. The laptop prints a one-time link with a
   single-use code that sets a cookie and redirects to a clean URL. Signing in
   again from the phone is a POST form, rate limited, compared in constant time.
@@ -39,7 +41,7 @@ from importlib import resources
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from . import guard
+from . import guard, pages
 from .campus import EVENT_DAYS, VEGAS
 from .models import Session
 from .rules import Rules
@@ -55,6 +57,7 @@ LOGIN_TRIES = 5          # failed sign-ins allowed per minute
 APPROVE_WAIT = 120       # seconds an approve may take: check, cancel, reserve, read-backs
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAX_BODY = 2048
+VIEWS = ("/", "/approve", "/today")
 REFRESH_EVERY = 20       # seconds between snapshot refreshes, so leave-now never waits on a sweep
 
 
@@ -67,19 +70,23 @@ def vegas(ts: float) -> datetime:
 
 
 class App:
-    """State and rules for the phone page. No HTTP here, so tests can drive it directly."""
+    """State and rules for the web app. No HTTP here, so tests can drive it directly."""
 
     def __init__(self, watcher: Watcher, store: Store, rules: Rules, event_id: str,
                  host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, demo: bool = False, cookie: str = COOKIE):
+        if host == "0.0.0.0":
+            raise ServeError("Refusing to listen on every interface (0.0.0.0). Use 127.0.0.1, or the one "
+                             "address the phone reaches, such as the laptop's Tailscale address.")
         if ":" in host:
-            raise ServeError(f"{host}: IPv6 addresses are not supported. Use 127.0.0.1, 0.0.0.0 or an IPv4 "
+            raise ServeError(f"{host}: IPv6 addresses are not supported. Use 127.0.0.1 or an IPv4 "
                              "address such as the laptop's Tailscale address.")
         if host not in LOOPBACK and not rules.serve_secret:
             raise ServeError(f"Refusing to listen on {host} without serve_secret in the rules file. "
                              "Loopback (127.0.0.1) needs none.")
         self.watcher, self.store, self.rules, self.event_id = watcher, store, rules, event_id
-        self.host, self.port, self.clock = host, port, clock
+        self.host, self.port, self.clock, self.demo = host, port, clock, demo
+        self.cookie = cookie       # browsers share cookies across ports, so the demo uses its own name
         self.secret = rules.serve_secret
         self.auth_required = bool(self.secret)
         self._tokens: dict[str, float] = {}     # cookie token -> expiry. Cleared on restart.
@@ -135,7 +142,7 @@ class App:
             jar.load(cookie_header or "")
         except Exception:  # noqa: BLE001  a malformed cookie is just no cookie
             return False
-        tok = jar[COOKIE].value if COOKIE in jar else ""
+        tok = jar[self.cookie].value if self.cookie in jar else ""
         now = self.clock()
         with self._lock:
             return any(hmac.compare_digest(tok.encode(), t.encode()) and e > now
@@ -229,6 +236,11 @@ class App:
             "journal": [{"at": vegas(r["ts"]).strftime("%a %H:%M"), "op": r["op"], "outcome": r["outcome"]}
                         for r in self.store.journal_entries(self.event_id, 10)],
         }
+        try:
+            snap["view"] = pages.build(self, now)
+        except Exception as e:  # noqa: BLE001  a view bug must not freeze the phone keys or the watcher
+            snap["view_error"] = f"{type(e).__name__}: {e}"[:200]
+            self.watcher.emit("error", message=f"The web app view failed to build: {snap['view_error']}")
         with self._lock:
             self._snapshot = snap
 
@@ -297,9 +309,23 @@ def _how(b: guard.Block) -> str:
 # ---------------------------------------------------------------------- HTTP
 
 
-def page(nonce: str) -> bytes:
-    html = resources.files("reseat").joinpath("phone.html").read_text(encoding="utf-8")
-    return html.replace("{{NONCE}}", nonce).encode()
+STATIC = {"app.css": "text/css", "app.js": "text/javascript"}
+
+
+def static(name: str) -> bytes:
+    return resources.files("reseat").joinpath("static", name).read_bytes()
+
+
+def page(app: App, path: str) -> bytes:
+    snap = app.snapshot()
+    if not snap.get("view"):
+        return pages.render_starting(app.clock(), app.demo, snap.get("view_error")).encode()
+    snap["now"] = app.clock()        # the countdowns start from the laptop's clock now, not the snapshot's
+    if path == "/approve":
+        return pages.render_approve(snap, app.demo, push=bool(app.rules.ntfy_topic)).encode()
+    if path == "/today":
+        return pages.render_today(snap, app.demo).encode()
+    return pages.render_dashboard(snap, app.demo).encode()
 
 
 LOGIN_PAGE = b"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">
@@ -320,7 +346,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             pass
 
         def _send(self, status: int, body: bytes = b"", ctype: str = "application/json",
-                  headers: dict[str, str] | None = None, nonce: str | None = None) -> None:
+                  headers: dict[str, str] | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", f"{ctype}; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -328,9 +354,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
             self.send_header("Referrer-Policy", "no-referrer")
-            script = f"'nonce-{nonce}'" if nonce else "'none'"
-            self.send_header("Content-Security-Policy", f"default-src 'none'; script-src {script}; "
-                             "style-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
+            # Scripts only from /static/app.js. Inline style attributes place the week grid's blocks.
+            self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; "
+                             "style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
                              "frame-ancestors 'none'; base-uri 'none'")
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
@@ -341,7 +367,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self._send(status, json.dumps(data).encode())
 
         def _cookie(self, tok: str) -> dict[str, str]:
-            return {"Set-Cookie": f"{COOKIE}={tok}; HttpOnly; SameSite=Strict; Path=/; "
+            return {"Set-Cookie": f"{app.cookie}={tok}; HttpOnly; SameSite=Strict; Path=/; "
                                   f"Max-Age={COOKIE_DAYS * 86400}", "Location": "/"}
 
         def _authorized(self) -> bool:
@@ -360,15 +386,18 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             if url.path == "/login" and app.auth_required:
                 self._send(200, LOGIN_PAGE, "text/html")
                 return
+            name = url.path.removeprefix("/static/")
+            if url.path.startswith("/static/") and name in STATIC:    # no data in these: no sign-in needed
+                self._send(200, static(name), STATIC[name])
+                return
             if not self._authorized():
-                if url.path == "/" and app.auth_required:
+                if url.path in VIEWS and app.auth_required:
                     self._send(303, headers={"Location": "/login"})
                 else:
                     self._json(401 if app.auth_required else 403, {"error": "not allowed"})
                 return
-            if url.path == "/":
-                nonce = secrets.token_urlsafe(16)
-                self._send(200, page(nonce), "text/html", nonce=nonce)
+            if url.path in VIEWS:
+                self._send(200, page(app, url.path), "text/html")
             elif url.path == "/api/state":
                 self._json(200, app.snapshot())
             else:

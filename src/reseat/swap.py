@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -50,6 +51,16 @@ LOCK_NAME = "swap"
 
 class SwapBusy(Exception):
     """Another swap is in flight. One at a time."""
+
+
+@dataclass
+class Preview:
+    """What `check` would find, judged from the local catalog. Display only."""
+
+    band: str | None
+    band_open: bool
+    fallbacks: list[tuple[str, str | None]] = field(default_factory=list)   # (session id, band)
+    clashes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -105,9 +116,14 @@ class Swap:
             raise
         return res
 
-    def decline(self, res: SwapResult) -> None:
+    def decline(self, res: SwapResult, why: object = None) -> None:
         """The attendee said no after the checks. Journal it so the swap has an end state."""
-        self._go(res, "failed", {"declined": True})
+        self._go(res, "failed", why if why is not None else {"declined": True})
+
+    def end_proposal(self, res: SwapResult, state: str, why: object) -> None:
+        """A proposer stopped after the checks, with nothing sent: `planned` (a plan id waits for
+        approval, which runs its own checked swap) or `declined` (the checks failed)."""
+        self._go(res, state, why)
 
     def _checks(self, res: SwapResult, approved: bool) -> None:
         held_id, wanted_id = res.held_id, res.wanted_id
@@ -123,7 +139,7 @@ class Swap:
             res.reasons.append(f"{b.abbreviation or wanted_id} band is {band}, not open")
         if b.is_reservable is False:
             res.reasons.append(f"{b.abbreviation or wanted_id} does not take reservations")
-        res.reasons += self._clashes(b, held_id, sched)
+        res.reasons += self._clashes(b, held_id, sched.reserved)
         res.fallbacks = self._fallbacks(a, sched)
         if not res.fallbacks:
             res.reasons.append(f"{a.abbreviation or held_id} has no fallback: its band is not open and "
@@ -133,11 +149,11 @@ class Swap:
         if not res.reasons:
             self._go(res, "checked", {"band": b.seat_availability, "fallbacks": res.fallbacks})
 
-    def _clashes(self, s: Session, except_id: str, sched: Schedule) -> list[str]:
+    def _clashes(self, s: Session, except_id: str, held: Iterable[str]) -> list[str]:
         """Reasons `s` cannot be held next to everything held except `except_id`."""
         out = []
         ws = _window(s)
-        for sid in sched.reserved:
+        for sid in held:
             if sid == except_id:
                 continue
             other = self.store.get(self.event_id, sid)
@@ -161,10 +177,31 @@ class Swap:
             fresh = self.client.get_session(self.event_id, s.session_id)
             if not (fresh.band and fresh.band.open) or fresh.is_reservable is False:
                 continue
-            if self._clashes(fresh, a.session_id, sched):
+            if self._clashes(fresh, a.session_id, sched.reserved):
                 continue
             out.append(fresh.session_id)
         return out
+
+    def preview(self, held_id: str, wanted_id: str, held: Iterable[str]) -> Preview:
+        """The same checks as `check`, from the local catalog only. No API call, no journal.
+
+        For a page that shows a proposal before anyone approves it. Approving still runs
+        `check` with fresh reads, so the preview never decides anything.
+        """
+        held = list(held)
+        a, b = self.store.get(self.event_id, held_id), self.store.get(self.event_id, wanted_id)
+        pv = Preview(band=b.seat_availability if b else None, band_open=bool(b and b.band and b.band.open))
+        if not a or not b:
+            pv.clashes.append("not in the local catalog. Run reseat sync")
+            return pv
+        pv.clashes = self._clashes(b, held_id, held)
+        if a.band and a.band.open:
+            pv.fallbacks.append((a.session_id, a.seat_availability))
+        for s in self.store.by_base_code(self.event_id, a.base_code or ""):
+            if (s.session_id != a.session_id and s.band and s.band.open and s.is_reservable is not False
+                    and not self._clashes(s, a.session_id, held)):
+                pv.fallbacks.append((s.session_id, s.seat_availability))
+        return pv
 
     # ---- the swap
 

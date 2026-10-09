@@ -85,8 +85,13 @@ def wait_for(cond, seconds=5):
 
 def test_non_loopback_without_secret_refused():
     with pytest.raises(S.ServeError, match="without serve_secret"):
-        stack("targets: []\n", host="0.0.0.0")
-    stack(f"serve_secret: {SECRET}\ntargets: []\n", host="0.0.0.0")     # with a secret it starts
+        stack("targets: []\n", host="100.64.0.7")
+    stack(f"serve_secret: {SECRET}\ntargets: []\n", host="100.64.0.7")     # with a secret it starts
+
+
+def test_every_interface_is_refused_even_with_a_secret():
+    with pytest.raises(S.ServeError, match="every interface"):
+        stack(f"serve_secret: {SECRET}\ntargets: []\n", host="0.0.0.0")
 
 
 def test_request_without_cookie_refused(served):
@@ -126,14 +131,18 @@ def test_login_form_posts_the_secret_and_is_rate_limited(served):
 def test_page_has_strict_headers_and_no_token(served):
     fake, _, app, http = served
     signed_in(app, http)
-    r = http.get("/")
-    csp = r.headers["content-security-policy"]
-    nonce = csp.split("'nonce-")[1].split("'")[0]
-    assert f'nonce="{nonce}"' in r.text and "default-src 'none'" in csp
-    assert r.headers["cache-control"] == "no-store" and r.headers["x-frame-options"] == "DENY"
-    state = http.get("/api/state")
-    for body in (r.text, state.text):
-        assert fake.token not in body and SECRET not in body
+    assert wait_for(lambda: http.get("/api/state").json().get("view"))
+    bodies = [http.get("/api/state").text]
+    for path in ("/", "/approve", "/today"):
+        r = http.get(path)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+        csp = r.headers["content-security-policy"]
+        assert "default-src 'none'" in csp and "script-src 'self';" in csp and "frame-ancestors 'none'" in csp
+        assert r.headers["cache-control"] == "no-store" and r.headers["x-frame-options"] == "DENY"
+        assert '<script src="/static/app.js"' in r.text and "<script>" not in r.text   # no inline script
+        bodies.append(r.text)
+    for body in bodies:
+        assert fake.token not in body and SECRET not in body and "session-id" not in body
 
 
 def test_state_shows_held_and_the_proposal(served):

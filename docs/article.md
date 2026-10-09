@@ -1,8 +1,8 @@
 # Keeping your re:Invent seats after the plan is made
 
-*Draft for editing. Places marked [LIVE] wait for checks against the real API. See [proof](proof/).*
+*Draft for editing. Places marked [LIVE] wait for checks against the real API. [LINK] marks a link still to add. See [proof](proof/).*
 
-Every re:Invent planner stops when your plan is built. That is where the trouble starts. re:Seat is a small tool that runs on your laptop from the day API writes open until the last session. It watches the catalog, books seats as they free up, swaps a held seat for a better one without losing either, and tells you when to leave. It is built on the AWS Events API.
+Planning ends when your schedule is built. Keeping the seats takes the rest of the week. re:Seat is a small tool that runs on your laptop from the day API writes open until the last session. It watches the catalog, books seats as they free up, swaps a held seat for a better one without losing either, and tells you when to leave. It is built on the AWS Events API.
 
 ## What attendees say
 
@@ -35,13 +35,19 @@ The Events API is clean and well documented. Four things it does not do shape ev
 
 ## How re:Seat handles each
 
-**A safe swap.** re:Seat cancels A only when three things hold. B is open in a fresh GetSession read, takes reservations, and clashes with nothing else you hold. A has a fallback: its own band is open, or another known sitting of A is open, read fresh, and clashes with nothing else you hold. And you approved, or allowed auto-swap for that target. Bands are read fresh from GetSession. Times for the clash check come from the last sync. Then it cancels A, reserves B and reads your schedule back. If B failed, it reserves A again. If A is gone too, it tries each fallback once, in order, and tells you exactly what you hold. Two cases stop it with nothing more sent. If a read-back fails, it says the state is unknown. If writes close at any point after the cancel, it says A was released and needs reserving again. One swap runs at a time, across processes. Every state is journaled, rolled back and failed included, and every write is journaled before and after it is sent.
+**A safe swap.** re:Seat cancels A only when three things hold. B is open in a fresh GetSession read, takes reservations, and clashes with nothing else you hold. A has a fallback: its own band is open, or another known sitting of A is open, read fresh, and clashes with nothing else you hold. And you approved, or allowed auto-swap for that target. Bands are read fresh from GetSession. Times for the clash check come from the last sync. Then it cancels A. If the cancel fails and A is still held, it stops there. Otherwise it reserves B and reads your schedule back. If B failed, it reserves A again. If A is gone too, it tries each fallback once, in order, and tells you exactly what you hold. Two cases stop it with nothing more sent. If a read-back fails, it says the state is unknown. If writes close at any point after the cancel, it says A was released and needs reserving again. One swap runs at a time, across processes. Every state is journaled, rolled back and failed included, and every write is journaled before and after it is sent.
 
 **The whole catalog, locally.** A full sweep is about 9 calls. re:Seat sweeps once a minute, without abstracts, and keeps the catalog in SQLite with the band history of every session.
 
 **Bands as signals.** A move from `unavailable` to an open band is a freed seat. A session that was not there in the last sweep, under a code you want, is a new repeat. re:Seat books either the moment it sees it, inside the per-minute quota, and reads the result back.
 
+**One web app, three views.** `reseat serve` runs the watcher and a local web app. The dashboard shows the watch status, any swap that needs you with its checks, the week as a grid, the last changes and the journal. At phone width, Approve shows one proposal at a time and Today shows when to leave. `reseat serve --demo` runs it on a fake API with a scripted week, so anyone can try it in two minutes without a sign-in.
+
 **The laptop is the agent, the phone is the remote.** The token never leaves the laptop. re:Seat serves a small page that your phone opens over Tailscale: today's seats, a leave-now countdown, whether to queue, and Approve or Skip for a proposed swap. Approve takes a plan id that expires after 10 minutes and works once. No endpoint takes a session id.
+
+## Why re:Seat runs on your machine
+
+The Events API signs you in with OAuth and PKCE, using your own Builder ID, through a callback on a loopback port of the machine you sign in on. It has no hosted sign-in. A hosted re:Seat would have to hold other attendees' tokens, and those tokens can cancel their seats. So re:Seat runs on your laptop, keeps your token in the OS keychain, and your phone talks only to your laptop.
 
 ## Respecting the API
 
@@ -71,7 +77,7 @@ re:Seat's first sync that evening read the empty answer as "every session remove
 - A catalog of about the same size with mostly new ids is recorded as a new starting point, not as thousands of new sessions to act on.
 - Nothing is booked while a held session is missing from the local catalog. Without it, re:Seat cannot tell which talk a held seat is, and could book a second sitting of it.
 
-Another re:Invent tool saw the same condition five days earlier. On 3 October, [reinvent-scout issue 17](https://github.com/jasonwadsworth/reinvent-scout/issues/17) reported `totalCount` 0, 404 on GetSession for every id in the user's favorites, GetSchedule still returning the user's favorites, and the official MCP server returning the same empty list. Its author noted that the tool's sync would replace a stored catalog with an empty one, and that nothing was lost only because no catalog had been stored yet. Two tools, found independently, hit the same edge. It is worth a guard in any client.
+The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, 404 on GetSession, GetSchedule still answering, and the official MCP server returning the same empty list. [A post on the hackathon discussion]([LINK]) reported the same symptoms: ListSessions and GetSession empty while signed in.
 
 The full record, with commands and output, is in [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md).
 
@@ -96,7 +102,7 @@ The storm found two bugs. The watcher proposed swaps that could never run, and i
 
 - It manages seats you already chose. For choosing, use the AWS portal or a planner. re:Seat reads your official schedule, or imports reinvent-planner.cloud exports.
 - It cannot help with the portal's opening rush.
-- The phone page is plain HTTP. Use it over Tailscale.
+- The web app is plain HTTP. Use it over Tailscale.
 - Designed for a laptop left in the hotel room. [LIVE] Tailscale run from home.
 - The MCP server tells an agent to ask before approving, but cannot check that it did.
 

@@ -2,11 +2,14 @@
 
 Rules this module exists to respect:
 - No tool takes a list of session ids to reserve or cancel. Writes happen only
-  through `approve_changes(plan_id)`, for a plan that `propose_changes` or
-  `guard_sync` returned. Plan ids are random, expire after 10 minutes, work once.
+  through `approve_changes(plan_id)`, for a plan that `propose_changes`,
+  `propose_swap` or `guard_sync` returned. Plan ids are random, expire after 10 minutes, work once.
 - Approving a booking plan reserves only the sessions that plan named, re-checked
   against the schedule at that moment, through the router: quota-sized batches,
   fallback, read-back, journal.
+- A swap plan runs only through swap.py, which reads both sessions fresh again,
+  needs a fallback for the held seat, takes its cross-process lock, and journals
+  every state. Proposing runs the same checks and sends no write.
 - Nothing here prints to stdout. On stdio, stdout is the protocol.
 - The SDK runs tool calls in parallel. One lock makes them run one at a time, so
   two approvals cannot both read the schedule before either writes.
@@ -30,9 +33,11 @@ from typing import Any
 
 from . import guard
 from .client import ApiError, EventsClient, OperationClosed
+from .models import Session
 from .router import WRITES_CLOSED, Router, run_booking
 from .rules import Rules, base_code
 from .store import Store
+from .swap import Swap, SwapBusy, SwapResult
 
 PLAN_TTL = 600
 
@@ -40,7 +45,7 @@ PLAN_TTL = 600
 @dataclass
 class Plan:
     plan_id: str
-    kind: str                       # book | guard
+    kind: str                       # book | guard | swap
     expires: float
     sessions: list[str] = field(default_factory=list)
     summary: str = ""
@@ -140,6 +145,56 @@ class Tools:
         return (f"Plan {p.plan_id}, valid 10 minutes. Leave-now changes:\n{p.summary}\n"
                 "Nothing has been sent. Call approve_changes with this plan id to apply.")
 
+    def propose_swap(self, held_code: str) -> str:
+        """A held session's best open sitting of the same talk, checked as swap.py checks. Sends nothing."""
+        try:
+            return self._propose_swap(held_code)
+        except ApiError as e:
+            return f"No swap planned. A read failed: {e}. Nothing was sent."
+
+    def _propose_swap(self, held_code: str) -> str:
+        held = self.client.get_schedule(self.event_id).reserved
+        code = held_code.strip().upper()
+        mine = [s for s in (self.store.get(self.event_id, i) for i in held) if s]
+        a = next((s for s in mine if (s.abbreviation or "").upper() == code), None) or next(
+            (s for s in mine if s.base_code and s.base_code == base_code(code)), None)
+        if a is None:
+            return f"Refused: {held_code} is not held. Nothing was planned."
+        trees = ({x.session_id for x, _ in self.router.tree(t)} for t in self.rules.targets)
+        if not any(a.session_id in ids for ids in trees):
+            return f"{a.abbreviation} is not a target in the rules file, so no sitting is preferred to it."
+        better = [s for s in self._preferred(a) if s.band and s.band.open and s.session_id not in held]
+        if not better:
+            return (f"No better sitting of {a.base_code} is open. {a.abbreviation} is the first choice the "
+                    "rules allow, or every sitting the rules prefer is full. Nothing was planned.")
+        swap, reasons = Swap(self.client, self.store, self.rules, self.event_id), []
+        for b in better:
+            res = swap.check(a.session_id, b.session_id, approved=True)
+            if not res.reasons:
+                p = self._new_plan("swap", [a.session_id, b.session_id],
+                                   f"Cancel {self._code(a.session_id)}, reserve {self._code(b.session_id)}, "
+                                   "read back.")
+                swap.end_proposal(res, "planned", {"plan": "waiting for approve_changes"})
+                fb = ", ".join(self._code(f) for f in res.fallbacks)
+                return (f"Plan {p.plan_id}, valid 10 minutes. Swap:\n- {p.summary}\nChecks, read fresh now: "
+                        f"{b.abbreviation} band {b.seat_availability}, no clash with anything else held, "
+                        f"fallback if it fails: {fb}.\nIf {b.abbreviation} is refused, {a.abbreviation} is "
+                        "reserved again. If writes close or a read-back fails, nothing more is sent.\n"
+                        "Nothing has been sent. Ask the attendee, then call approve_changes with this "
+                        "plan id.")
+            swap.end_proposal(res, "declined", {"preconditions": res.reasons})
+            reasons += [f"{b.abbreviation}: {r}" for r in res.reasons]
+        return "No swap planned. The checks failed:\n" + "\n".join(f"- {r}" for r in reasons)
+
+    def _preferred(self, a: Session) -> list[Session]:
+        """Sittings of a's talk the router would pick before a: the target's own order."""
+        for t in self.rules.targets:
+            order = [s for s, backup in self.router.tree(t) if not backup and s.base_code == a.base_code]
+            ids = [s.session_id for s in order]
+            if a.session_id in ids:
+                return order[:ids.index(a.session_id)]
+        return []
+
     # ---- the only write
 
     def approve_changes(self, plan_id: str) -> str:
@@ -148,7 +203,11 @@ class Tools:
         if p is None or p.expires <= self.clock():
             return "Refused: unknown, used or expired plan id. Call propose_changes or guard_sync first."
         try:
+            if p.kind == "swap":
+                return self._swap(p)
             return self._book(p) if p.kind == "book" else self._guard(p)
+        except SwapBusy as e:
+            return f"Not run: {e} Nothing was sent. Propose again in a moment."
         except OperationClosed:
             return WRITES_CLOSED
         except ApiError as e:
@@ -168,6 +227,17 @@ class Tools:
         return ("Done. Read back from the schedule:\n" + "\n".join(lines)
                 + f"\nThe schedule now lists {len(run.schedule.reserved)} reserved sessions."
                 + (f"\nErrors: {'; '.join(errors)}" if errors else ""))
+
+    def _swap(self, p: Plan) -> str:
+        held_id, wanted_id = p.sessions
+        res: SwapResult = Swap(self.client, self.store, self.rules, self.event_id).run(
+            held_id, wanted_id, approved=True)
+        lines = [f"Swap {res.state}: {' -> '.join(res.steps)}."]
+        lines += [f"Not run: {r}" for r in res.reasons]
+        if res.alert:
+            lines.append(res.alert)
+        lines.append("Held now: " + (", ".join(self._code(s) for s in res.held_now) or "nothing") + ".")
+        return "\n".join(lines)
 
     def _guard(self, p: Plan) -> str:
         now = guard.compute(self.client, self.store, self.event_id, self.rules)
@@ -192,7 +262,8 @@ def build_server(tools: Tools) -> Any:
 
     server = MCPServer("reseat", instructions=(
         "re:Seat manages AWS re:Invent seats for one attendee. Read tools are safe. "
-        "Every change is two steps: propose_changes or guard_sync returns a plan id and sends nothing. "
+        "Every change is two steps: propose_changes, propose_swap or guard_sync returns a plan id and sends "
+        "nothing. "
         "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id."))
 
     @server.tool()
@@ -208,8 +279,15 @@ def build_server(tools: Tools) -> Any:
             return tools.propose_changes()
 
     @server.tool()
+    def propose_swap(held_code: str) -> str:
+        """Plan moving a held session to a better open sitting of the same talk.
+        Returns a plan id and the checks. Sends nothing."""
+        with tools.serial:
+            return tools.propose_swap(held_code)
+
+    @server.tool()
     def approve_changes(plan_id: str) -> str:
-        """Carry out a plan from propose_changes or guard_sync, once, within 10 minutes."""
+        """Carry out a plan from propose_changes, propose_swap or guard_sync, once, within 10 minutes."""
         with tools.serial:
             return tools.approve_changes(plan_id)
 

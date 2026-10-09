@@ -659,46 +659,67 @@ def _print_swap(res: SwapResult, st: Store | None = None, event: str = config.DE
 
 @app.command()
 def serve(event: str = config.DEFAULT_EVENT,
-          host: str = typer.Option("127.0.0.1", help="Address to listen on. Anything but loopback "
-                                   "needs serve_secret in the rules file."),
-          port: int = typer.Option(8490, help="Port for the phone page."),
-          interval: int = typer.Option(60, help="Seconds between catalog sweeps. At least 30.")):
-    """Run the watcher and serve the phone page. Leave the laptop awake and plugged in."""
-    import socket
-
+          host: str = typer.Option("127.0.0.1", help="Address to listen on, such as the laptop's Tailscale "
+                                   "address. Anything but loopback needs serve_secret in the rules file."),
+          port: int = typer.Option(None, help="Port for the web app. 8490, or 8491 with --demo."),
+          interval: int = typer.Option(60, help="Seconds between catalog sweeps. At least 30."),
+          demo: bool = typer.Option(False, "--demo", help="Run on a fake Events API with a scripted week. "
+                                    "No sign-in, nothing sent to AWS, nothing written to ~/.reseat. "
+                                    "Ignores --event and --interval.")):
+    """Run the watcher and serve the web app: dashboard, approve and today. Leave the laptop awake."""
     from . import push
     from . import serve as serve_mod
-    r, c, st = _rules(), _client(), _store()
-
-    def swapper(p: Proposal, approved: bool) -> SwapResult:
-        return Swap(c, st, r, event).run_plan(p, approved=approved)
-
-    try:
-        w = Watcher(c, st, r, event, interval=interval, swapper=swapper)
-        a = serve_mod.App(w, st, r, event, host=host, port=port)
-        server = serve_mod.make_server(a)
-    except (WatchError, serve_mod.ServeError, OSError) as e:
-        con.print(f"[red]{_esc(e)}[/red]")
-        raise typer.Exit(2) from None
-    w.subscribe(_print_watch_event)
     pusher = None
-    if r.ntfy_topic:
-        def code_title(sid: str) -> str:
-            s = st.get(event, sid)
-            return f"{s.abbreviation} {s.title}" if s else "a session"
-        pusher = push.Pusher(r.ntfy_topic, code_title=code_title)
-        pusher.start()
-        w.subscribe(pusher)
-        con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
-    if a.auth_required:
-        shown = socket.gethostname() if host == "0.0.0.0" else host
-        con.print(f"Open this once on your phone. It works one time:\n  {_esc(a.one_time_link(shown))}")
-        con.print(f"If you lose it, open http://{_esc(shown)}:{a.port}/login and enter serve_secret.")
-        con.print("This is plain HTTP. Reach it over Tailscale, which encrypts the link, not over open "
-                  "hotel Wi-Fi. Restarting reseat serve signs every phone out.")
+    if demo:
+        from . import demo as demo_mod
+        try:
+            d = demo_mod.Demo(host=host, port=port or demo_mod.DEFAULT_PORT)
+            w, a = d.watcher, d.app
+            server = serve_mod.make_server(a)
+        except (serve_mod.ServeError, OSError) as e:
+            con.print(f"[red]{_esc(e)}[/red]")
+            raise typer.Exit(2) from None
+        con.print("[bold]Demo data.[/bold] A fake Events API runs in this process. Nothing is sent to AWS "
+                  "and nothing is written to ~/.reseat. The clock reads Monday 30 November, 10:15 in "
+                  "Las Vegas.")
+        if d.secret:
+            con.print(f"Demo serve_secret, for /login on another device: {_esc(d.secret)}")
+        con.print("About 30 s: a seat opens and a swap waits for you. About 60 s: a new sitting is booked. "
+                  "About 90 s: a held session changes room.")
     else:
-        con.print(f"Phone page on this laptop only: http://{_esc(host)}:{a.port}/")
+        r, c, st = _rules(), _client(), _store()
+
+        def swapper(p: Proposal, approved: bool) -> SwapResult:
+            return Swap(c, st, r, event).run_plan(p, approved=approved)
+
+        try:
+            w = Watcher(c, st, r, event, interval=interval, swapper=swapper)
+            a = serve_mod.App(w, st, r, event, host=host, port=port or serve_mod.DEFAULT_PORT)
+            server = serve_mod.make_server(a)
+        except (WatchError, serve_mod.ServeError, OSError) as e:
+            con.print(f"[red]{_esc(e)}[/red]")
+            raise typer.Exit(2) from None
+        if r.ntfy_topic:
+            def code_title(sid: str) -> str:
+                s = st.get(event, sid)
+                return f"{s.abbreviation} {s.title}" if s else "a session"
+            pusher = push.Pusher(r.ntfy_topic, code_title=code_title)
+            pusher.start()
+            w.subscribe(pusher)
+            con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
+    w.subscribe(_print_watch_event)
+    if a.auth_required:
+        con.print(f"Open this once on each device. It works one time:\n  {_esc(a.one_time_link(host))}")
+        con.print(f"For another device, open http://{_esc(host)}:{a.port}/login and enter serve_secret.")
+        con.print("This is plain HTTP. Reach it over Tailscale, which encrypts the link, not over open "
+                  "hotel Wi-Fi. Restarting reseat serve signs every device out.")
+    else:
+        con.print(f"Dashboard on this laptop only: http://{_esc(host)}:{a.port}/  "
+                  f"(approve: /approve, today: /today)")
+    con.print("The watcher runs in this process. Ctrl-C stops both.")
     worker = serve_mod.run(a, server)
+    if demo:
+        d.start_script()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

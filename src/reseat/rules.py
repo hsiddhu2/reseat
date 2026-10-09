@@ -297,7 +297,7 @@ watch_cap: 25        # targets, at most
 home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 
 # Phone remote. Both optional.
-# serve_secret: a long random string. Needed to open the phone page from another device.
+# serve_secret: a long random string. Needed to open the web app from another device.
 # ntfy_topic: a random 16 to 64 character name. Push goes to https://ntfy.sh/<topic>.
 # probe_session: id of a session that takes no reservations, so it can never be held.
 #   While writes are closed, re:Seat checks with it once a minute and resumes at once.

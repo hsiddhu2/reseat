@@ -11,6 +11,7 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -132,8 +133,8 @@ def _owner_only_file(path: Path) -> None:
 
 
 class Store:
-    def __init__(self, path: Path | str = ":memory:"):
-        self.path = str(path)
+    def __init__(self, path: Path | str = ":memory:", clock: Callable[[], float] = time.time):
+        self.path, self.clock = str(path), clock
         if self.path != ":memory:":
             _owner_only_file(Path(self.path))
         # One thread owns a Store at a time. `reseat serve` opens it on the main thread
@@ -336,6 +337,28 @@ class Store:
             "SELECT * FROM catalog_changes WHERE event_id=? AND ts>=? ORDER BY ts",
             (event_id, since)).fetchall()
 
+    def sweeps(self, event_id: str, limit: int = 2) -> list[tuple[float, int]]:
+        """The latest sweeps, newest first: (time, sessions in that sweep)."""
+        rows = self.db.execute("SELECT ts, count FROM sweeps WHERE event_id=? ORDER BY ts DESC LIMIT ?",
+                               (event_id, limit)).fetchall()
+        return [(r["ts"], r["count"]) for r in rows]
+
+    def first_sweep(self, event_id: str) -> float | None:
+        r = self.db.execute("SELECT MIN(ts) AS ts FROM sweeps WHERE event_id=?", (event_id,)).fetchone()
+        return r["ts"] if r and r["ts"] else None
+
+    def latest_band_changes(self, event_id: str, limit: int = 10) -> list[sqlite3.Row]:
+        """Band changes newest first. A first sighting (no old band) is not a change."""
+        return self.db.execute(
+            "SELECT session_id, ts, old_band, new_band FROM band_history WHERE event_id=? "
+            "AND old_band IS NOT NULL ORDER BY ts DESC, rowid DESC LIMIT ?", (event_id, limit)).fetchall()
+
+    def latest_changes(self, event_id: str, after: float, limit: int = 10) -> list[sqlite3.Row]:
+        """Added, moved and removed sessions after `after`, newest first."""
+        return self.db.execute(
+            "SELECT * FROM catalog_changes WHERE event_id=? AND ts>? ORDER BY ts DESC, rowid DESC LIMIT ?",
+            (event_id, after, limit)).fetchall()
+
     def last_sweep(self, event_id: str) -> float | None:
         r = self.db.execute("SELECT MAX(ts) AS ts FROM sweeps WHERE event_id=?",
                             (event_id,)).fetchone()
@@ -366,7 +389,7 @@ class Store:
     def journal(self, event_id: str, op: str, request: object, response: object,
                 outcome: str) -> None:
         self.db.execute("INSERT INTO journal VALUES (?,?,?,?,?,?)",
-                        (time.time(), event_id, op, json.dumps(request, default=str),
+                        (self.clock(), event_id, op, json.dumps(request, default=str),
                          json.dumps(response, default=str), outcome))
         self.db.commit()
 

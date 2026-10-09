@@ -27,7 +27,7 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
     if ev.kind == "booked":
         return "Seat booked", f"{d.get('code') or ''} {d.get('title') or ''}".strip()
     if ev.kind == "proposed":
-        then = "Running it now (auto)." if d.get("auto") else "Approve on the phone page."
+        then = "Running it now (auto)." if d.get("auto") else "Approve it in the web app."
         return "Swap proposed", f"{code_title(d['wanted_id'])} instead of {code_title(d['held_id'])}. {then}"
     if ev.kind == "swap":
         state = d.get("state")
@@ -36,7 +36,7 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         if state == "rolled_back":
             return "Swap rolled back", "The new seat was not available. Your original seat is held again."
         if state == "failed":
-            return "Swap failed", "Check the phone page for what is held now."
+            return "Swap failed", "Check the web app for what is held now."
         return None
     if ev.kind in ("offline", "back"):
         return d["message"], d["message"]
