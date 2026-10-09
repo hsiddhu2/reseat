@@ -21,7 +21,7 @@ from . import rules as rules_mod
 from .client import ApiError, EventsClient, NotRegistered, OperationClosed
 from .router import OP as RESERVE_OP
 from .router import WRITES_CLOSED, Execution, Plan, Router, run_booking
-from .store import Store
+from .store import Store, SweepRefused
 from .swap import Swap, SwapBusy, SwapResult
 from .watcher import Proposal, Watcher, WatchError, WatchEvent
 
@@ -107,12 +107,27 @@ def events(past: bool = typer.Option(False, help="Include events that already en
 
 @app.command()
 def sync(event: str = config.DEFAULT_EVENT,
-         abstracts: bool = typer.Option(True, help="Fetch abstracts. Off for a cheap sweep.")):
+         abstracts: bool = typer.Option(True, help="Fetch abstracts. Off for a cheap sweep."),
+         force: bool = typer.Option(False, "--force", help="Apply even an empty or much smaller catalog.")):
     """Pull the whole catalog into the local store and report what changed."""
     c, st = _client(), _store()
     t0 = time.time()
     sessions = list(c.iter_sessions(event, include_abstracts=abstracts))
-    res = st.apply_sweep(event, sessions, with_abstracts=abstracts)
+    try:
+        res = st.apply_sweep(event, sessions, with_abstracts=abstracts, force=force)
+    except SweepRefused as e:
+        con.print(f"[yellow]{e}[/yellow] Run again later, or with --force if the catalog really shrank.")
+        raise typer.Exit(4) from None
+    if res.reason == "rekeyed":
+        con.print(f"[yellow]The catalog was re-keyed: {len(res.removed)} sessions replaced. Recorded as a "
+                  "new baseline.[/yellow]")
+    elif res.reason == "forced":
+        con.print(f"[yellow]Applied as asked with --force: {res.count} sessions now stored.[/yellow]")
+    if res.baseline and config.RULES_PATH.exists():
+        dead = rules_mod.unresolved(_rules(), st, event)
+        if dead:
+            con.print(f"[yellow]{len(dead)} ids in the rules file are not in the catalog. "
+                      "Run reseat rules check.[/yellow]")
     con.print(f"Synced {res.count} sessions in {time.time() - t0:.1f}s. "
               f"Added {len(res.added)}, removed {len(res.removed)}, moved {len(res.moved)}, "
               f"band changes {len(res.band_changes)}, newly open {len(res.opened)}.")
@@ -418,12 +433,19 @@ def book(event: str = config.DEFAULT_EVENT,
          rules_file: Path | None = _RULES_OPTION):
     """Reserve your rules' targets in priority order, falling back on full sessions."""
     r, c, st = _rules(rules_file), _client(), _store()
-    st.apply_sweep(event, list(c.iter_sessions(event, include_abstracts=False)), with_abstracts=False)
+    try:
+        st.apply_sweep(event, list(c.iter_sessions(event, include_abstracts=False)), with_abstracts=False)
+    except SweepRefused as e:
+        con.print(f"[red]{e}[/red] Not booking from an empty or partial catalog.")
+        raise typer.Exit(4) from None
     for m in rules_mod.unresolved(r, st, event):
         con.print(f"[yellow]unresolved[/yellow] {m}")
     held = c.get_schedule(event).reserved
     router = Router(r, st, event)
     plan = router.plan(held, quota_left=c.quota.remaining(RESERVE_OP))
+    if plan.blocked:
+        con.print(f"[red]{plan.blocked}[/red]")
+        raise typer.Exit(4)
     _print_plan(plan, st, event)
     if dry_run or not plan.batch:
         if not plan.batch:

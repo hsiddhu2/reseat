@@ -33,3 +33,4 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 | Seat bands after reserved seating opens, 6 October | `2026-10-06-bands.md` | to do |
 | Live booking when API writes open, 8 October | `2026-10-08-live-booking.md` | to do |
 | One reversible round trip: reserve, read back, cancel, read back | `2026-10-08-round-trip.md` | to do |
+| The catalog came back empty on 8 October | [`2026-10-08-catalog-empty.md`](2026-10-08-catalog-empty.md) | done |

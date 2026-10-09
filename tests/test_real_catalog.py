@@ -61,8 +61,9 @@ def test_type_counts(swept):
 def test_no_bands_before_reserved_seating_opens(swept):
     # Seating opens 6 Oct. On 1 Oct no session carried a band or was reservable.
     _, store, result = swept
-    assert result.band_changes == []
-    assert not any(s.is_reservable for s in store.all("reinvent2026"))
+    sessions = store.all("reinvent2026")
+    assert all(s.seat_availability is None for s in sessions)        # the API sent no band at all
+    assert not any(s.is_reservable for s in sessions)
 
 
 def test_repeats_group_by_base_code(swept):

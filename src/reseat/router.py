@@ -88,6 +88,7 @@ class Plan:
     skipped: list[Skip] = field(default_factory=list)
     held_targets: list[str] = field(default_factory=list)
     exhausted: list[str] = field(default_factory=list)     # no sitting or backup left to try
+    blocked: str | None = None   # why nothing at all may be planned
 
     @property
     def ids(self) -> list[str]:
@@ -148,6 +149,11 @@ class Router:
 
     # ---- constraints
 
+    def missing_held(self, held: Iterable[str]) -> list[str]:
+        """Held ids the local catalog does not have. Planning around them could book a second
+        sitting of a talk already held, so the router refuses to plan while any exist."""
+        return [i for i in held if self.store.get(self.event_id, i) is None]
+
     def _window(self, s: Session) -> Window | None:
         st = s.session_time
         if not st or not st.date or not st.time:
@@ -188,6 +194,11 @@ class Router:
         failed in this run, so they are never re-sent.
         """
         held_ids = set(held)
+        missing = self.missing_held(held_ids)
+        if missing:
+            return Plan(blocked=f"{len(missing)} held sessions are not in the local catalog, so re:Seat "
+                                "cannot tell which talks they are or when. Nothing is planned until a sync "
+                                "finds them. Run reseat sync.")
         cand = set(candidates) if candidates is not None else None
         skip_ids = set(exclude)
         held_sessions = [x for x in (self.store.get(self.event_id, i) for i in held_ids) if x]

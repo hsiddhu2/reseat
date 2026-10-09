@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS journal (
 """
 
 
+SHRINK_LIMIT = 0.5    # a sweep may not drop more than this share of the catalog at once
+
+
+class SweepRefused(Exception):
+    """A sweep that would wipe or gut the local catalog. Nothing was changed."""
+
+
 @dataclass
 class SweepResult:
     added: list[str] = field(default_factory=list)
@@ -88,6 +95,8 @@ class SweepResult:
     moved: list[str] = field(default_factory=list)
     band_changes: list[tuple[str, str | None, str | None]] = field(default_factory=list)
     count: int = 0
+    baseline: bool = False   # a fresh or re-keyed catalog: recorded, but nothing new in it is news
+    reason: str | None = None  # fresh | rekeyed | forced, when baseline
 
     @property
     def opened(self) -> list[str]:
@@ -117,8 +126,18 @@ class Store:
     # ------------------------------------------------------------------ sync
 
     def apply_sweep(self, event_id: str, sessions: list[Session],
-                    with_abstracts: bool, now: float | None = None) -> SweepResult:
-        """Merge one full walk of the catalog and report what changed."""
+                    with_abstracts: bool, now: float | None = None, force: bool = False) -> SweepResult:
+        """Merge one full walk of the catalog and report what changed.
+
+        Guards, seen live on 8 October 2026 when ListSessions answered 200 with no items:
+        - An empty sweep is refused (SweepRefused), never read as "everything removed".
+        - A sweep that would drop more than half the catalog is refused, unless it is about
+          as big as the stored catalog and most of its ids are new. Then the catalog was
+          re-keyed: the sweep is applied as a baseline. New ids are not news. Sessions that
+          kept their id still report openings.
+        - A sweep into an empty store is a baseline.
+        `force` applies any sweep as a baseline.
+        """
         now = now or time.time()
         res = SweepResult(count=len(sessions))
         cur = self.db.cursor()
@@ -128,6 +147,21 @@ class Store:
                 "SELECT session_id, band, date, time, room, venue, abstract FROM sessions "
                 "WHERE event_id=?", (event_id,))
         }
+        incoming = {s.session_id for s in sessions}
+        lost = len(set(existing) - incoming)
+        hint = " Run reseat sync --force if the catalog really changed that much."
+        if not force:
+            if not sessions:
+                raise SweepRefused(f"The API returned an empty catalog. The {len(existing)} sessions "
+                                   "stored locally were kept." + hint)
+            if existing and lost > len(existing) * SHRINK_LIMIT:
+                new_share = len(incoming - set(existing)) / max(1, len(incoming))
+                if len(incoming) < len(existing) * SHRINK_LIMIT or new_share <= SHRINK_LIMIT:
+                    raise SweepRefused(f"The sweep would drop {lost} of {len(existing)} sessions and bring "
+                                       f"only {len(incoming)}. Treated as a partial answer. Nothing was "
+                                       "changed." + hint)
+        reason = ("forced" if force else "fresh" if not existing
+                  else "rekeyed" if lost > len(existing) * SHRINK_LIMIT else None)
         seen: set[str] = set()
         for s in sessions:
             seen.add(s.session_id)
@@ -184,6 +218,10 @@ class Store:
         cur.execute("INSERT INTO sweeps VALUES (?,?,?,?)",
                     (event_id, now, len(sessions), int(with_abstracts)))
         self.db.commit()
+        if reason:
+            res.baseline, res.reason = True, reason
+            # A new id's band is history, not an opening. A session that kept its id can still open.
+            res.band_changes = [c for c in res.band_changes if c[0] in existing]
         return res
 
     def update_session(self, event_id: str, s: Session, now: float | None = None) -> SweepResult:

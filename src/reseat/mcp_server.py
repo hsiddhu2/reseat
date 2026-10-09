@@ -118,6 +118,8 @@ class Tools:
     def propose_changes(self) -> str:
         held = self.client.get_schedule(self.event_id).reserved
         plan = self.router.plan(held, quota_left=self.client.quota.remaining("ReserveSessions"))
+        if plan.blocked:
+            return f"Nothing planned. {plan.blocked}"
         chosen = plan.batch + plan.deferred
         if not chosen:
             why = "; ".join(f"{s.target}: {s.reason}" for s in plan.skipped[:10])

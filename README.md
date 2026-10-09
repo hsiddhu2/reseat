@@ -48,6 +48,7 @@ You should see `Registered for reinvent2026`. If you see `not registered`, your 
 reseat events                      # list events, no sign-in needed
 reseat sync                        # pull the whole catalog, about 9 API calls
 reseat sync --no-abstracts         # cheap sweep, reports band changes and new sessions
+reseat sync --force                # apply even an empty or much smaller catalog. Exit 4 means a sweep was refused
 reseat search "serverless"
 reseat show <sessionId>            # details, repeats, seat band history
 reseat schedule                    # your reserved, favorites, personal time

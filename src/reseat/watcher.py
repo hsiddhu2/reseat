@@ -62,10 +62,10 @@ from pydantic import ValidationError
 
 from .auth import AuthError
 from .campus import overlaps
-from .client import ApiError, AuthRequired, EventsClient, NetworkError, Throttled
+from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
 from .router import Router, run_booking
-from .rules import Rules
-from .store import Store
+from .rules import Rules, unresolved
+from .store import Store, SweepRefused
 
 MIN_INTERVAL = 30
 DEFAULT_INTERVAL = 60
@@ -158,6 +158,8 @@ class Watcher:
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
         self._cap_warned: str | None = None
+        self._down_kind: str | None = None
+        self._missing_warned = False
         self.writes_closed_until: float | None = None
         self._closed_announced = False
         self.read_only = False
@@ -302,7 +304,8 @@ class Watcher:
             left = self.next_delay()
             while left > 0 and not self._stop.is_set():
                 day = onsite_day() if onsite_day else None
-                if day and self._down_since is None:
+                # A catalog-only outage still lets GetSession polling run on site.
+                if day and (self._down_since is None or self._down_kind == "catalog"):
                     step = min(ONSITE_EVERY, left)
                     self._pause(step)
                     left -= step
@@ -350,6 +353,9 @@ class Watcher:
         except ApiError as e:
             res.failure = "outage" if e.status >= 500 else "other"
             self._problem(res, f"{e.status} {e}")
+        except (SweepRefused, IncompleteCatalog) as e:
+            res.failure = "catalog"       # the API answered, but with no usable catalog
+            self._problem(res, str(e))
         except _ERRORS as e:
             res.failure = "other"
             self._problem(res, f"{type(e).__name__}: {e}")
@@ -365,7 +371,8 @@ class Watcher:
             self.store.journal(self.event_id, "watcher.signin", None, {"error": res.error}, "needed")
             self._emit("signin", state="needed", message="Sign in needed. Run reseat login on the laptop. "
                        "Reads only until then.")
-        if res.failure == "outage":
+        if res.failure in ("outage", "catalog"):
+            self._down_kind = res.failure
             if self._down_since is None:
                 self._down_since, self._down_ticks, self._offline_sent = now, 0, False
                 self.store.journal(self.event_id, "watcher.outage", None, {"error": res.error}, "start")
@@ -374,7 +381,8 @@ class Watcher:
             if not self._offline_sent and now - self._down_since >= OFFLINE_AFTER:
                 self._offline_sent = True
                 since = time.strftime("%H:%M", time.localtime(self._down_since))
-                self._emit("offline", since=self._down_since, message=f"re:Seat offline since {since}")
+                why = " (the API serves no usable catalog)" if self._down_kind == "catalog" else ""
+                self._emit("offline", since=self._down_since, message=f"re:Seat offline since {since}{why}")
         elif self._down_since is not None and res.failure is None:
             minutes = int((now - self._down_since) // 60)
             self.store.journal(self.event_id, "watcher.outage", None,
@@ -388,20 +396,38 @@ class Watcher:
         self._emit("error", message=message)
 
     def _tick(self, res: TickResult, now: float) -> None:
-        baseline = self.store.last_sweep(self.event_id) is None
         sessions = list(self.client.iter_sessions(self.event_id, include_abstracts=False))
         self._signed_in()
         # Read the schedule before saving the sweep. If it fails, the changes stay
         # unsaved and the next tick sees them again, so no opening is lost.
-        held = set() if baseline else set(self.client.get_schedule(self.event_id).reserved)
+        held = set(self.client.get_schedule(self.event_id).reserved)
         sweep = self.store.apply_sweep(self.event_id, sessions, with_abstracts=False, now=now)
         res.count = sweep.count
-        if baseline:
-            return    # first sweep ever: everything looks new. Record it, act from the next one.
         self.last_held = held
+        if sweep.baseline:
+            # New ids are not news: a first, re-keyed or forced catalog. Sessions that kept
+            # their id can still open or move, so those are handled as usual.
+            self._baseline(sweep, now)
+            res.opened, res.moved = sweep.opened, sweep.moved
+            self._warn_moved(sweep.moved, held, now)
+            self._act(sweep.opened, held, res, now)
+            return
         res.added, res.opened, res.moved = sweep.added, sweep.opened, sweep.moved
         self._warn_moved(sweep.moved, held, now)
         self._act(sweep.opened + sweep.added, held, res, now)
+
+    def _baseline(self, sweep: Any, now: float) -> None:
+        if sweep.reason == "rekeyed":
+            with self._lock:
+                self.proposals.clear()         # their ids are gone
+            self.store.journal(self.event_id, "watcher.catalog", None,
+                               {"replaced": len(sweep.removed), "new": len(sweep.added)}, "rekeyed")
+            self._emit("error", message=f"The catalog was re-keyed: {len(sweep.removed)} sessions replaced. "
+                       "Recorded as a new baseline. New ids are not treated as new sessions.")
+        dead = unresolved(self.rules, self.store, self.event_id)
+        if dead:
+            self._emit("error", message=f"{len(dead)} ids in the rules file are not in the catalog, for "
+                       f"example {dead[0]}. Run reseat rules check.")
 
     def _onsite(self, res: TickResult, now: float, day: str) -> None:
         held = set(self.client.get_schedule(self.event_id).reserved)
@@ -494,6 +520,16 @@ class Watcher:
         candidates = [s for s in dict.fromkeys(changed + sorted(retry)) if s in prio]
         if not candidates:
             return
+        missing = self.router.missing_held(held)
+        if missing:
+            # Booking around held sessions it cannot see could add a second sitting of a held talk.
+            self._retry |= set(candidates)
+            if not self._missing_warned:
+                self._missing_warned = True
+                self._emit("error", message=f"{len(missing)} held sessions are not in the local catalog. "
+                           "Booking is paused until a sync finds them.")
+            return
+        self._missing_warned = False
         self._probe(held)
         if self._writes_closed():
             # Nothing is sent until the recheck time. Proposals for the phone are still made,

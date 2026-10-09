@@ -73,6 +73,10 @@ class NetworkError(ApiError):
     have landed, so callers read back exactly as they do for a 5xx."""
 
 
+class IncompleteCatalog(ApiError):
+    """A catalog walk ended with fewer sessions than the API's totalCount. Status 0."""
+
+
 class Throttled(ApiError):
     """429 after waiting once."""
 
@@ -227,12 +231,18 @@ class EventsClient:
     def iter_sessions(self, event_id: str, *, include_abstracts: bool = True,
                       locale: str | None = None) -> Iterator[Session]:
         token: str | None = None
+        seen = 0
         while True:
             page = self.list_sessions_page(event_id, next_token=token,
                                            include_abstracts=include_abstracts, locale=locale)
+            seen += len(page.items)
             yield from page.items
             token = page.next_token
             if not token:
+                if seen < int(page.total_count):
+                    # The walk stopped early. A short catalog must never read as withdrawals.
+                    raise IncompleteCatalog(0, f"catalog walk returned {seen} of {int(page.total_count)} "
+                                               "sessions", "ListSessions")
                 return
 
     def get_session(self, event_id: str, session_id: str, locale: str | None = None) -> Session:

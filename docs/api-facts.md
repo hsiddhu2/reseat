@@ -103,6 +103,14 @@ Source: `reseat sync` and `reseat save-fixture` run against reinvent2026 on 1 Oc
 - The `id` in a reinvent-planner.cloud export is the Events API `sessionId`. Checked on 2 October 2026: both sittings of COP324 from the sample export resolve in the local catalog by id.
 - The spec defines `isReservable` as "Whether the session accepts seat reservations." re:Seat never plans a session where it is false. On 1 October it was false everywhere, so every plan was empty. It is expected to change when reserved seating opens on 6 October. `reseat book --dry-run` shows the current state.
 
+## Observed in the live API, 8 October 2026
+
+Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). Observations, not spec guarantees.
+
+- On the evening of 8 October, the day writes were scheduled to open through the API, ListSessions answered 200 with `totalCount` 0 and no items, and GetSession answered 404 for every session tried, including held ones. GetSchedule, GetEvent and ListEvents still worked.
+- Reservations made after seating opened carry session ids in a range absent from the 1 October catalog, which suggests the catalog was re-keyed.
+- re:Seat therefore refuses a sweep that comes back empty or loses most of the catalog without bringing back one of about the same size, checks each walk against `totalCount`, records a re-keyed catalog as a new baseline rather than as news, and books nothing while a held session is missing from its local catalog.
+
 ## Schedule fields
 
 Source: `Schedule` and `PersonalTime` schemas.
