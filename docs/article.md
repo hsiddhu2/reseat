@@ -41,7 +41,7 @@ The Events API is clean and well documented. Four things it does not do shape ev
 
 **Bands as signals.** A move from `unavailable` to an open band is a freed seat. A session that was not there in the last sweep, under a code you want, is a new repeat. re:Seat books either the moment it sees it, inside the per-minute quota, and reads the result back.
 
-**One web app, three views.** `reseat serve` runs the watcher and a local web app. The dashboard shows the watch status, any swap that needs you with its checks, the week as a grid, the last changes and the journal. At phone width, Approve shows one proposal at a time and Today shows when to leave. `reseat serve --demo` runs it on a fake API with a scripted week, so anyone can try it in two minutes without a sign-in.
+**One web app, three views.** `reseat serve` runs the watcher and a local web app. The dashboard shows the watch status, any swap that needs you with its checks, the week as a grid, the last changes and the journal. At phone width, Approve shows one proposal at a time and Today shows when to leave. `reseat serve --demo` runs it on a fake API with a scripted week, so anyone can try it in two minutes without a sign-in. A [click-through version](https://hsiddhu2.github.io/reseat/) needs no install at all.
 
 **The laptop is the agent, the phone is the remote.** The token never leaves the laptop. re:Seat serves a small page that your phone opens over Tailscale: today's seats, a leave-now countdown, whether to queue, and Approve or Skip for a proposed swap. Approve takes a plan id that expires after 10 minutes and works once. No endpoint takes a session id.
 
@@ -113,3 +113,4 @@ The storm found two bugs. The watcher proposed swaps that could never run, and i
 - API facts it relies on: [docs/api-facts.md](api-facts.md)
 - Live proof: [docs/proof](proof/)
 - Demos: [demo](../demo/)
+- Click-through demo: [hsiddhu2.github.io/reseat](https://hsiddhu2.github.io/reseat/)

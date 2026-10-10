@@ -418,3 +418,71 @@ def test_pages_use_the_render_time_clock_not_the_snapshot_time(demo):
         assert f'data-now="{later:.0f}"' in S.page(demo.app, "/").decode()
     finally:
         demo.app.clock = demo_now
+
+
+def test_dashboard_counts_what_was_kept_from_the_journal(served):
+    d, http = served
+    k = d.app.snapshot()["view"]["kept"]
+    assert (k["booked"], k["swapped"], k["restored"]) == (1, 0, 0) and k["since"] == "Mon 30 Nov"
+    plan = d.watcher.pending()[0].plan_id
+    assert http.post(f"/approve/{plan}", headers={"X-Reseat": "1"}).json()["state"] == "verified"
+    k = d.app.snapshot()["view"]["kept"]
+    assert (k["booked"], k["swapped"]) == (1, 1)                 # a swap's reserve is not a second booking
+    assert "seats booked" in http.get("/").text
+
+
+def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_path):
+    import runpy
+    from pathlib import Path
+    site = runpy.run_path(str(Path(__file__).resolve().parent.parent / "demo" / "site.py"), run_name="site")
+    names = site["build"](tmp_path)
+    assert names == ["after.html", "approve.html", "index.html", "today.html"]
+    for n in names:
+        html = (tmp_path / n).read_text(encoding="utf-8")
+        assert "<script" not in html and "/static/" not in html and "data-approve" not in html
+        assert "Static snapshot of demo data" in html and 'href="app.css"' in html
+    assert 'href="after.html">Swap now</a>' in (tmp_path / "index.html").read_text(encoding="utf-8")
+    after = (tmp_path / "after.html").read_text(encoding="utf-8")
+    assert "proposed → checked → cancelled → reserved → verified" in after and "swaps verified" in after
+    assert (tmp_path / "app.css").exists()
+
+
+def test_kept_counts_only_ids_the_read_back_showed_and_skips_failed_swaps():
+    d = D.Demo(port=0)
+    assert pages._kept(d.app) == {"booked": 0, "swapped": 0, "restored": 0, "since": None}
+    ev, j = d.app.event_id, d.store.journal
+    j(ev, "ReserveSessions", ["a"], {"status": 409}, "closed")                       # writes closed
+    j(ev, "ReserveSessions", ["b"], {"result": None, "error": "503; read-back failed: 503",
+                                     "readBack": None}, "error")                   # unknown, not booked
+    j(ev, "ReserveSessions", ["c", "d"], {"result": {}, "error": None, "readBack": {"reserved": ["c"]},
+                                          "disagreements": ["d"]}, "disagreement")  # only c read back
+    j(ev, "ReserveSessions", ["e", "f", "g"], {"result": {}, "readBack": {"reserved": ["e", "g", "x"]}},
+      "partial")                                                                   # x was not asked for
+    j(ev, "swap.failed", {"held": "h", "wanted": "w"}, {"fallback_held": None}, "state:failed")
+    j(ev, "swap.rolled_back", {"held": "h", "wanted": "w"}, {}, "state:rolled_back")
+    j(ev, "swap.verified", {"held": "h", "wanted": "w"}, {}, "state:verified")
+    k = pages._kept(d.app)
+    assert (k["booked"], k["swapped"], k["restored"]) == (3, 1, 1) and k["since"]
+    assert "3</b><span>seats booked" in pages._kept_html(k)
+    assert "nothing yet" in pages._kept_html(pages._kept(D.Demo(port=0).app))
+
+
+def test_static_site_has_no_absolute_or_external_links(tmp_path):
+    import re
+    import runpy
+    from pathlib import Path
+    site = runpy.run_path(str(Path(__file__).resolve().parent.parent / "demo" / "site.py"), run_name="site")
+    for n in site["build"](tmp_path):
+        html = (tmp_path / n).read_text(encoding="utf-8")
+        for url in re.findall(r'(?:href|src|action)="([^"]*)"', html):
+            assert not url.startswith(("/", "http:", "https:", "//")), (n, url)
+        assert "data-skip" not in html and "<form" not in html
+
+
+def test_a_failed_swap_that_booked_a_fallback_counts_as_restored():
+    d = D.Demo(port=0)
+    req = {"held": "a", "wanted": "b"}
+    d.store.journal(D.EVENT, "swap.failed", req, {"fallback_held": "c"}, "state:failed")
+    d.store.journal(D.EVENT, "swap.failed", req, {"fallback_held": None}, "state:failed")
+    k = pages._kept(d.app)
+    assert (k["booked"], k["swapped"], k["restored"]) == (0, 0, 1)

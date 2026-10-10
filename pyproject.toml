@@ -17,6 +17,12 @@ dependencies = [
     "tzdata>=2024.1; sys_platform == 'win32'",   # Windows has no time zone database for zoneinfo
 ]
 
+[project.urls]
+Homepage = "https://github.com/hsiddhu2/reseat"
+Demo = "https://hsiddhu2.github.io/reseat/"
+Documentation = "https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md"
+Issues = "https://github.com/hsiddhu2/reseat/issues"
+
 [project.optional-dependencies]
 mcp = ["mcp>=2.2,<3"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "mcp>=2.2,<3"]

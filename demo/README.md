@@ -16,6 +16,14 @@ Run from the repo root after `pip install -e .`:
 
 ## Recording
 
+- **The web app, about 2 minutes.** Set the browser to 1440 by 900 and close other tabs. Start `reseat serve --demo`, then open `http://127.0.0.1:8491/` at once, since the script starts with the command. Shot list:
+  1. 0:00 to 0:20. The week: held sessions, the yellow leave-now strips, the status line saying it watches in this process.
+  2. About 0:30. The swap card appears. Read the four checks and the sequence line under the buttons.
+  3. About 1:00. Last changes shows the new sitting booked and read back. The counts panel goes to 1 seat booked.
+  4. About 1:30. CMP303 on Wednesday says it moved room.
+  5. Press Swap now. The result line says verified and what is held now. Scroll to the journal: proposed, checked, cancel, reserve, verified.
+  6. Narrow the window to phone width, or open `/today`: the leave countdown, the next sessions, the personal dinner, the wanted session and its clash line.
+
 - **Terminal.** Use [asciinema](https://asciinema.org) (`asciinema rec book.cast -c "python demo/book.py"`), or a screen recording of a terminal at least 120 columns wide so the tables do not wrap.
 - **Phone page.** On the laptop, run `demo/phone.py` with the laptop's Tailscale address. It refuses `0.0.0.0`, so the demo never listens on hotel or home Wi-Fi. It uses port 8491, so it does not sign the phone out of a real `reseat serve` on 8490. On the phone, open the printed link over Tailscale before you start recording: a used link is harmless, an unused one works for an hour. Then start the phone's screen recording and tap Approve. The swap result shows on the page within a second.
 - **Before publishing a recording,** check it against the redaction rules in [docs/proof/README.md](../docs/proof/README.md). In particular, blur the one-time link and crop the phone's address bar and status bar. The demo data is not personal, but the link, host name and Tailscale address are.

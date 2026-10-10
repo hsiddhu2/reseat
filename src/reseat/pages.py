@@ -99,6 +99,7 @@ def build(app: App, now: float) -> dict[str, Any]:
         "week": _week(app, held, wanted, pending, now),
         "today": _today(app, held, wanted, now),
         "bookings": _bookings(app, now),
+        "kept": _kept(app),
     }
 
 
@@ -269,6 +270,27 @@ def _what(app: App, req: Any) -> str:
     if isinstance(req, list):
         return ", ".join(_code(app, s) for s in req[:4] if isinstance(s, str))
     return ""
+
+
+def _kept(app: App) -> dict[str, Any]:
+    """What re:Seat has done for the attendee, counted from the journal: seats booked and read
+    back, swaps verified, and seats restored after a swap's target was refused (the held seat
+    re-reserved, or a fallback sitting booked in its place)."""
+    booked = swapped = restored = 0
+    first = None
+    for r in app.store.journal_entries(app.event_id, 100_000):
+        if r["op"] == "ReserveSessions":
+            booked += len(_booked(r))
+        elif r["op"] == "swap.verified":
+            swapped += 1
+        elif r["op"] == "swap.rolled_back" or (
+                r["op"] == "swap.failed" and (_json(r["response"]) or {}).get("fallback_held")):
+            restored += 1                       # the held seat came back, or a fallback sitting was booked
+        else:
+            continue
+        first = r["ts"]                                  # entries come newest first
+    since = local(first).strftime("%a %d %b") if first else None
+    return {"booked": booked, "swapped": swapped, "restored": restored, "since": since}
 
 
 def _bookings(app: App, now: float) -> list[dict[str, Any]]:
@@ -559,8 +581,8 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
     plans = [c["plan_id"] for c in cards]
     out = [_head("re:Seat", "week", demo, plans, snap["now"], v["status"]["last_sweep"]),
            _status_line(v["status"]),
-           '<div class="layout"><aside class="side">',
-           f'<h2>Needs your approval <span class="count">{len(cards)}</span></h2>']
+           '<div class="layout"><aside class="side">', _kept_html(v.get("kept"))
+           + f'<h2>Needs your approval <span class="count">{len(cards)}</span></h2>']
     for c in cards:
         out.append(f'<article class="card"><div class="kind">{e(c["kind"]).upper()} · {e(c["at"])}</div>'
                    f'<h3>{e(c["title"])}</h3><p>You hold <strong>{e(c["held"]["code"])}</strong>, '
@@ -583,6 +605,17 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
             for j in v.get("log", [])] or ["<li>The journal is empty.</li>"]
     out.append("</ul></section></main></div>" + _nav("week") + "</body></html>")
     return "".join(out)
+
+
+def _kept_html(k: dict[str, Any] | None) -> str:
+    if not k:
+        return ""
+    since = f"since {e(k['since'])}" if k["since"] else "nothing yet"
+    cells = "".join(f'<div><b>{n}</b><span>{label}</span></div>' for n, label in (
+        (k["booked"], "seats booked"), (k["swapped"], "swaps verified"), (k["restored"], "seats restored")))
+    return (f'<section class="kept" aria-label="What re:Seat has done"><div class="kept-row">{cells}</div>'
+            f'<p class="fine">From the journal, {since}. Every one read back from your schedule.</p>'
+            "</section>")
 
 
 def _week_html(w: dict[str, Any]) -> str:

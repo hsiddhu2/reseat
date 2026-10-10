@@ -2,6 +2,10 @@
 
 re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and your phone is the remote.
 
+![re:Seat demo mode: a seat opens and a swap waits for approval, a new sitting is booked, a room moves, the swap is verified](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
+
+**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install -e .` then `reseat serve --demo`. See [Open the dashboard](#open-the-dashboard).
+
 ## The problem
 
 Planners help you pick sessions. Attendees say the trouble starts after that:
@@ -27,13 +31,13 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 
 | Dashboard, laptop width | Approve, phone width | Today, phone width |
 |---|---|---|
-| ![Dashboard: status line, a swap waiting for approval, the week grid, last changes and the journal](docs/screenshots/dashboard.png) | ![Approve: the held and opened sessions side by side, the checks and one button](docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](docs/screenshots/today.png) |
+| ![Dashboard: status line, a swap waiting for approval, the week grid, last changes and the journal](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/dashboard.png) | ![Approve: the held and opened sessions side by side, the checks and one button](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png) |
 
-- **Dashboard** (`/`). Watching or paused, the last sweep and its session count, the next sweep, held and wanted counts, and ListSessions quota left. Swaps that need you, each with its checks from the last sweep: the target's band, a fallback, no overlap, and whether the rules allow it or ask first. A week grid of held, wanted, proposed and fallback sessions with leave-now strips, a badge where the walk is longer than the gap, and a note on a held session that changed room. Last changes and the journal.
+- **Dashboard** (`/`). What re:Seat has done for you, counted from the journal: seats booked, swaps verified, seats restored. Watching or paused, the last sweep and its session count, the next sweep, held and wanted counts, and ListSessions quota left. Swaps that need you, each with its checks from the last sweep: the target's band, a fallback, no overlap, and whether the rules allow it or ask first. A week grid of held, wanted, proposed and fallback sessions with leave-now strips, a badge where the walk is longer than the gap, and a note on a held session that changed room. Last changes and the journal.
 - **Approve** (`/approve`). One proposal at a time: what you hold and what opened, side by side, the checks, and one button. Bookings within your rules happen at once and show here and under Last changes.
 - **Today** (`/today`). How long until you leave for the next held session, with the walk and when the doors close. The rest of today, your own personal time included. Wanted sessions you do not hold, with queue-or-go advice, its basis, and any clash with a held session's walk.
 
-Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
+It follows your system's light or dark setting. Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
 
 ## Install in three commands
 
@@ -109,7 +113,7 @@ re:Seat's sync read the empty answer as every session removed and emptied its lo
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. CI runs the tests on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 
@@ -236,6 +240,7 @@ A fault storm runs the whole flow for an hour on the real catalog: 30 percent of
 - [AWS Events API facts](docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
 - [Live proof](docs/proof/): checks run against the real API.
 - [Demo scripts](demo/): recordable demos against the fake API. `reseat serve --demo` is the web app version.
+- [Click-through demo](https://hsiddhu2.github.io/reseat/): the web app on demo data, rebuilt from `demo/site.py` on every push to main.
 
 ## License
 
