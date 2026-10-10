@@ -30,6 +30,7 @@ import hmac
 import json
 import re
 import secrets
+import sys
 import threading
 import time
 from collections import deque
@@ -40,6 +41,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
+
+import httpx
 
 from . import guard, pages
 from .campus import EVENT_DAYS, VEGAS
@@ -459,9 +462,39 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+DROPPED = (ConnectionError, TimeoutError)   # reset, broken pipe, aborted, timed out
+ENOTCONN = {57, 107}                        # macOS and Linux: "socket is not connected"
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """A client that hangs up early, or a socket the OS cut off, is not a server fault: no traceback.
+        Browsers pre-connect and drop sockets all the time."""
+        e = sys.exc_info()[1]
+        if isinstance(e, DROPPED) or (isinstance(e, OSError) and e.errno in ENOTCONN):
+            return
+        super().handle_error(request, client_address)
+
+
+def self_check(host: str, port: int, timeout: float = 3.0) -> bool:
+    """Can this machine reach its own server on `host`? Fetches the stylesheet, which needs no sign-in.
+    On macOS a terminal without Local Network permission accepts the connection and then loses it."""
+    try:
+        return httpx.get(f"http://{host}:{port}/static/app.css", timeout=timeout).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+LOCAL_NETWORK_HINT = (
+    "Devices cannot reach this address. On macOS, allow the app you run reseat in (Terminal, iTerm or "
+    "VS Code) under System Settings > Privacy & Security > Local Network, then quit and reopen it and "
+    "start reseat serve again. With Tailscale, check it is switched on on both devices.")
+
+
 def make_server(app: App) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((app.host, app.port), make_handler(app))
-    server.daemon_threads = True
+    server = Server((app.host, app.port), make_handler(app))
     app.port = server.server_address[1]
     return server
 

@@ -6,6 +6,7 @@ Week one commands. Reads are live today. Writes to reservations open 8 October.
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -729,6 +730,14 @@ def serve(event: str = config.DEFAULT_EVENT,
                   f"(approve: /approve, today: /today)")
     con.print("The watcher runs in this process. Ctrl-C stops both.")
     worker = serve_mod.run(a, server)
+    if host not in serve_mod.LOOPBACK:
+        def check() -> None:
+            time.sleep(1.0)                    # serve_forever starts just below
+            if serve_mod.self_check(host, a.port):
+                con.print(f"Checked: this laptop reaches http://{_esc(host)}:{a.port}/.")
+            else:
+                con.print(f"[bold yellow]{serve_mod.LOCAL_NETWORK_HINT}[/bold yellow]")
+        threading.Thread(target=check, name="reseat-self-check", daemon=True).start()
     if demo:
         d.start_script()
     try:

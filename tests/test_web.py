@@ -620,3 +620,31 @@ def test_cli_push_links_to_the_page_when_served_on_a_reachable_address(monkeypat
     r = CliRunner().invoke(cli.app, args)
     assert r.exit_code == 0, r.output
     assert made["p"].click_base == "http://100.64.0.7:8491" and "a link to http://100.64.0.7:8491" in r.output
+
+
+# ---- reaching the server from another device
+
+
+def test_self_check_says_whether_this_machine_reaches_the_server(served):
+    d, _ = served
+    assert S.self_check("127.0.0.1", d.app.port)
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        free = s.getsockname()[1]
+    assert not S.self_check("127.0.0.1", free, timeout=1)
+
+
+def test_a_dropped_or_cut_off_socket_prints_no_traceback(capsys):
+    server = S.Server.__new__(S.Server)
+    for err in (OSError(57, "Socket is not connected"), ConnectionResetError(), BrokenPipeError()):
+        try:
+            raise err
+        except OSError:
+            server.handle_error(None, ("100.64.0.9", 1))
+    assert capsys.readouterr().err == ""
+    try:
+        raise ValueError("a real bug")
+    except ValueError:
+        server.handle_error(None, ("100.64.0.9", 1))
+    assert "a real bug" in capsys.readouterr().err
