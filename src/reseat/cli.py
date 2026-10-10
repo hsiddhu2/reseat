@@ -665,18 +665,24 @@ def serve(event: str = config.DEFAULT_EVENT,
           interval: int = typer.Option(60, help="Seconds between catalog sweeps. At least 30."),
           demo: bool = typer.Option(False, "--demo", help="Run on a fake Events API with a scripted week. "
                                     "No sign-in, nothing sent to AWS, nothing written to ~/.reseat. "
-                                    "Ignores --event and --interval.")):
+                                    "Ignores --event and --interval."),
+          push_topic: str = typer.Option(None, "--push", help="With --demo: push to https://ntfy.sh/<topic>. "
+                                         "16 to 64 letters, digits, - or _. The real server reads "
+                                         "ntfy_topic from the rules file instead.")):
     """Run the watcher and serve the web app: dashboard, approve and today. Leave the laptop awake."""
     from . import push
     from . import serve as serve_mod
     pusher = None
+    if push_topic and not demo:
+        con.print("[red]--push is for --demo. For your own seats, set ntfy_topic in the rules file.[/red]")
+        raise typer.Exit(2)
     if demo:
         from . import demo as demo_mod
         try:
-            d = demo_mod.Demo(host=host, port=port or demo_mod.DEFAULT_PORT)
+            d = demo_mod.Demo(host=host, port=port or demo_mod.DEFAULT_PORT, push_topic=push_topic)
             w, a = d.watcher, d.app
             server = serve_mod.make_server(a)
-        except (serve_mod.ServeError, OSError) as e:
+        except (serve_mod.ServeError, OSError, rules_mod.RulesError) as e:
             con.print(f"[red]{_esc(e)}[/red]")
             raise typer.Exit(2) from None
         con.print("[bold]Demo data.[/bold] A fake Events API runs in this process. Nothing is sent to AWS "
@@ -699,14 +705,15 @@ def serve(event: str = config.DEFAULT_EVENT,
         except (WatchError, serve_mod.ServeError, OSError) as e:
             con.print(f"[red]{_esc(e)}[/red]")
             raise typer.Exit(2) from None
-        if r.ntfy_topic:
-            def code_title(sid: str) -> str:
-                s = st.get(event, sid)
-                return f"{s.abbreviation} {s.title}" if s else "a session"
-            pusher = push.Pusher(r.ntfy_topic, code_title=code_title)
-            pusher.start()
-            w.subscribe(pusher)
-            con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
+    rules_now, store_now, event_now = (d.rules, d.store, demo_mod.EVENT) if demo else (r, st, event)
+    if rules_now.ntfy_topic:
+        def code_title(sid: str) -> str:
+            s = store_now.get(event_now, sid)
+            return f"{s.abbreviation} {s.title}" if s else "a session"
+        pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title)
+        pusher.start()
+        w.subscribe(pusher)
+        con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
     w.subscribe(_print_watch_event)
     if a.auth_required:
         con.print(f"Open this once on each device. It works one time:\n  {_esc(a.one_time_link(host))}")

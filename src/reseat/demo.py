@@ -16,10 +16,13 @@ Rules this module exists to respect:
 - Never reads the keychain, never touches ~/.reseat or the rules file. The store is
   in memory and the rules come from this file. Nothing reaches the network.
 - Every page says "Demo data".
+- Push is off unless a topic is given (`--push`). Then the same pusher as the real
+  server posts demo session codes and titles to ntfy.sh/<topic>, nothing else.
 """
 
 from __future__ import annotations
 
+import re
 import secrets
 import threading
 import time
@@ -66,8 +69,15 @@ def catalog() -> list[Session]:
     return out
 
 
-def rules_text(secret: str | None) -> str:
+TOPIC = re.compile(r"[A-Za-z0-9_-]{16,64}")
+
+
+def rules_text(secret: str | None, push_topic: str | None = None) -> str:
+    """Checked before it goes into the YAML, so a topic can never add or hide a setting."""
+    if push_topic is not None and not TOPIC.fullmatch(push_topic):
+        raise R.RulesError("The push topic must be 16 to 64 letters, digits, - or _.")
     head = f"serve_secret: {secret}\n" if secret else ""
+    head += f"ntfy_topic: {push_topic}\n" if push_topic else ""
     return head + "home_venue: The Venetian\ntargets:\n" + "".join(f"  - code: {c}\n" for c in TARGETS)
 
 
@@ -75,7 +85,8 @@ class Demo:
     """The fake API, the store, the watcher and the web app, wired as `reseat serve` wires them."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
-                 started: float | None = None, monotonic: Callable[[], float] = time.monotonic):
+                 started: float | None = None, monotonic: Callable[[], float] = time.monotonic,
+                 push_topic: str | None = None):
         self.offset = START - (started if started is not None else time.time())
         self.secret = None if host in LOOPBACK else secrets.token_urlsafe(24)
         self.fake = FakeEventsApi(sessions=catalog())
@@ -87,7 +98,7 @@ class Demo:
             "location": "Wynn"}
         self.client = EventsClient(token_provider=lambda: self.fake.token, transport=self.fake.transport())
         self.store = Store(":memory:", clock=self.clock)       # journal times on the demo clock
-        self.rules = R.parse(rules_text(self.secret))
+        self.rules = R.parse(rules_text(self.secret, push_topic))     # RulesError on a bad topic
         self.watcher = Watcher(self.client, self.store, self.rules, EVENT, interval=INTERVAL,
                                clock=self.clock, swapper=self._swap)
         self.app = App(self.watcher, self.store, self.rules, EVENT, host=host, port=port, clock=self.clock,

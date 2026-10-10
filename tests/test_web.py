@@ -488,3 +488,63 @@ def test_a_failed_swap_that_booked_a_fallback_counts_as_restored():
     d.store.journal(D.EVENT, "swap.failed", req, {"fallback_held": None}, "state:failed")
     k = pages._kept(d.app)
     assert (k["booked"], k["swapped"], k["restored"]) == (0, 0, 1)
+
+
+# ---- push in demo mode: the same pusher as the real server
+
+
+def test_demo_push_topic_goes_into_the_demo_rules_and_a_bad_one_is_refused():
+    from reseat.rules import RulesError
+    d = D.Demo(port=0, push_topic="reseat-demo-7f3k9q2m")
+    assert d.rules.ntfy_topic == "reseat-demo-7f3k9q2m"
+    assert D.Demo(port=0).rules.ntfy_topic is None                     # off unless asked
+    for bad in ("short", "#aaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaa # x", "aaaaaaaaaaaaaaaa\nserve_secret: x",
+                "a" * 65):
+        with pytest.raises(RulesError):
+            D.Demo(port=0, push_topic=bad)
+
+
+def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
+    from reseat import push
+    made = {}
+
+    class FakePusher(push.Pusher):
+        def __init__(self, topic, transport=None, code_title=str):
+            super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+                             code_title=code_title)
+            made["p"] = self
+
+        def start(self):
+            made["started"] = True
+
+    class Server:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    def run(app, server):
+        t = threading.Thread(target=lambda: None)
+        t.start()
+        return t
+    monkeypatch.setattr(push, "Pusher", FakePusher)
+    monkeypatch.setattr(S, "make_server", lambda app: made.setdefault("app", app) and Server())
+    monkeypatch.setattr(S, "run", run)
+    monkeypatch.setattr(D.Demo, "start_script", lambda self: None)
+    r = CliRunner().invoke(cli.app, ["serve", "--demo", "--push", "reseat-demo-7f3k9q2m"])
+    assert r.exit_code == 0, r.output
+    p = made["p"]
+    assert made["started"] and p.url == "https://ntfy.sh/reseat-demo-7f3k9q2m" and "Push is on" in r.output
+    w = made["app"].watcher
+    w.tick()
+    sid = next(s for s in w.store.all(D.EVENT) if s.abbreviation == "SVS306-R").session_id
+    w.emit("proposed", plan_id="x" * 22, target="SVS306", held_id=sid, wanted_id=sid, auto=False, expires=0)
+    p.flush()
+    [(title, body)] = p.sent
+    assert title == "Swap proposed" and "SVS306-R" in body and sid not in body
+
+
+def test_cli_push_without_demo_is_refused():
+    r = CliRunner().invoke(cli.app, ["serve", "--push", "reseat-demo-7f3k9q2m"])
+    assert r.exit_code == 2 and "ntfy_topic" in r.output
