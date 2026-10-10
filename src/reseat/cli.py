@@ -710,10 +710,14 @@ def serve(event: str = config.DEFAULT_EVENT,
         def code_title(sid: str) -> str:
             s = store_now.get(event_now, sid)
             return f"{s.abbreviation} {s.title}" if s else "a session"
-        pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title)
+        reachable = host not in serve_mod.LOOPBACK              # a tap on the phone can open the page
+        pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
+                             click_base=f"http://{host}:{a.port}" if reachable else None)
         pusher.start()
         w.subscribe(pusher)
-        con.print("Push is on. Session codes, titles and the event type go to ntfy.sh. Nothing else.")
+        link = f", and a link to http://{host}:{a.port} for a tap to open" if reachable else ""
+        con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
+                  "Nothing else.")
     w.subscribe(_print_watch_event)
     if a.auth_required:
         con.print(f"Open this once on each device. It works one time:\n  {_esc(a.one_time_link(host))}")

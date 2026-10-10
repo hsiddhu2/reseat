@@ -309,7 +309,9 @@ def _how(b: guard.Block) -> str:
 # ---------------------------------------------------------------------- HTTP
 
 
-STATIC = {"app.css": "text/css", "app.js": "text/javascript"}
+STATIC = {"app.css": "text/css", "app.js": "text/javascript",
+          "manifest.webmanifest": "application/manifest+json",
+          "icon-180.png": "image/png", "icon-192.png": "image/png", "icon-512.png": "image/png"}
 
 
 def static(name: str) -> bytes:
@@ -348,7 +350,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def _send(self, status: int, body: bytes = b"", ctype: str = "application/json",
                   headers: dict[str, str] | None = None) -> None:
             self.send_response(status)
-            self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+            text = not ctype.startswith("image/")
+            self.send_header("Content-Type", f"{ctype}; charset=utf-8" if text else ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -356,7 +359,8 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("Referrer-Policy", "no-referrer")
             # Scripts only from /static/app.js. Inline style attributes place the week grid's blocks.
             self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; "
-                             "style-src 'self' 'unsafe-inline'; connect-src 'self'; form-action 'self'; "
+                             "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; "
+                             "manifest-src 'self'; form-action 'self'; "
                              "frame-ancestors 'none'; base-uri 'none'")
             for k, v in (headers or {}).items():
                 self.send_header(k, v)

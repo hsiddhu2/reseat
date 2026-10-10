@@ -37,7 +37,7 @@ EXTRA_CSS = """
 def staticize(html: str, now: float, done: str | None = None) -> str:
     """Point links and assets at sibling files, drop the script, make the buttons links."""
     html = html.replace('<script src="/static/app.js" defer></script>', "")
-    html = html.replace('href="/static/app.css"', 'href="app.css"')
+    html = html.replace('href="/static/', 'href="')
     html = html.replace('href="/approve"', 'href="approve.html"')
     html = html.replace('href="/today"', 'href="today.html"')
     html = html.replace('href="/"', 'href="index.html"')
@@ -83,8 +83,15 @@ def build(out: Path) -> list[str]:
         written[name] = staticize(written[name], now)
     for name, html in written.items():
         (out / name).write_text(html, encoding="utf-8")
-    css = resources.files("reseat").joinpath("static", "app.css").read_text(encoding="utf-8")
+    static = resources.files("reseat").joinpath("static")
+    css = static.joinpath("app.css").read_text(encoding="utf-8")
     (out / "app.css").write_text(css + EXTRA_CSS, encoding="utf-8")
+    for name in ("icon-180.png", "icon-192.png", "icon-512.png"):
+        (out / name).write_bytes(static.joinpath(name).read_bytes())
+    manifest = static.joinpath("manifest.webmanifest").read_text(encoding="utf-8")
+    manifest = manifest.replace('"/static/', '"').replace('"/approve"', '"approve.html"')
+    manifest = manifest.replace('"scope": "/"', '"scope": "."')
+    (out / "manifest.webmanifest").write_text(manifest, encoding="utf-8")
     d.watcher.stop()
     return sorted(written)
 

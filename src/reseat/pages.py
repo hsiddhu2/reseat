@@ -530,6 +530,11 @@ def _head(title: str, view: str, demo: bool, plans: Iterable[str], now: float, s
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
             f'<title>{e(title)}</title><link rel="stylesheet" href="/static/app.css">'
+            '<link rel="manifest" href="/static/manifest.webmanifest">'
+            '<link rel="apple-touch-icon" href="/static/icon-180.png">'
+            '<meta name="apple-mobile-web-app-capable" content="yes">'
+            '<meta name="apple-mobile-web-app-title" content="re:Seat">'
+            '<meta name="theme-color" content="#1b1b1f">'
             f'<script src="/static/app.js" defer></script></head>'
             f'<body class="v-{view}" data-plans="{e(ids)}" data-now="{now:.0f}" data-sweep="{e(sweep or "")}"'
             f'{" data-empty=1" if empty else ""}>{banner}')

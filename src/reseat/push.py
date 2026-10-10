@@ -1,7 +1,10 @@
 """Push to the phone through ntfy. Off unless the rules file sets `ntfy_topic`.
 
 What leaves the laptop, and nothing else: the event type, session codes and
-titles, and plain status lines such as "re:Seat offline since 14:05". Never a
+titles, and plain status lines such as "re:Seat offline since 14:05". When the
+web app listens on an address the phone can reach (not loopback), each message
+also carries a link to the page to open, such as http://100.x.y.z:8490/approve.
+That address only works inside the attendee's own Tailscale network. Never a
 token, an abstract, a session id or a plan id. The topic name is the only
 secret, so it must be a long random string.
 """
@@ -49,32 +52,43 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
     return None
 
 
+PAGE = {"proposed": "/approve", "leave": "/today"}       # every other event opens the dashboard
+
+
+def page_for(ev: WatchEvent) -> str:
+    """The web app page a tap on this push should open."""
+    return PAGE.get(ev.kind, "/")
+
+
 class Pusher:
     """Sends on a background thread so a slow network never holds up the watcher."""
 
     def __init__(self, topic: str, transport: httpx.BaseTransport | None = None,
-                 code_title: Callable[[str], str] = str):
+                 code_title: Callable[[str], str] = str, click_base: str | None = None):
         self.url = f"{NTFY}/{topic}"
+        self.click_base = click_base       # e.g. http://100.64.0.7:8490, or None on loopback
         self.code_title = code_title
         self.http = httpx.Client(timeout=10, transport=transport)
         self.sent: list[tuple[str, str]] = []
         self.failures = 0
-        self._q: queue.Queue[tuple[str, str] | None] = queue.Queue(maxsize=100)
+        self._q: queue.Queue[tuple[str, str, str] | None] = queue.Queue(maxsize=100)
         self._thread: threading.Thread | None = None
 
     def __call__(self, ev: WatchEvent) -> None:
         msg = message(ev, self.code_title)
         if msg:
             try:
-                self._q.put_nowait(msg)
+                self._q.put_nowait((*msg, page_for(ev)))
             except queue.Full:
                 self.failures += 1
 
-    def send(self, title: str, body: str) -> bool:
-        """One plain-text POST. No auth header, nothing from the keychain."""
-        safe_title = title.encode("ascii", "replace").decode()   # HTTP headers are ASCII
+    def send(self, title: str, body: str, page: str = "/") -> bool:
+        """One plain-text POST. No auth header, nothing from the keychain. A tap opens `page`."""
+        headers = {"Title": title.encode("ascii", "replace").decode(), "Tags": "seat"}   # headers are ASCII
+        if self.click_base:
+            headers["Click"] = self.click_base + page
         try:
-            r = self.http.post(self.url, content=body.encode(), headers={"Title": safe_title, "Tags": "seat"})
+            r = self.http.post(self.url, content=body.encode(), headers=headers)
             ok = r.status_code < 300
         except Exception:  # noqa: BLE001  push is best effort and must never kill its thread
             ok = False

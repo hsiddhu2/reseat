@@ -509,9 +509,9 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title)
+                             code_title=code_title, click_base=click_base)
             made["p"] = self
 
         def start(self):
@@ -536,6 +536,7 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
     assert r.exit_code == 0, r.output
     p = made["p"]
     assert made["started"] and p.url == "https://ntfy.sh/reseat-demo-7f3k9q2m" and "Push is on" in r.output
+    assert p.click_base is None                    # loopback: a phone could not open that link
     w = made["app"].watcher
     w.tick()
     sid = next(s for s in w.store.all(D.EVENT) if s.abbreviation == "SVS306-R").session_id
@@ -548,3 +549,74 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
 def test_cli_push_without_demo_is_refused():
     r = CliRunner().invoke(cli.app, ["serve", "--push", "reseat-demo-7f3k9q2m"])
     assert r.exit_code == 2 and "ntfy_topic" in r.output
+
+
+def test_a_push_carries_a_link_to_the_right_page_when_the_phone_can_reach_it():
+    from reseat import push
+    from reseat.watcher import WatchEvent
+    seen = []
+
+    def handler(req):
+        seen.append(dict(req.headers))
+        return httpx.Response(200)
+    p = push.Pusher("reseat-demo-7f3k9q2m", transport=httpx.MockTransport(handler),
+                    click_base="http://100.64.0.7:8491")
+    events = (("proposed", {"wanted_id": "B", "held_id": "A"}), ("booked", {"code": "X", "title": "T"}),
+              ("leave", {"code": "X", "message": "Walk"}))
+    for kind, data in events:
+        p(WatchEvent(kind, 0, data))
+    p.flush()
+    assert [h["click"] for h in seen] == ["http://100.64.0.7:8491/approve", "http://100.64.0.7:8491/",
+                                          "http://100.64.0.7:8491/today"]
+    seen.clear()
+    loop = push.Pusher("reseat-demo-7f3k9q2m", transport=httpx.MockTransport(handler))
+    loop(WatchEvent("booked", 0, {"code": "X", "title": "T"}))
+    loop.flush()
+    assert "click" not in seen[0]
+
+
+def test_the_app_can_be_added_to_a_phone_home_screen(served):
+    _, http = served
+    html = http.get("/approve").text
+    assert 'rel="manifest" href="/static/manifest.webmanifest"' in html and 'rel="apple-touch-icon"' in html
+    m = http.get("/static/manifest.webmanifest")
+    assert m.headers["content-type"].startswith("application/manifest+json")
+    assert m.json()["display"] == "standalone" and m.json()["start_url"] == "/approve"
+    icon = http.get("/static/icon-180.png")
+    assert icon.headers["content-type"] == "image/png" and icon.content[:8] == b"\x89PNG\r\n\x1a\n"
+    csp = http.get("/").headers["content-security-policy"]
+    assert "manifest-src 'self'" in csp and "img-src 'self'" in csp
+
+
+def test_cli_push_links_to_the_page_when_served_on_a_reachable_address(monkeypatch):
+    from reseat import push
+    made = {}
+
+    class FakePusher(push.Pusher):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None):
+            super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
+                             code_title=code_title, click_base=click_base)
+            made["p"] = self
+
+        def start(self):
+            pass
+
+    class Server:
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+        def server_close(self):
+            pass
+
+    def run(app, server):
+        t = threading.Thread(target=lambda: None)
+        t.start()
+        return t
+    monkeypatch.setattr(push, "Pusher", FakePusher)
+    monkeypatch.setattr(S, "make_server", lambda app: Server())
+    monkeypatch.setattr(S, "run", run)
+    monkeypatch.setattr(D.Demo, "start_script", lambda self: None)
+    args = ["serve", "--demo", "--push", "reseat-demo-7f3k9q2m", "--host", "100.64.0.7"]
+    r = CliRunner().invoke(cli.app, args)
+    assert r.exit_code == 0, r.output
+    assert made["p"].click_base == "http://100.64.0.7:8491" and "a link to http://100.64.0.7:8491" in r.output
