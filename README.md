@@ -4,7 +4,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 
 ![re:Seat demo mode: a seat opens and a swap waits for approval, a new sitting is booked, a room moves, the swap is verified](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
-**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install -e .` then `reseat serve --demo`. See [Open the dashboard](#open-the-dashboard).
+**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install reseat` then `reseat serve --demo`. See [Open the dashboard](#open-the-dashboard).
 
 ## The problem
 
@@ -21,7 +21,7 @@ Seats free up, repeats get added, rooms move. Catching that means refreshing the
 ## Open the dashboard
 
 ```bash
-pip install -e .
+pip install reseat         # or: pipx install reseat
 reseat serve --demo        # a scripted week on a fake Events API. No sign-in. Open http://127.0.0.1:8491/
 ```
 
@@ -39,11 +39,10 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 
 It follows your system's light or dark setting. Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
 
-## Install in three commands
+## Install
 
 ```bash
-git clone https://github.com/hsiddhu2/reseat && cd reseat
-pip install -e .
+pipx install reseat        # or: pip install reseat
 reseat login
 ```
 
@@ -143,7 +142,7 @@ reseat swap <held> <wanted>        # replace a held session safely: fallback che
 reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
 reseat serve                       # watcher plus the web app: dashboard, approve, today. See "Running it all week"
 reseat serve --demo                # the web app on a fake API with a scripted week. No sign-in
-reseat mcp                         # local MCP server on stdio. Needs pip install -e ".[mcp]"
+reseat mcp                         # local MCP server on stdio. Needs pip install "reseat[mcp]"
 reseat logout
 ```
 
@@ -204,7 +203,7 @@ It prints a one-time link. Open it once on each device. It sets a cookie and the
 
 ### MCP server
 
-`reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Install the extra first: `pip install -e ".[mcp]"`. A client config looks like this, with the path to your `reseat` command:
+`reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Install the extra first: `pip install "reseat[mcp]"`. A client config looks like this, with the path to your `reseat` command:
 
 ```json
 {
@@ -225,6 +224,7 @@ re:Seat only reserves what you asked for. It never holds two sittings of one tal
 ### Development
 
 ```bash
+git clone https://github.com/hsiddhu2/reseat && cd reseat
 pip install -e ".[dev]"
 pytest
 ruff check .
@@ -239,8 +239,8 @@ A fault storm runs the whole flow for an hour on the real catalog: 30 percent of
 - [How re:Seat works](docs/architecture.md): the design, each part marked built or planned, and how it is tested.
 - [AWS Events API facts](docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
 - [Live proof](docs/proof/): checks run against the real API.
-- [Demo scripts](demo/): recordable demos against the fake API. `reseat serve --demo` is the web app version.
-- [Click-through demo](https://hsiddhu2.github.io/reseat/): the web app on demo data, rebuilt from `demo/site.py` on every push to main.
+- [Demo scripts](demo/): demos against the fake API, no sign-in. `reseat serve --demo` is the web app version.
+- [Click-through demo](https://hsiddhu2.github.io/reseat/): the web app on demo data, rebuilt from `scripts/build_site.py` on every push to main.
 
 ## License
 

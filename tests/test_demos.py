@@ -1,12 +1,10 @@
-"""The recordable demos must keep working and must show what demo/README.md says they show.
+"""The demos in demo/ must keep working and must show what demo/README.md says they show.
 Each runs against the fake API only."""
 
 import runpy
 import sys
-import time
 from pathlib import Path
 
-import httpx
 import pytest
 
 from reseat import cli, config
@@ -65,24 +63,3 @@ def test_swap_rolls_back_then_succeeds(demo_env):
     assert "cancelled -> reserved -> verified" in second and "held now: SVS306-R" in second
     assert g["A"] not in out.split("is CMP409-R")[1].replace(f"reseat swap {g['A']}", "")
 
-
-def test_phone_page_serves_the_proposal_and_approve_runs_it(demo_env):
-    g = runpy.run_path(str(DEMO / "phone.py"), run_name="demo_phone")
-    with pytest.raises(SystemExit):
-        g["start"]("0.0.0.0", 0)                              # never on every interface
-    app, server, worker = g["start"]("127.0.0.1", 0)
-    try:
-        http = httpx.Client(base_url=f"http://127.0.0.1:{app.port}", timeout=30)
-        link = app.one_time_link("127.0.0.1").split(str(app.port), 1)[1]
-        assert http.get(link).status_code == 303                # sets the cookie, clean redirect
-        deadline = time.time() + 15
-        state = http.get("/api/state").json()
-        while "day" not in state and time.time() < deadline:     # the first snapshot is built after start
-            time.sleep(0.1)
-            state = http.get("/api/state").json()
-        assert state["day"] == "2026-11-30" and state["next_leave"]["code"] == "ARC302-R"
-        [p] = state["proposals"]
-        r = http.post(f"/approve/{p['plan_id']}", headers={"X-Reseat": "1"})
-        assert r.status_code == 200 and r.json()["state"] == "verified"
-    finally:
-        g["stop"](app, server, worker)

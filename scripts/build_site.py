@@ -1,6 +1,6 @@
 """Build the static click-through demo for GitHub Pages.
 
-    python demo/site.py _site
+    python scripts/build_site.py _site
 
 Runs demo mode by hand, exactly as `reseat serve --demo` scripts it: a baseline
 sweep, a seat opens, a new sitting appears, a room moves. Then it saves the three

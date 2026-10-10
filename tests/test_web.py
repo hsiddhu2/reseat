@@ -434,7 +434,8 @@ def test_dashboard_counts_what_was_kept_from_the_journal(served):
 def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_path):
     import runpy
     from pathlib import Path
-    site = runpy.run_path(str(Path(__file__).resolve().parent.parent / "demo" / "site.py"), run_name="site")
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
+    site = runpy.run_path(str(script), run_name="site")
     names = site["build"](tmp_path)
     assert names == ["after.html", "approve.html", "index.html", "today.html"]
     for n in names:
@@ -471,7 +472,8 @@ def test_static_site_has_no_absolute_or_external_links(tmp_path):
     import re
     import runpy
     from pathlib import Path
-    site = runpy.run_path(str(Path(__file__).resolve().parent.parent / "demo" / "site.py"), run_name="site")
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
+    site = runpy.run_path(str(script), run_name="site")
     for n in site["build"](tmp_path):
         html = (tmp_path / n).read_text(encoding="utf-8")
         for url in re.findall(r'(?:href|src|action)="([^"]*)"', html):

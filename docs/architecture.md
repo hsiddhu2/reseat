@@ -88,7 +88,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - On site the laptop checks the day's held and wanted sessions with GetSession every 20 seconds, at most 40 of them, inside the 120 per minute quota. A freed seat is booked the moment it shows.
 - One thread owns the API client and the local store. The web server only reads a snapshot it builds and hands approvals to it. Stopping the server lets a swap in progress finish first.
 - A sign-in lasts 7 days. Sign-ins live only in the running process, so a restart signs every device out. The page is plain HTTP: use it over Tailscale.
-- Demo mode, `reseat serve --demo`: the same server, watcher, router and swap on FakeEventsApi with a week of real sessions from the 1 October catalog and a scripted timeline (a seat opens, a new sitting appears, a room moves). The store is in memory. It never reads the keychain or `~/.reseat`, and every page says "Demo data". `demo/site.py` renders the same views to static HTML, including the dashboard after a real swap on the fake, for the click-through demo on GitHub Pages.
+- Demo mode, `reseat serve --demo`: the same server, watcher, router and swap on FakeEventsApi with a week of real sessions from the 1 October catalog and a scripted timeline (a seat opens, a new sitting appears, a room moves). The store is in memory. It never reads the keychain or `~/.reseat`, and every page says "Demo data". `scripts/build_site.py` renders the same views to static HTML, including the dashboard after a real swap on the fake, for the click-through demo on GitHub Pages.
 - Designed for a laptop left in the hotel room, plugged in and awake, reached from the phone over Tailscale. See "Running it all week" in the README.
 
 **Interfaces**

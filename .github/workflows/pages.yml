@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -e .
-      - run: python demo/site.py _site
+      - run: python scripts/build_site.py _site
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
