@@ -86,9 +86,9 @@ class Demo:
 
     def __init__(self, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
                  started: float | None = None, monotonic: Callable[[], float] = time.monotonic,
-                 push_topic: str | None = None):
+                 push_topic: str | None = None, require_secret: bool = False):
         self.offset = START - (started if started is not None else time.time())
-        self.secret = None if host in LOOPBACK else secrets.token_urlsafe(24)
+        self.secret = secrets.token_urlsafe(24) if require_secret or host not in LOOPBACK else None
         self.fake = FakeEventsApi(sessions=catalog())
         by_code = {s.abbreviation: s.session_id for s in self.fake.sessions.values()}
         self.fake.schedule.reserved.update(by_code[c] for c in HELD)

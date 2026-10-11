@@ -176,20 +176,22 @@ The first target wins a time slot. Within a batch, formats that are not recorded
 
 re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves the web app: the dashboard, approve and today.
 
-**Set up the phone.** Add a long random `serve_secret` to the rules file, then start it on the laptop with its Tailscale address (`tailscale ip -4` prints it):
+**Set up the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Add a long random `serve_secret` to the rules file, then start it on the laptop:
 
 ```bash
-reseat serve --host "$(tailscale ip -4)"
+reseat serve --tailscale
 ```
+
+re:Seat listens on 127.0.0.1 only and asks Tailscale to forward `http://<your laptop's Tailscale name>:8490` to it, so the page is reachable from your own Tailscale devices and nowhere else. Stopping `reseat serve` removes the forwarding. This also avoids macOS's Local Network rules, which can drop connections from other devices to a program they do not recognise. `--host <Tailscale address>` still works where those rules allow it.
 
 It prints a one-time link. Open it once on each device. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. A sign-in lasts 7 days. To sign every device out, stop and restart `reseat serve`: sign-ins live only in the running process. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. It never listens on every interface: `--host 0.0.0.0` is refused. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Swap now and Dismiss take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
 
 **Keep the laptop awake with the lid closed.**
 
-- macOS. `caffeinate -s reseat serve --host <Tailscale address>` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
+- macOS. `caffeinate -s reseat serve --tailscale` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
 - Windows. Settings, System, Power and battery: when plugged in, sleep after Never. Control Panel, Power Options, Choose what closing the lid does: when plugged in, Do nothing.
 
-**Reach it from the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Start `reseat serve` with the laptop's Tailscale address and open the printed link on the phone. The phone then reaches the laptop from any venue, and the page is not offered on the hotel network.
+**Reach it from the phone.** With `--tailscale`, open the printed link on the phone. The phone then reaches the laptop from any venue, and the page is not offered on the hotel network.
 
 **If the phone cannot open it.** `reseat serve` checks it can reach its own address when it starts. On macOS, a terminal app without Local Network permission accepts connections and then drops them. Allow the app you run reseat in (Terminal, iTerm or VS Code) under System Settings, Privacy & Security, Local Network, then quit and reopen it. Also check Tailscale is switched on on both devices.
 

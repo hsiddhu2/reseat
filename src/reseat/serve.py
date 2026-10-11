@@ -488,9 +488,10 @@ def self_check(host: str, port: int, timeout: float = 3.0) -> bool:
 
 
 LOCAL_NETWORK_HINT = (
-    "Devices cannot reach this address. On macOS, allow the app you run reseat in (Terminal, iTerm or "
-    "VS Code) under System Settings > Privacy & Security > Local Network, then quit and reopen it and "
-    "start reseat serve again. With Tailscale, check it is switched on on both devices.")
+    "Devices cannot reach this address. With Tailscale, use reseat serve --tailscale instead of --host: "
+    "it listens on 127.0.0.1 and Tailscale forwards to it, so macOS's local network rules never apply. "
+    "Otherwise, on macOS, allow your terminal app under System Settings > Privacy & Security > "
+    "Local Network, quit and reopen it, and start reseat serve again.")
 
 
 def make_server(app: App) -> ThreadingHTTPServer:

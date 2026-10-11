@@ -6,6 +6,7 @@ Week one commands. Reads are live today. Writes to reservations open 8 October.
 from __future__ import annotations
 
 import re
+import signal
 import threading
 import time
 from collections.abc import Iterable
@@ -669,18 +670,36 @@ def serve(event: str = config.DEFAULT_EVENT,
                                     "Ignores --event and --interval."),
           push_topic: str = typer.Option(None, "--push", help="With --demo: push to https://ntfy.sh/<topic>. "
                                          "16 to 64 letters, digits, - or _. The real server reads "
-                                         "ntfy_topic from the rules file instead.")):
+                                         "ntfy_topic from the rules file instead."),
+          tailscale: bool = typer.Option(False, "--tailscale", help="Reach it from your phone through "
+                                         "Tailscale: listen on 127.0.0.1 and have Tailscale forward "
+                                         "http://<this computer's Tailscale name>:<port> to it. Needs "
+                                         "serve_secret (demo mode makes one).")):
     """Run the watcher and serve the web app: dashboard, approve and today. Leave the laptop awake."""
     from . import push
     from . import serve as serve_mod
+    from . import tailnet as tailnet_mod
     pusher = None
+    tn: tailnet_mod.Tailnet | None = None
+    public = host                       # the address a device types, and push links point at
+    if tailscale:
+        if host not in serve_mod.LOOPBACK:
+            con.print("[red]--tailscale listens on 127.0.0.1 itself. Leave out --host.[/red]")
+            raise typer.Exit(2)
+        try:
+            tn = tailnet_mod.Tailnet.locate()
+            public = tn.name()
+        except tailnet_mod.TailnetError as e:
+            con.print(f"[red]{_esc(e)}[/red]")
+            raise typer.Exit(2) from None
     if push_topic and not demo:
         con.print("[red]--push is for --demo. For your own seats, set ntfy_topic in the rules file.[/red]")
         raise typer.Exit(2)
     if demo:
         from . import demo as demo_mod
         try:
-            d = demo_mod.Demo(host=host, port=port or demo_mod.DEFAULT_PORT, push_topic=push_topic)
+            d = demo_mod.Demo(host=host, port=port or demo_mod.DEFAULT_PORT, push_topic=push_topic,
+                              require_secret=tailscale)
             w, a = d.watcher, d.app
             server = serve_mod.make_server(a)
         except (serve_mod.ServeError, OSError, rules_mod.RulesError) as e:
@@ -690,11 +709,15 @@ def serve(event: str = config.DEFAULT_EVENT,
                   "and nothing is written to ~/.reseat. The clock reads Monday 30 November, 10:15 in "
                   "Las Vegas.")
         if d.secret:
-            con.print(f"Demo serve_secret, for /login on another device: {_esc(d.secret)}")
+            con.print(f"Demo serve_secret, for /login on another device: {_esc(d.secret)}", soft_wrap=True)
         con.print("About 30 s: a seat opens and a swap waits for you. About 60 s: a new sitting is booked. "
                   "About 90 s: a held session changes room.")
     else:
         r, c, st = _rules(), _client(), _store()
+        if tailscale and not r.serve_secret:
+            con.print("[red]--tailscale needs serve_secret in the rules file: everyone on your Tailscale "
+                      "network could open the page otherwise. Add a long random serve_secret.[/red]")
+            raise typer.Exit(2)
 
         def swapper(p: Proposal, approved: bool) -> SwapResult:
             return Swap(c, st, r, event).run_plan(p, approved=approved)
@@ -706,50 +729,88 @@ def serve(event: str = config.DEFAULT_EVENT,
         except (WatchError, serve_mod.ServeError, OSError) as e:
             con.print(f"[red]{_esc(e)}[/red]")
             raise typer.Exit(2) from None
-    rules_now, store_now, event_now = (d.rules, d.store, demo_mod.EVENT) if demo else (r, st, event)
-    if rules_now.ntfy_topic:
-        def code_title(sid: str) -> str:
-            s = store_now.get(event_now, sid)
-            return f"{s.abbreviation} {s.title}" if s else "a session"
-        reachable = host not in serve_mod.LOOPBACK              # a tap on the phone can open the page
-        pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
-                             click_base=f"http://{host}:{a.port}" if reachable else None)
-        pusher.start()
-        w.subscribe(pusher)
-        link = f", and a link to http://{host}:{a.port} for a tap to open" if reachable else ""
-        con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
-                  "Nothing else.")
-    w.subscribe(_print_watch_event)
-    if a.auth_required:
-        con.print(f"Open this once on each device. It works one time:\n  {_esc(a.one_time_link(host))}")
-        con.print(f"For another device, open http://{_esc(host)}:{a.port}/login and enter serve_secret.")
-        con.print("This is plain HTTP. Reach it over Tailscale, which encrypts the link, not over open "
-                  "hotel Wi-Fi. Restarting reseat serve signs every device out.")
-    else:
-        con.print(f"Dashboard on this laptop only: http://{_esc(host)}:{a.port}/  "
-                  f"(approve: /approve, today: /today)")
-    con.print("The watcher runs in this process. Ctrl-C stops both.")
-    worker = serve_mod.run(a, server)
-    if host not in serve_mod.LOOPBACK:
-        def check() -> None:
-            time.sleep(1.0)                    # serve_forever starts just below
-            if serve_mod.self_check(host, a.port):
-                con.print(f"Checked: this laptop reaches http://{_esc(host)}:{a.port}/.")
-            else:
-                con.print(f"[bold yellow]{serve_mod.LOCAL_NETWORK_HINT}[/bold yellow]")
-        threading.Thread(target=check, name="reseat-self-check", daemon=True).start()
-    if demo:
-        d.start_script()
+    def stop_cleanly(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt            # closing the terminal or a kill stops like Ctrl-C: cleanup runs
+    previous = {}
+    for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)):
+        if sig is not None:
+            previous[sig] = signal.signal(sig, stop_cleanly)
+    worker: threading.Thread | None = None
+    forwarded = False
     try:
+        if tn:
+            try:
+                tn.forward(a.port)
+                forwarded = True
+            except tailnet_mod.TailnetError as e:
+                con.print(f"[red]{_esc(e)}[/red]")
+                raise typer.Exit(2) from None
+        rules_now, store_now, event_now = (d.rules, d.store, demo_mod.EVENT) if demo else (r, st, event)
+        if rules_now.ntfy_topic:
+            def code_title(sid: str) -> str:
+                s = store_now.get(event_now, sid)
+                return f"{s.abbreviation} {s.title}" if s else "a session"
+            reachable = public not in serve_mod.LOOPBACK            # a tap on the phone can open the page
+            pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
+                                 click_base=f"http://{public}:{a.port}" if reachable else None)
+            pusher.start()
+            w.subscribe(pusher)
+            link = f", and a link to http://{public}:{a.port} for a tap to open" if reachable else ""
+            con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
+                      "Nothing else.")
+        w.subscribe(_print_watch_event)
+        if a.auth_required:
+            con.print("Open this once on each device. It works one time:")
+            con.print(f"  {_esc(a.one_time_link(public))}", soft_wrap=True)      # never wrap a link
+            con.print("For another device, open this and enter serve_secret:")
+            con.print(f"  http://{_esc(public)}:{a.port}/login", soft_wrap=True)
+            con.print("This is plain HTTP. Reach it over Tailscale, which encrypts the link, not over open "
+                      "hotel Wi-Fi. Restarting reseat serve signs every device out.")
+        else:
+            con.print(f"Dashboard on this laptop only: http://{_esc(host)}:{a.port}/  "
+                      f"(approve: /approve, today: /today)", soft_wrap=True)
+        con.print("The watcher runs in this process. Ctrl-C stops both.")
+        worker = serve_mod.run(a, server)
+        if public not in serve_mod.LOOPBACK:
+            def check() -> None:
+                time.sleep(1.0)                    # serve_forever starts just below
+                if serve_mod.self_check(public, a.port):
+                    url = f"http://{_esc(public)}:{a.port}/"
+                    con.print(f"Checked: this laptop reaches {url}.", soft_wrap=True)
+                else:
+                    con.print(f"[bold yellow]{serve_mod.LOCAL_NETWORK_HINT}[/bold yellow]")
+            threading.Thread(target=check, name="reseat-self-check", daemon=True).start()
+        if demo:
+            d.start_script()
         server.serve_forever()
     except KeyboardInterrupt:
         con.print("Stopping. A swap in progress finishes first.")
     finally:
-        w.stop()
-        worker.join(timeout=serve_mod.APPROVE_WAIT)
-        server.server_close()
-        if pusher:
-            pusher.stop()
+        _shutdown(w, worker, server, pusher)
+        if forwarded and tn:
+            if tn.stop(a.port):
+                con.print("Tailscale forwarding removed.")
+            else:
+                con.print(f"[yellow]Could not remove the Tailscale forwarding. Run: tailscale serve "
+                          f"--http={a.port} off[/yellow]")
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def _shutdown(w: Watcher, worker: threading.Thread | None, server: object, pusher: object) -> None:
+    """Stop everything serve started. Each step runs even if an earlier one fails."""
+    steps = [w.stop, lambda: worker and worker.join(timeout=_approve_wait()),
+             getattr(server, "server_close", lambda: None), getattr(pusher, "stop", lambda: None)]
+    for step in steps:
+        try:
+            step()
+        except Exception as e:  # noqa: BLE001  shutting down: report and go on to the next step
+            con.print(f"[yellow]While stopping: {_esc(e)}[/yellow]")
+
+
+def _approve_wait() -> float:
+    from . import serve as serve_mod
+    return serve_mod.APPROVE_WAIT
 
 
 @app.command("mcp")
