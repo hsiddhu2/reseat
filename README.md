@@ -25,7 +25,7 @@ pip install reseat         # or: pipx install reseat
 reseat serve --demo        # a scripted week on a fake Events API. No sign-in. Open http://127.0.0.1:8491/
 ```
 
-Demo mode runs the real watcher, router and swap code against an in-process fake of the API, with a week of real sessions from the 1 October catalog. Within two minutes a seat opens and a swap waits for your approval, a new sitting is booked, and a held session changes room. The dashboard's **Try a scenario** section, with a guided tour, then lets you press each thing that can happen at AWS, with a sentence on what it is and what you will see. The result stays at the top of the page and the sessions it touched light up on the week: a seat filling mid-swap (rolled back), a booking the read-back cannot confirm, writes switched off and on, the API going down, an empty catalog, a lost sign-in, the clock jumping to the morning briefing or to a leave time, and more. Each runs a real sweep on the fake API, and with `--push` each one reaches your phone. Nothing is sent to AWS, nothing is read from the keychain, and nothing is written to `~/.reseat`. Every page says "Demo data".
+Demo mode runs the real watcher, router and swap code against an in-process fake of the API, with a week of real sessions from the 1 October catalog. Within two minutes a seat opens and a swap waits for your approval, a new sitting is booked, and a held session changes room. The **Demo** page, with a guided tour, then lets you press each thing that can happen at AWS. Beside the list it shows what AWS did, what re:Seat did, your week before and after with the changed sessions labelled, and the notifications your phone got. The scenarios: a seat filling mid-swap (rolled back), a booking the read-back cannot confirm, writes switched off and on, the API going down, an empty catalog, a lost sign-in, the clock jumping to the morning briefing or to a leave time, and more. Each runs a real sweep on the fake API, and with `--push` each one reaches your phone. Nothing is sent to AWS, nothing is read from the keychain, and nothing is written to `~/.reseat`. Every page says "Demo data".
 
 With your own seats, `reseat serve` runs the watcher and the same web app at `http://127.0.0.1:8490/`, in one process.
 
@@ -174,7 +174,7 @@ The first target wins a time slot. Within a batch, formats that are not recorded
 
 ### Running it all week
 
-re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves the web app: the dashboard, approve and today.
+re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves the web app: Week (the calendar, with changed sessions labelled for 15 minutes, a crossed-out ghost where a seat was released, and a line at the current time), Approve, Today, and Activity (every change to your week, the catalog changes and the journal).
 
 **Set up the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Add a long random `serve_secret` to the rules file, then start it on the laptop:
 

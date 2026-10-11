@@ -2,7 +2,7 @@
 
 re:Seat manages an attendee's AWS re:Invent seats after the plan is made. It watches for freed seats and newly added repeat sessions, books them within the attendee's rules, upgrades held seats without losing one, and tells the attendee when to leave and whether to queue.
 
-It runs on the attendee's own machine against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). It keeps a journal of every write and its result. The CLI, a web app served from the laptop (dashboard, approve and today), and a local MCP server all drive the same engine.
+It runs on the attendee's own machine against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). It keeps a journal of every write and its result. The CLI, a web app served from the laptop (Week, Approve, Today and Activity), and a local MCP server all drive the same engine.
 
 Status as of 2 October 2026 is marked on each part below: **built** means it is in this repo and tested against the fake API, **planned** means it is not written yet.
 
@@ -90,7 +90,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - On site the laptop checks the day's held and wanted sessions with GetSession every 20 seconds, at most 40 of them, inside the 120 per minute quota. A freed seat is booked the moment it shows.
 - One thread owns the API client and the local store. The web server only reads a snapshot it builds and hands approvals to it. Stopping the server lets a swap in progress finish first.
 - A sign-in lasts 7 days. Sign-ins live only in the running process, so a restart signs every device out. The page is plain HTTP: use it over Tailscale.
-- Demo mode, `reseat serve --demo`: the same server, watcher, router and swap on FakeEventsApi with a week of real sessions from the 1 October catalog and a scripted timeline (a seat opens, a new sitting appears, a room moves). The store is in memory. It never reads the keychain or `~/.reseat`, and every page says "Demo data". A **Try a scenario** section, in demo mode only, has eighteen scenarios and a guided tour. Each changes the fake API (a seat opens or fills mid-swap, a repeat appears, writes close and reopen through the probe session, the API drops, the catalog empties, sign-in expires) or moves the demo clock forward to an on-site moment, and runs one real sweep. The result stays in a banner and the sessions it touched are highlighted on the week. Its endpoint, `POST /demo/<name>`, needs the same cookie and header as Approve and does not exist on a real server. `--push <topic>` turns on the same ntfy push as the real server, with demo codes and titles. `scripts/build_site.py` renders the same views to static HTML, including the dashboard after a real swap on the fake, for the click-through demo on GitHub Pages.
+- Demo mode, `reseat serve --demo`: the same server, watcher, router and swap on FakeEventsApi with a week of real sessions from the 1 October catalog and a scripted timeline (a seat opens, a new sitting appears, a room moves). The store is in memory. It never reads the keychain or `~/.reseat`, and every page says "Demo data". A **Demo** page, `/demo`, in demo mode only, has eighteen scenarios and a guided tour. Each changes the fake API (a seat opens or fills mid-swap, a repeat appears, writes close and reopen through the probe session, the API drops, the catalog empties, sign-in expires) or moves the demo clock forward to an on-site moment, and runs one real sweep. Beside the list it shows what AWS did, what re:Seat did, the week before and after for each day touched (the net change, start against end, so a rolled-back swap is no change), and each notification as the phone shows it. Its endpoint, `POST /demo/<name>`, needs the same cookie and header as Approve and does not exist on a real server. `--push <topic>` turns on the same ntfy push as the real server, with demo codes and titles. `scripts/build_site.py` renders the same views to static HTML, including the dashboard after a real swap on the fake, for the click-through demo on GitHub Pages.
 - Designed for a laptop left in the hotel room, plugged in and awake, reached from the phone over Tailscale. See "Running it all week" in the README.
 
 **Interfaces**
@@ -115,7 +115,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
 | Favorites sync | built | Mirror target sittings into favorites, read back. |
-| Web app | built | Local HTTP server: dashboard, approve and today views, approve by plan id, demo mode, on-site polling, optional push. |
+| Web app | built | Local HTTP server: Week, Approve, Today and Activity views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
 | MCP server | built | Propose bookings and swaps, approve by plan id, explain. Optional extra `reseat[mcp]`. |
 
 ## Key flows

@@ -34,6 +34,7 @@ from typing import Any
 from . import guard, push
 from . import rules as R
 from .campus import EVENT_DAYS, VEGAS
+from .changes import Tracker
 from .client import EventsClient
 from .fakeapi import FakeEventsApi
 from .fixtures import load_catalog
@@ -244,20 +245,29 @@ class Demo:
         def run() -> str:
             seen: list[Any] = []
             self._notes = []
+            self.app.refresh()
+            before = dict(self.app.tracker.prev or {})
+            logged = set(self.app.tracker.log)
             self.watcher.subscribe(seen.append)
             try:
                 said = c["fn"]()
             finally:
                 self.watcher.unsubscribe(seen.append)
+            self.app.refresh()
             if self._notes:
                 said = f"Demo reset first: {'; '.join(self._notes)}. {said}"
-            pushed = (push.message(ev, self._code_title) for ev in seen)
-            titles = list(dict.fromkeys(m[0] for m in pushed if m))
+            phone = self._phone(seen)
+            titles = list(dict.fromkeys(n["title"] for n in phone))
             msg = (f"{said} Notifications: {'; '.join(titles)}." if titles
                    else f"{said} No notification this time.")
+            final = dict(self.app.tracker.prev or {})
+            changes = _net(before, final, [ch for ch in self.app.tracker.log if ch not in logged])
             self.app.last_scenario = {
                 "at": self.clock(), "label": c["label"], "story": c["story"], "did": said,
-                "phone": titles, "codes": self._codes_in(seen), "step": step,
+                "phone": phone, "codes": self._codes_in(seen), "step": step,
+                "clock": f"{datetime.fromtimestamp(self.clock(), VEGAS):%a %d %b, %H:%M}",
+                "changes": [{"kind": ch.kind, "label": ch.label, "text": ch.text()} for ch in changes],
+                "days": _before_after(before, final, changes),
                 "next": self._tour_next_label()}
             at = self._tour_at % len(TOUR)
             self.app.tour_label = (f"Guided tour: step {at + 1} of {len(TOUR)}" if at
@@ -265,6 +275,17 @@ class Demo:
             self.app.refresh()
             return msg
         return run
+
+    def _phone(self, events: list[Any]) -> list[dict[str, Any]]:
+        """The pushes these events made, as the phone shows them. One per title."""
+        out, seen = [], set()
+        for ev in events:
+            m = push.message(ev, self._code_title)
+            if m and m[0] not in seen:
+                seen.add(m[0])
+                out.append({"title": m[0], "body": m[1],
+                            "buttons": ev.kind == "proposed" and not ev.data.get("auto")})
+        return out
 
     def _codes_in(self, events: list[Any]) -> list[str]:
         """Session codes the run touched, for highlighting on the week grid."""
@@ -554,3 +575,40 @@ class Demo:
 def _utc(start: str) -> float:
     """A personal-time start (UTC, no offset) as a timestamp."""
     return datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
+
+
+def _before_after(before: dict[str, Any], after: dict[str, Any], changes: list[Any]) -> list[dict[str, Any]]:
+    """For each day a change touched: the held and proposed sessions before and after, the changed ones
+    labelled. Codes only."""
+    was = {p.code: p for p in before.values()}
+    days = sorted({ch.place.start.date() for ch in changes}
+                  | {was[ch.place.code].start.date() for ch in changes if ch.place.code in was})
+    mark = {ch.place.code: {"kind": ch.kind, "label": ch.label} for ch in changes}
+    gone = {ch.place.code for ch in changes if ch.kind in ("released", "removed")}
+
+    def rows(places: dict[str, Any], day: Any, side: str) -> list[dict[str, Any]]:
+        out = []
+        for p in sorted((p for p in places.values() if p.start.date() == day), key=lambda p: p.start):
+            m = mark.get(p.code)
+            if side == "before" and m and m["kind"] not in ("released", "removed", "moved"):
+                m = None
+            out.append({"time": f"{p.start:%H:%M}–{p.end:%H:%M}", "code": p.code, "where": p.venue,
+                        "state": p.state, "mark": m})
+        if side == "after":
+            out += [{"time": f"{ch.place.start:%H:%M}–{ch.place.end:%H:%M}", "code": ch.place.code,
+                     "where": ch.place.venue, "state": "gone", "mark": mark[ch.place.code]}
+                    for ch in changes if ch.place.code in gone and ch.place.start.date() == day
+                    and ch.place.code not in {r["code"] for r in out}]
+        return out
+    return [{"label": f"{d:%A} {d.day} {d:%B}", "before": rows(before, d, "before"),
+             "after": rows(after, d, "after")} for d in days]
+
+
+def _net(before: dict[str, Any], final: dict[str, Any], changes: list[Any]) -> list[Any]:
+    """What the run changed on the week, end against start: a swap rolled back, or a seat released and
+    booked again in the same place, is no change. Ghost labels for a removed session come from the
+    changes seen during the run."""
+    gone = {ch.place.code for ch in changes if ch.kind == "removed"}
+    t = Tracker()
+    t.removed = {sid for sid, p in before.items() if p.code in gone}
+    return t._diff(changes[-1].at if changes else 0.0, before, final)

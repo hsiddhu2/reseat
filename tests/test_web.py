@@ -71,7 +71,9 @@ def test_dashboard_shows_status_card_week_changes_and_journal(demo):
     changes = " ".join(c["text"] for c in snap["view"]["changes"])
     assert "AIM310-R1 booked, read back ok" in changes and "CMP303 moved" in changes
     assert "SVS306-R unavailable → limited" in changes
-    assert "Bookings within your rules happen at once and show under Last changes." in html
+    assert "Changed sessions are labelled on the week for 15 minutes." in html
+    activity = pages.render_activity(snap, demo=True)
+    assert "AIM310-R1 booked, read back ok" in activity and "Journal" in activity
     assert f'data-approve="{card["plan_id"]}"' in html and f'data-skip="{card["plan_id"]}"' in html
 
 
@@ -440,7 +442,7 @@ def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_pa
     script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
     site = runpy.run_path(str(script), run_name="site")
     names = site["build"](tmp_path)
-    assert names == ["after.html", "approve.html", "index.html", "today.html"]
+    assert names == ["activity.html", "after.html", "approve.html", "demo.html", "index.html", "today.html"]
     for n in names:
         html = (tmp_path / n).read_text(encoding="utf-8")
         assert "<script" not in html and "/static/" not in html and "data-approve" not in html
@@ -703,7 +705,7 @@ def test_every_scenario_produces_its_event_through_the_real_engine():
         assert writes == ["closed", "open"]
         assert http.post("/demo/seat").status_code == 403                 # still needs the X-Reseat header
         assert http.post("/demo/nope", headers={"X-Reseat": "1"}).status_code == 404
-        assert "Try a scenario" in http.get("/").text
+        assert "Try a scenario" in http.get("/demo").text and "Try a scenario" not in http.get("/").text
     finally:
         d.watcher.stop()
         server.shutdown()
@@ -872,25 +874,28 @@ def test_a_clock_jump_mentions_an_expired_swap_only_when_one_was_waiting():
 # ---- the clearer dashboard: scenario headings, the result banner, session details
 
 
-def test_scenarios_are_headings_with_what_happens_and_what_you_will_see():
+def test_the_demo_page_lists_every_scenario_with_what_happens():
     d, _, sc = panel()
-    html = pages.render_dashboard(d.app.snapshot(), demo=True)
+    html = pages.render_demo(d.app.snapshot())
     for s in d.app.scenarios:
-        assert f"<h4>{pages.e(s['label'])}</h4>" in html and pages.e(s["story"]) in html
+        assert f"<b>{pages.e(s['label'])}</b>" in html and pages.e(s["story"]) in html
     groups = {"Seats", "Your schedule", "On site", "AWS and the network"}
     assert {s["group"] for s in d.app.scenarios} == groups
-    assert 'data-scenario="tour"' in html and "Show all 18 scenarios" in html
+    assert 'data-scenario="tour"' in html and "Pick a scenario" in html
+    assert "data-scenario" not in pages.render_dashboard(d.app.snapshot(), demo=True)
 
 
-def test_a_scenario_leaves_a_banner_and_highlights_what_changed():
+def test_a_seat_opening_shows_the_proposal_on_the_week_and_the_phone_card():
     d, _, sc = panel()
     sc["seat"]()
     last = d.app.snapshot()["view"]["last"]
-    assert last["label"] == "A seat opens" and last["phone"] == ["Swap proposed"]
-    assert {"SVS306-R", "CMP409-R"} <= set(last["codes"])
-    html = pages.render_dashboard(d.app.snapshot(), demo=True)
-    assert "What happened at AWS:" in html and "Sent to your phone:</strong> Swap proposed" in html
-    assert 'class="blk b-proposed hl' in html
+    assert last["phone"] == [{"title": "Swap proposed", "body": last["phone"][0]["body"], "buttons": True}]
+    assert [(c["kind"], c["text"].split()[0]) for c in last["changes"]] == [("proposed", "SVS306-R")]
+    html = pages.render_demo(d.app.snapshot())
+    assert "What AWS did" in html and "Your phone" in html and '<div class="nb">' in html
+    assert "PROPOSED" in html and "Before" in html and "After" in html
+    week = pages.render_dashboard(d.app.snapshot(), demo=True)
+    assert 'class="blk b-proposed hl' in week and '<em class="mk mk-proposed">PROPOSED</em>' in week
 
 
 def test_the_guided_tour_runs_five_steps_in_order_and_starts_again():
@@ -924,13 +929,54 @@ def test_every_week_block_opens_a_detail_panel_with_its_facts(demo):
         assert sid not in html
 
 
-def test_the_banner_sits_above_the_layout_and_its_close_rule_wins():
+def test_week_changes_from_scenarios_are_labelled_before_and_after():
     d, _, sc = panel()
-    sc["move"]()
-    html = pages.render_dashboard(d.app.snapshot(), demo=True)
-    assert html.index('class="banner"') < html.index('class="layout"')
+    sc["repeat"]()
+    last = d.app.snapshot()["view"]["last"]
+    [new] = [c for c in last["changes"] if c["kind"] == "new"]
+    after = [r for day in last["days"] for r in day["after"]]
+    assert any(r["mark"] and r["mark"]["kind"] == "new" for r in after)
+    assert "<em class=\"mk mk-new\">NEW</em>" in pages.render_dashboard(d.app.snapshot(), demo=True)
+    sc["fill"]()                                         # the swap rolls back: the week ends as it began
+    assert d.app.snapshot()["view"]["last"]["changes"] == []
+    assert "Nothing on your week changed." in pages.render_demo(d.app.snapshot())
+    sc["remove"]()
+    assert [c["kind"] for c in d.app.snapshot()["view"]["last"]["changes"]] == ["removed"]
     css = (pathlib.Path(pages.__file__).parent / "static" / "app.css").read_text(encoding="utf-8")
-    assert "[hidden] { display: none !important; }" in css      # .banner is display:flex
+    assert "[hidden] { display: none !important; }" in css
+
+
+def test_an_approved_swap_leaves_a_ghost_of_the_released_seat():
+    d, _, sc = panel()
+    sc["seat"]()
+    [p] = d.watcher.pending()
+    d.watcher.approve(p.plan_id)
+    d.app.refresh()
+    kinds = {c["kind"]: c["text"] for c in d.app.snapshot()["view"]["recent"]}
+    assert kinds["swapped_in"].startswith("SVS306-R") and kinds["released"].startswith("CMP409-R")
+    week = pages.render_dashboard(d.app.snapshot(), demo=True)
+    assert '<em class="mk mk-released">RELEASED</em><b>CMP409-R</b>' in week and "SWAPPED IN" in week
+    assert "Just changed" in week
+    for sid in ids(d):
+        assert sid not in week
+
+
+def test_the_demo_page_does_not_exist_on_a_real_server():
+    d = D.Demo(port=0)
+    d.app.demo = False
+    d.watcher.tick()
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        http = httpx.Client(base_url=f"http://127.0.0.1:{d.app.port}", timeout=30)
+        assert wait_until(lambda: d.app.snapshot().get("view"))
+        assert http.get("/demo").status_code in (403, 404)
+        assert http.get("/activity").status_code in (200, 303, 403)
+    finally:
+        d.watcher.stop()
+        server.shutdown()
+        server.server_close()
 
 
 def test_the_tour_button_says_which_step_comes_next_even_after_another_scenario():
@@ -992,3 +1038,55 @@ def test_a_failed_first_sweep_sends_no_free_day_briefing():
     assert not [e for e in events if e.kind == "briefing"]
     d.watcher.tick()
     assert [e.data["title"] for e in events if e.kind == "briefing"] == ["Today: 1 session"]
+
+
+# ---- QA: ghosts and the now line on the week grid
+
+
+def _vegas_ts(y, mo, d, h, mi=0):
+    return datetime(y, mo, d, h, mi, tzinfo=VEGAS).timestamp()
+
+
+def _qa_session(sid, code, time_="10:00"):
+    return Session.model_validate({
+        "sessionId": sid, "abbreviation": code, "title": f"Title {code}", "type": "Breakout session",
+        "venue": "MGM Grand", "room": "Level 1 | Grand 117", "isReservable": True,
+        "seatAvailability": "available",
+        "sessionTime": {"date": "2026-12-01", "time": time_, "length": "60"}})
+
+
+def test_a_released_session_that_is_not_a_target_leaves_a_ghost_block():
+    d, _, _ = panel()
+    t = d.app.tracker
+    now = _vegas_ts(2026, 12, 1, 9)
+    t.prev = None
+    t.look(now - 60, [_qa_session("qa-gone", "QAX101")], [])
+    t.look(now - 30, [], [])
+    w = pages._week(d.app, [], [], [], now)
+    [g] = [b for b in w["blocks"] if b["code"] == "QAX101"]
+    assert g["kind"] == "ghost" and g["mark"]["kind"] == "released" and "detail" in g
+    assert "qa-gone" not in json.dumps(g, default=str)
+    later = pages._week(d.app, [], [], [], now - 30 + 15 * 60)       # the ghost fades with the label
+    assert not [b for b in later["blocks"] if b["code"] == "QAX101"]
+
+
+def test_a_released_session_still_on_the_week_gets_no_second_ghost():
+    d, _, _ = panel()
+    t = d.app.tracker
+    now = _vegas_ts(2026, 12, 1, 9)
+    s = _qa_session("qa-want", "QAW202")
+    t.prev = None
+    t.look(now - 60, [s], [])
+    t.look(now - 30, [], [])
+    w = pages._week(d.app, [], [("t", [s])], [], now)                # still wanted, so drawn as wanted
+    blocks = [b for b in w["blocks"] if b["code"] == "QAW202"]
+    assert [b["kind"] for b in blocks] == ["wanted"] and blocks[0]["mark"]["kind"] == "released"
+
+
+def test_the_now_line_shows_only_inside_the_event_days_and_hours():
+    d, _, _ = panel()
+    inside = pages._week(d.app, [], [], [], _vegas_ts(2026, 12, 1, 10, 30))
+    assert inside["now"] == {"day": 1, "top": pages._pct(10 * 60 + 30), "label": "10:30"}
+    assert pages._week(d.app, [], [], [], _vegas_ts(2026, 11, 20, 10))["now"] is None
+    assert pages._week(d.app, [], [], [], _vegas_ts(2026, 12, 1, 19))["now"] is None
+    assert pages._week(d.app, [], [], [], _vegas_ts(2026, 12, 1, 7, 59))["now"] is None

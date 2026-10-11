@@ -40,6 +40,8 @@ def staticize(html: str, now: float, done: str | None = None) -> str:
     html = html.replace('href="/static/', 'href="')
     html = html.replace('href="/approve"', 'href="approve.html"')
     html = html.replace('href="/today"', 'href="today.html"')
+    html = html.replace('href="/activity"', 'href="activity.html"')
+    html = html.replace('href="/demo"', 'href="demo.html"')
     html = html.replace('href="/"', 'href="index.html"')
     html = re.sub(r'<button class="primary" data-approve="[^"]+">([^<]*)</button>',
                   r'<a class="primary" href="after.html">\1</a>', html)
@@ -48,14 +50,22 @@ def staticize(html: str, now: float, done: str | None = None) -> str:
     html = re.sub(r'<b data-until="(\d+)">…</b>',
                   lambda m: f"<b>{max(0, int(m.group(1)) - int(now))} s</b>", html)
     html = re.sub(r'<button[^>]*data-scenario="[^"]+"[^>]*>[^<]*</button>', "", html)
-    html = html.replace("<h2>Try a scenario</h2>", "<h2>Scenarios you can run</h2>")
-    html = html.replace('<p class="fine">You will see:',
-                        '<p class="fine">Run reseat serve --demo to press it. You will see:')
+    hint = ("<h2>Scenarios you can run</h2><p><b>Run <code>reseat serve --demo</code> to press these.</b> "
+            "This page shows one result.</p>")
+    html = html.replace("<h2>Try a scenario</h2>", hint)
     banner = f'<div class="demo" role="status">{NOTE}</div>'
     html = re.sub(r'<div class="demo" role="status">.*?</div>', banner, html, count=1, flags=re.S)
     if done:
         html = html.replace('<aside class="side">', f'<aside class="side"><p class="done">{done}</p>', 1)
     return html
+
+
+def demo_page() -> str:
+    """The Demo page after one real scenario, a repeat sitting booked, so before and after show."""
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    dict((k, fn) for k, _, _, fn in d.scenarios())["repeat"]()
+    return pages.render_demo(d.app.snapshot())
 
 
 def build(out: Path) -> list[str]:
@@ -75,6 +85,8 @@ def build(out: Path) -> list[str]:
         "index.html": pages.render_dashboard(snap, demo=True),
         "approve.html": pages.render_approve(snap, demo=True),
         "today.html": pages.render_today(snap, demo=True),
+        "activity.html": pages.render_activity(snap, demo=True),
+        "demo.html": demo_page(),
     }
     [p] = d.watcher.pending()
     res = d.watcher.approve(p.plan_id)
@@ -83,7 +95,7 @@ def build(out: Path) -> list[str]:
     done = pages.e(f"Swap now ran: {' → '.join(res.steps)}. Every step is in the journal below. "
                    f"{got.abbreviation if got else 'The new session'} is held now.")
     written["after.html"] = staticize(pages.render_dashboard(d.app.snapshot(), demo=True), now, done)
-    for name in ("index.html", "approve.html", "today.html"):
+    for name in ("index.html", "approve.html", "today.html", "activity.html", "demo.html"):
         written[name] = staticize(written[name], now)
     for name, html in written.items():
         (out / name).write_text(html, encoding="utf-8")

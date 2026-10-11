@@ -46,6 +46,7 @@ import httpx
 
 from . import guard, pages
 from .campus import EVENT_DAYS, VEGAS
+from .changes import Tracker
 from .models import Session
 from .reminders import Reminders
 from .reminders import how as reminders_how
@@ -62,7 +63,7 @@ LOGIN_TRIES = 5          # failed sign-ins allowed per minute
 APPROVE_WAIT = 120       # seconds an approve may take: check, cancel, reserve, read-backs
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAX_BODY = 2048
-VIEWS = ("/", "/approve", "/today")
+VIEWS = ("/", "/approve", "/today", "/activity", "/demo")
 REFRESH_EVERY = 20       # seconds between snapshot refreshes, so leave-now never waits on a sweep
 
 
@@ -106,6 +107,7 @@ class App:
         self._failures: deque[float] = deque()
         self._snapshot: dict[str, Any] = {}
         self._held_known = False
+        self.tracker = Tracker()
         self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid))
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         watcher.subscribe(self._on_event)
@@ -237,6 +239,8 @@ class App:
     def _on_event(self, ev: WatchEvent) -> None:
         if ev.kind == "sweep" and not ev.data.get("error"):
             self._held_known = True
+        if ev.kind == "removed" and ev.data.get("session_id"):
+            self.tracker.removed.add(ev.data["session_id"])
         if ev.kind in ("sweep", "booked", "proposed", "swap", "signin", "back", "offline"):
             self.refresh()
 
@@ -263,6 +267,9 @@ class App:
                               "leave_local": vegas(leave_at).strftime("%H:%M"), "how": _how(b)}
                 break
         if self._held_known:          # what is held comes from a sweep in this process, never a guess
+            wanted = (self.store.get(self.event_id, p.wanted_id) for p in self.watcher.pending())
+            proposed = [s for s in wanted if s]
+            self.tracker.look(now, sessions, proposed)
             self.reminders.check(now, sessions, blocks, self._wanted_sittings(held),
                                  len(self.watcher.pending()), fresh=self.watcher.down_since is None)
         snap = {
@@ -368,6 +375,10 @@ def page(app: App, path: str) -> bytes:
         return pages.render_approve(snap, app.demo, push=bool(app.rules.ntfy_topic)).encode()
     if path == "/today":
         return pages.render_today(snap, app.demo).encode()
+    if path == "/activity":
+        return pages.render_activity(snap, app.demo).encode()
+    if path == "/demo" and app.demo:
+        return pages.render_demo(snap).encode()
     return pages.render_dashboard(snap, app.demo).encode()
 
 
@@ -441,7 +452,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 else:
                     self._json(401 if app.auth_required else 403, {"error": "not allowed"})
                 return
-            if url.path in VIEWS:
+            if url.path in VIEWS and (url.path != "/demo" or app.demo):
                 self._send(200, page(app, url.path), "text/html")
             elif url.path == "/api/state":
                 self._json(200, app.snapshot())
