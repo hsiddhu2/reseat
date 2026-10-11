@@ -39,7 +39,7 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 - **Approve** (`/approve`). One proposal at a time: what you hold and what opened, side by side, the checks, and one button. Bookings within your rules happen at once and show on the week and under Activity.
 - **Today** (`/today`). How long until you leave for the next held session, with the walk and when the doors close. The rest of today, your own personal time included. Wanted sessions you do not hold, with queue-or-go advice, its basis, and any clash with a held session's walk.
 
-Every page has the same menu, except the few seconds of the starting screen: a row under the header on a laptop, and at phone width a bottom bar with Week, Today, Approve, Activity and More, which opens Targets, Status and, in demo mode, Demo. Approve shows how many swaps wait. It follows your system's light or dark setting. Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
+Every page adjusts to the screen: two columns on a laptop, one on a phone. Every page has the same menu, except the few seconds of the starting screen: a row under the header on a laptop, and at phone width a bottom bar with Week, Today, Approve, Activity and More, which opens Targets, Status and, in demo mode, Demo. Approve shows how many swaps wait. It follows your system's light or dark setting. Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
 
 ## Install
 

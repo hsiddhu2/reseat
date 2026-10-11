@@ -704,7 +704,7 @@ def render_starting(now: float, demo: bool = False, error: str | None = None) ->
             "still work. This page tries again in a few seconds." if error
             else "Starting. The first sweep is running. This page reloads in a few seconds.")
     return (_head("re:Seat", "week", demo, [], now, empty=True)
-            + f'<main class="phone"><p>{text}</p></main></body></html>')
+            + f'<main class="page"><p>{text}</p></main></body></html>')
 
 
 MAIN = [("week", "/", "Week", "Your calendar, and swaps to approve"),
@@ -1064,18 +1064,14 @@ def _details_html(w: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def _phone_top(left: str, right: str, state: str) -> str:
-    return (f'<header class="ptop"><div class="brand">{e(left)}</div><div class="grow"></div>'
-            f'<div class="status" data-state="{e(state)}"><i class="dot"></i>{e(right)}</div></header>')
-
-
 def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False) -> str:
     v = snap.get("view") or {}
     cards, s = v.get("cards", []), v["status"]
-    online = "laptop online" if s["state"] == "watching" else s["text"]
     plans = [c["plan_id"] for c in cards]
     out = [_head("re:Seat approve", "approve", demo, plans, snap["now"], s["last_sweep"]),
-           _phone_top("re:Seat", f"{online} · {hm(snap['now'])}", s["state"]), '<main class="phone">',
+           _status_line(s), '<main class="page"><h1>Approve</h1><p class="intro">A swap would cancel a seat '
+           "you hold, so it waits here for you, one at a time. Bookings within your rules happen on their "
+           'own and are listed beside it.</p><div class="two"><div class="col">'
            f'<div class="mono muted">{len(cards)} waiting</div>']
     for i, c in enumerate(cards):
         if i == 0:
@@ -1093,11 +1089,14 @@ def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False)
                        f'{e(c["wanted"]["venue"])}</div><div class="mono muted">next</div></article>')
     if not cards:
         out.append('<p class="empty">Nothing waits for your approval.</p>')
+    out.append('</div><div class="col"><h2>Booked today</h2>')
+    if not v.get("bookings"):
+        out.append('<p class="muted">Nothing booked in the last day.</p>')
     for b in v.get("bookings", []):
         out.append(f'<article class="card booked"><div class="kind ok">BOOKED {e(b["at"])}</div>'
                    f'<div><strong>{e(b["code"])}</strong>, {e(b["when"])}, {e(b["venue"])}</div>'
                    f'<div class="muted">Within your rules. Read back ok.</div></article>')
-    out.append("</main></body></html>")
+    out.append("</div></div></main></body></html>")
     return _on_top("".join(out), "approve", demo)
 
 
@@ -1112,7 +1111,9 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     t, s = v["today"], v["status"]
     out = [_head("re:Seat today", "today", demo, [c["plan_id"] for c in v.get("cards", [])], snap["now"],
                  s["last_sweep"]),
-           _phone_top(t["label"], hm(snap["now"]), s["state"]), '<main class="phone">']
+           _status_line(s), f'<main class="page"><h1>Today, {e(t["label"])}</h1><p class="intro">When to '
+           "leave for your next session, the rest of your day, and the talks you want but hold no seat for."
+           '</p><div class="two"><div class="col">']
     h = t["hero"]
     if h:
         walk = (f"Walk {h['origin']} → {h['venue']}, {h['walk']} min. " if h["walk"] is not None
@@ -1139,7 +1140,7 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     out += [f'<div class="row"><div class="mono t">{e(n["time"])}</div><div><strong>{e(n["name"])}</strong>'
             f'<div class="muted">{e(n["sub"])}</div></div></div>' for n in t["next"]] or [
         '<p class="muted">Nothing else today.</p>']
-    out.append('</section><section class="panel"><h2>Wanted today, not held</h2>')
+    out.append('</section></div><div class="col"><section class="panel"><h2>Wanted today, not held</h2>')
     for w in t["wanted"]:
         clash = f'<div class="bad">{e(w["clash"])}</div>' if w["clash"] else ""
         out.append(f'<div class="want"><div class="split"><strong>{e(w["code"])} · {e(w["time"])}</strong>'
@@ -1148,5 +1149,5 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     if not t["wanted"]:
         out.append('<p class="muted">Nothing wanted today that is not held.</p>')
     out.append(f'</section><section class="panel foot"><i class="dot"></i><span class="mono">{e(t["cover"])}'
-               f'</span></section></main></body></html>')
+               f'</span></section></div></div></main></body></html>')
     return _on_top("".join(out), "today", demo)

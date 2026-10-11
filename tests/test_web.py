@@ -1415,3 +1415,31 @@ def test_static_site_pages_each_have_one_menu_with_sibling_links(tmp_path):
                      "status.html", "demo.html"):
             assert f'href="{page}"' in nav, (n, page)
         assert nav.count('href="targets.html"') == 2 and "<details" in nav, n    # row link and More item
+
+
+def test_today_and_approve_render_two_balanced_columns_empty_and_full():
+    import copy
+    d, _, sc = panel()
+    sc["seat"]()
+    full = d.app.snapshot()
+    v = full["view"]
+    assert v["cards"] and v["today"]["hero"]
+    if not v.get("bookings"):
+        v["bookings"] = [{"at": "09:12", "code": "ABC101", "when": "Tue 10:00", "venue": "Wynn"}]
+    empty = copy.deepcopy(full)
+    ev = empty["view"]
+    ev["cards"], ev["bookings"], ev["blocks"] = [], [], None
+    ev["today"].update(hero=None, next=[], wanted=[])
+    for snap in (full, empty):
+        for html in (pages.render_today(snap, True), pages.render_approve(snap, True, push=False)):
+            assert html.count('<div class="two">') == 1 and html.count('<div class="col">') == 2
+            assert html.count("<div") == html.count("</div>")
+            assert html.count("<section") == html.count("</section>")
+            assert html.count("<main") == html.count("</main>") == 1
+            two = html.index('<div class="two">')
+            assert html.index("</header>") < two < html.index("</main>")
+            assert 'class="ptop"' not in html and 'class="phone"' not in html
+    assert "Nothing booked in the last day." in pages.render_approve(empty, True)
+    assert "Booked today" in pages.render_approve(full, True) and "BOOKED" in pages.render_approve(full, True)
+    assert "data-leave=" in pages.render_today(full, True) and "data-leave-label" in pages.render_today(full)
+    assert "data-leave=" not in pages.render_today(empty, True)
