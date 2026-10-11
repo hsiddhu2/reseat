@@ -34,7 +34,7 @@ from typing import Any
 from . import guard
 from .client import ApiError, EventsClient, OperationClosed
 from .models import Session
-from .router import WRITES_CLOSED, Router, run_booking
+from .router import WRITES_CLOSED, Router, run_booking, target_name
 from .rules import Rules, base_code
 from .store import Store
 from .swap import Swap, SwapBusy, SwapResult
@@ -69,6 +69,9 @@ class Tools:
             self._plans[p.plan_id] = p
         return p
 
+    def _target(self, label: str) -> str:
+        return target_name(label, self.store, self.event_id)
+
     def _code(self, sid: str) -> str:
         s = self.store.get(self.event_id, sid)
         if not s:
@@ -87,7 +90,7 @@ class Tools:
             mine = [s for s in tree if s.session_id in held]
             state = (f"held: {self._code(mine[0].session_id)}" if mine
                      else f"not held, {len(tree)} sittings known")
-            lines.append(f"{i}. {t.label}{' (auto swap)' if t.auto_swap else ''}: {state}")
+            lines.append(f"{i}. {self._target(t.label)}{' (auto swap)' if t.auto_swap else ''}: {state}")
         return "\n".join(lines) or "The rules file has no targets."
 
     def explain_drift(self, hours: int = 0) -> str:
@@ -127,9 +130,9 @@ class Tools:
             return f"Nothing planned. {plan.blocked}"
         chosen = plan.batch + plan.deferred
         if not chosen:
-            why = "; ".join(f"{s.target}: {s.reason}" for s in plan.skipped[:10])
+            why = "; ".join(f"{self._target(s.target)}: {s.reason}" for s in plan.skipped[:10])
             return "Nothing to reserve now." + (f" Skipped: {why}." if why else "")
-        lines = [f"- {self._code(p.session_id)} for target {p.target}" for p in chosen]
+        lines = [f"- {self._code(p.session_id)} for target {self._target(p.target)}" for p in chosen]
         p = self._new_plan("book", [x.session_id for x in chosen], "\n".join(lines))
         return (f"Plan {p.plan_id}, valid 10 minutes. Reserve {len(chosen)}:\n{p.summary}\n"
                 "Nothing has been sent. Ask the attendee, then call approve_changes with this plan id.")

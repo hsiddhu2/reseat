@@ -112,6 +112,33 @@ p { margin: 0; }
 .notif p { font-size: 13px; }
 .nb { display: flex; gap: 8px; margin-top: 6px; }
 .nb span { flex: 1; text-align: center; padding: 6px; border-radius: 8px; background: var(--surface); font-weight: 600; font-size: 13px; }
+/* targets, status, day */
+.links { display: flex; gap: 14px; margin-right: 18px; }
+.links a { color: var(--bar-ink); text-decoration: none; font-size: 13px; }
+.links a:hover { text-decoration: underline; }
+a.dh { color: inherit; text-decoration: none; display: block; }
+a.dh:hover { text-decoration: underline; color: var(--accent); }
+.target .band { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.rows .r-held { background: var(--held); color: #fff; }
+.rows .r-held span, .rows .r-held .band { color: #ddd; }
+.t-held { border-left: 4px solid var(--good); }
+.t-proposed { border-left: 4px solid var(--accent); }
+.t-waiting { border-left: 4px solid var(--wanted); }
+.facts { display: grid; grid-template-columns: minmax(110px, 160px) 1fr; gap: 6px 12px; margin: 0; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.quota { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.quota li { position: relative; padding: 4px 8px; border-radius: 4px; background: var(--line-2); overflow: hidden; }
+.quota li i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--good); opacity: .18; }
+.daytabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.daytabs a { padding: 6px 12px; border-radius: 16px; border: 1px solid var(--line); text-decoration: none; color: var(--ink); background: var(--surface); }
+.daytabs a[aria-current] { background: var(--ink); color: var(--ground); }
+.leave-row { margin: 0; padding: 6px 10px; border-left: 4px solid var(--leave); background: var(--surface); font-weight: 600; }
+.d-held { border-left: 4px solid var(--held); }
+.d-proposed { border-left: 4px solid var(--accent); }
+.d-wanted { border-left: 4px dashed var(--wanted); }
+.d-ghost { opacity: .7; border-left: 4px dashed var(--muted); }
+@media (max-width: 600px) { .links { margin-right: 0; gap: 10px; } }
 /* what changed */
 .mk { font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 3px; color: #fff; background: var(--good); white-space: nowrap; }
 .mk-released, .mk-removed { background: var(--muted); }

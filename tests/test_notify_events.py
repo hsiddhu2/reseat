@@ -190,3 +190,184 @@ def test_a_session_the_attendee_cancelled_earlier_is_not_pushed_as_held_when_rem
     w.tick()
     w.tick()
     assert of(events, "removed") == []
+
+
+# ---- which pushes reach the phone: quiet hours and categories
+
+
+from datetime import datetime  # noqa: E402
+
+import httpx  # noqa: E402
+
+from reseat.campus import VEGAS  # noqa: E402
+from reseat.watcher import WatchEvent  # noqa: E402
+
+
+def vegas_ts(hm, date="2026-12-01"):
+    return datetime.fromisoformat(f"{date}T{hm}").replace(tzinfo=VEGAS).timestamp()
+
+
+def quiet_pusher(now, **kw):
+    seen = []
+
+    def handler(req):
+        seen.append((req.headers["title"], req.content.decode()))
+        return httpx.Response(200)
+    t = {"now": now}
+    p = push.Pusher("reseat-demo-7f3k9q2m", transport=httpx.MockTransport(handler),
+                    clock=lambda: t["now"], **kw)
+    return p, seen, t
+
+
+def booked(code="ARC301-R"):
+    return WatchEvent("booked", 0, {"code": code, "title": "T"})
+
+
+def test_notify_settings_parse_and_reject_nonsense():
+    r = R.parse('notify:\n  quiet: "22:00-07:00"\n  mute: [on_site, health]\n')
+    assert r.notify.quiet == "22:00-07:00" and r.notify.mute == ["on_site", "health"]
+    for bad in ('notify:\n  quiet: "25:00-07:00"\n', 'notify:\n  quiet: "07:00-07:00"\n',
+                'notify:\n  mute: [everything]\n', 'notify:\n  quiet: "10pm-7am"\n'):
+        with pytest.raises(R.RulesError):
+            R.parse(bad)
+    assert R.parse("").notify.quiet is None
+
+
+def test_quiet_hours_wrap_midnight_in_las_vegas_time():
+    assert push.in_quiet("22:00-07:00", vegas_ts("23:30")) and push.in_quiet("22:00-07:00", vegas_ts("06:59"))
+    assert not push.in_quiet("22:00-07:00", vegas_ts("07:00")) and not push.in_quiet(None, vegas_ts("03:00"))
+    assert push.in_quiet("12:00-13:00", vegas_ts("12:30"))
+    assert not push.in_quiet("12:00-13:00", vegas_ts("13:00"))
+
+
+def test_pushes_wait_out_quiet_hours_and_arrive_as_one_summary():
+    p, seen, t = quiet_pusher(vegas_ts("23:00"), quiet="22:00-07:00")
+    p(booked("ARC301-R"))
+    p(booked("SVS401"))
+    p(WatchEvent("signin", 0, {"state": "needed"}))                 # urgent: comes through at once
+    p.flush()
+    assert [s[0] for s in seen] == ["Sign in needed"]
+    t["now"] = vegas_ts("07:01", "2026-12-02")
+    p(WatchEvent("sweep", 0, {}))                                   # the next minute's sweep
+    p.flush()
+    title, body = seen[-1]
+    assert title == "While it was quiet: 2 updates"
+    assert body == "Seat booked: ARC301-R T; Seat booked: SVS401 T."
+
+
+def test_an_off_category_is_dropped_but_a_failed_swap_still_comes_through():
+    p, seen, _ = quiet_pusher(vegas_ts("12:00"), mute=["bookings", "swaps"])
+    p(booked())
+    p(WatchEvent("swap", 0, {"state": "verified"}))
+    p(WatchEvent("swap", 0, {"state": "failed"}))
+    p(WatchEvent("moved", 0, {"code": "X", "before": {"room": "a"}, "after": {"room": "b"}}))
+    p.flush()
+    assert [s[0] for s in seen] == ["Swap failed", "X moved"]
+
+
+def test_every_push_kind_has_a_category():
+    kinds = set(push.CATEGORY)
+    for kind in ("proposed", "expiring", "swap", "booked", "not_booked", "unconfirmed", "other_sitting",
+                 "catalog", "moved", "removed", "tight", "blocks", "blocks_done", "briefing", "leave_soon",
+                 "leave", "wanted_soon", "offline", "back", "signin", "writes"):
+        assert kind in kinds
+    assert set(push.CATEGORY.values()) == set(R.CATEGORIES)
+
+
+# ---- QA: quiet hours and categories, edge cases
+
+
+def header_pusher(now, **kw):
+    seen = []
+
+    def handler(req):
+        seen.append({"title": req.headers["title"], "body": req.content.decode(),
+                     "actions": req.headers.get("actions")})
+        return httpx.Response(200)
+    t = {"now": now}
+    p = push.Pusher("reseat-demo-7f3k9q2m", transport=httpx.MockTransport(handler),
+                    clock=lambda: t["now"], **kw)
+    return p, seen, t
+
+
+def moved(code):
+    return WatchEvent("moved", 0, {"code": code, "before": {"room": "a"}, "after": {"room": "b"}})
+
+
+def test_a_digest_of_more_than_eight_lists_eight_and_counts_the_rest():
+    p, seen, t = header_pusher(vegas_ts("23:00"), quiet="22:00-07:00")
+    for i in range(10):
+        p(moved(f"ARC3{i:02d}"))
+    p(moved("ARC300"))                                              # a repeat title is listed once
+    p.flush()
+    assert seen == []
+    t["now"] = vegas_ts("07:00", "2026-12-02")
+    p(WatchEvent("sweep", 0, {}))
+    p.flush()
+    assert len(seen) == 1 and seen[0]["title"] == "While it was quiet: 11 updates"
+    body = seen[0]["body"]
+    assert body.startswith("ARC300 moved: a to b; ARC301 moved: a to b") and body.endswith("; and 2 more.")
+    assert "ARC308" not in body and seen[0]["actions"] is None
+
+
+def test_a_quiet_window_that_does_not_wrap_holds_inside_and_sends_outside():
+    assert push.in_quiet("01:00-05:00", vegas_ts("01:00"))
+    assert not push.in_quiet("01:00-05:00", vegas_ts("00:59"))
+    assert not push.in_quiet("01:00-05:00", vegas_ts("23:00"))
+    p, seen, t = header_pusher(vegas_ts("12:30"), quiet="12:00-13:00")
+    p(booked())
+    p.flush()
+    assert seen == []
+    t["now"] = vegas_ts("13:00")
+    p(booked("SVS401"))
+    p.flush()
+    assert [s["title"] for s in seen] == ["While it was quiet: 1 update", "Seat booked"]
+
+
+def test_a_muted_category_during_quiet_hours_is_dropped_not_summarised():
+    p, seen, t = header_pusher(vegas_ts("23:00"), quiet="22:00-07:00", mute=["on_site", "schedule"])
+    p(moved("ARC301"))                                              # muted: never sent, never held
+    p(booked())                                                      # not muted: held for the digest
+    p(WatchEvent("swap", 0, {"state": "failed"}))                   # urgent: through quiet and mute
+    p.flush()
+    assert [s["title"] for s in seen] == ["Swap failed"]
+    t["now"] = vegas_ts("08:00", "2026-12-02")
+    p(WatchEvent("sweep", 0, {}))
+    p.flush()
+    assert seen[-1]["title"] == "While it was quiet: 1 update" and "moved" not in seen[-1]["body"]
+
+
+def test_a_swap_in_an_unknown_state_is_urgent_but_never_crashes_or_sends_noise():
+    for state in ("unknown", None, "checked"):
+        assert push.urgent(WatchEvent("swap", 0, {"state": state}))
+    assert not push.urgent(WatchEvent("swap", 0, {"state": "verified"}))
+    p, seen, _ = header_pusher(vegas_ts("23:00"), quiet="22:00-07:00", mute=["swaps"])
+    p(WatchEvent("swap", 0, {"state": "unknown"}))
+    p(WatchEvent("swap", 0, {"state": "rolled_back"}))              # muted and not urgent
+    p.flush()
+    assert seen == [] and p._held == []
+
+
+def test_a_proposal_with_buttons_held_by_quiet_hours_reaches_the_digest_without_a_plan_id():
+    p, seen, t = header_pusher(vegas_ts("23:00"), quiet="22:00-07:00", approve=True)
+    plan = "P" * 20
+    p(WatchEvent("proposed", 0, {"plan_id": plan, "wanted_id": "w", "held_id": "h"}))
+    p.flush()
+    assert seen == []
+    t["now"] = vegas_ts("07:30", "2026-12-02")
+    p(WatchEvent("sweep", 0, {}))
+    p.flush()
+    assert seen[0]["title"] == "While it was quiet: 1 update" and "Swap proposed" in seen[0]["body"]
+    assert seen[0]["actions"] is None and plan not in seen[0]["body"]
+
+
+def test_a_pusher_without_notify_settings_sends_everything_at_once():
+    p, seen, _ = header_pusher(vegas_ts("03:00"), approve=True)
+    plan = "Q" * 20
+    p(booked())
+    p(moved("ARC301"))
+    p(WatchEvent("swap", 0, {"state": "verified"}))
+    p(WatchEvent("proposed", 0, {"plan_id": plan, "wanted_id": "w", "held_id": "h"}))
+    p.flush()
+    assert [s["title"] for s in seen] == ["Seat booked", "ARC301 moved", "Swap done", "Swap proposed"]
+    assert plan in seen[-1]["actions"] and p._held == []

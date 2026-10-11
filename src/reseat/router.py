@@ -21,6 +21,7 @@ API rules this module exists to respect:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -459,3 +460,15 @@ def run_booking(router: Router, client: EventsClient, store: Store, event_id: st
             run.closed = ex.closed
             break
     return run
+
+
+CODE = re.compile(r"[A-Z]{2,6}\d{2,5}(-[A-Z]+\d*)*", re.I)   # ARC301, AIM310-R1, AIM101-S, INV201-S-R1
+
+
+def target_name(label: str, store: Store, event_id: str) -> str:
+    """How a target is shown: its code. A target pinned by session id is named by that sitting's code,
+    so an id never reaches a page, a push or an agent."""
+    s = store.get(event_id, label)
+    if s:
+        return s.abbreviation or "a pinned sitting"
+    return label if CODE.fullmatch(label or "") else "a pinned sitting"

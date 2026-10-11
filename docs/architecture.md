@@ -115,7 +115,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
 | Favorites sync | built | Mirror target sittings into favorites, read back. |
-| Web app | built | Local HTTP server: Week, Approve, Today and Activity views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
+| Web app | built | Local HTTP server: Week, Day, Approve, Today, Activity, Targets and Status views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
 | MCP server | built | Propose bookings and swaps, approve by plan id, explain. Optional extra `reseat[mcp]`. |
 
 ## Key flows

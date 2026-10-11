@@ -42,6 +42,9 @@ def staticize(html: str, now: float, done: str | None = None) -> str:
     html = html.replace('href="/today"', 'href="today.html"')
     html = html.replace('href="/activity"', 'href="activity.html"')
     html = html.replace('href="/demo"', 'href="demo.html"')
+    html = html.replace('href="/targets"', 'href="targets.html"')
+    html = html.replace('href="/status"', 'href="status.html"')
+    html = re.sub(r'href="/day\?d=(\d)"', r'href="day-\1.html"', html)
     html = html.replace('href="/"', 'href="index.html"')
     html = re.sub(r'<button class="primary" data-approve="[^"]+">([^<]*)</button>',
                   r'<a class="primary" href="after.html">\1</a>', html)
@@ -87,6 +90,9 @@ def build(out: Path) -> list[str]:
         "today.html": pages.render_today(snap, demo=True),
         "activity.html": pages.render_activity(snap, demo=True),
         "demo.html": demo_page(),
+        "targets.html": pages.render_targets(snap, demo=True),
+        "status.html": pages.render_status(snap, demo=True),
+        **{f"day-{i}.html": pages.render_day(snap, i, demo=True) for i in range(5)},
     }
     [p] = d.watcher.pending()
     res = d.watcher.approve(p.plan_id)
@@ -95,7 +101,7 @@ def build(out: Path) -> list[str]:
     done = pages.e(f"Swap now ran: {' → '.join(res.steps)}. Every step is in the journal below. "
                    f"{got.abbreviation if got else 'The new session'} is held now.")
     written["after.html"] = staticize(pages.render_dashboard(d.app.snapshot(), demo=True), now, done)
-    for name in ("index.html", "approve.html", "today.html", "activity.html", "demo.html"):
+    for name in [n for n in written if n != "after.html"]:
         written[name] = staticize(written[name], now)
     for name, html in written.items():
         (out / name).write_text(html, encoding="utf-8")

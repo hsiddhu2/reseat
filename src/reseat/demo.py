@@ -718,3 +718,13 @@ def _net(before: dict[str, Any], final: dict[str, Any], changes: list[Any]) -> l
     t = Tracker()
     t.removed = {sid for sid, p in before.items() if p.code in gone}
     return t._diff(changes[-1].at if changes else 0.0, before, final)
+
+
+def mcp_parts() -> tuple[EventsClient, Store, R.Rules, str, Callable[[], float]]:
+    """For `reseat mcp --demo`: the fake API after one sweep, with a seat open in SVS306-R, so every
+    tool has something to show. Nothing reads the keychain or writes to ~/.reseat."""
+    d = Demo(port=0)
+    d.watcher.tick()
+    d.seat_opens()
+    d.watcher.tick()
+    return d.client, d.store, d.rules, EVENT, d.clock     # plans and drift on the demo clock

@@ -292,3 +292,42 @@ def test_propose_swap_on_a_session_no_target_covers_says_so(swapper):
     tools.rules = R.parse("targets:\n- code: ARC301\n")
     tools.router = M.Router(tools.rules, store, EV)
     assert "is not a target in the rules file" in tools.propose_swap("SVS401-R1") and writes(fake) == 0
+
+
+def test_mcp_demo_has_targets_a_plan_to_approve_and_no_session_ids():
+    from reseat import demo as D
+    client, store, rules, event, clock = D.mcp_parts()
+    t = M.Tools(client, store, rules, event, clock)
+    targets = t.list_targets()
+    assert "SVS306" in targets and "ARC306" in targets
+    out = t.guard_sync()
+    plan = re.search(r"Plan (\S+), valid", out).group(1)
+    done = t.approve_changes(plan)
+    assert "Leave for" in out and "created Leave for DVT201" in done
+    text = targets + t.propose_changes() + out + done + t.queue_or_go("ANT335")
+    for s in store.by_base_code(event, "ARC306") + store.by_base_code(event, "SVS306"):
+        assert s.session_id not in text
+
+
+def test_cli_mcp_demo_needs_no_sign_in(monkeypatch):
+    from typer.testing import CliRunner
+
+    from reseat import cli
+    ran = {}
+
+    class Server:
+        def run(self, how):
+            ran["how"] = how
+    monkeypatch.setattr(M, "build_server", lambda tools: ran.setdefault("tools", tools) and Server())
+    monkeypatch.setattr(cli, "_client", lambda: pytest.fail("the demo must not read the keychain"))
+    r = CliRunner().invoke(cli.app, ["mcp", "--demo"])
+    assert r.exit_code == 0, r.output
+    assert ran["how"] == "stdio" and "SVS306" in ran["tools"].list_targets()
+
+
+def test_target_names_keep_every_real_code_and_hide_ids():
+    from reseat.router import target_name
+    st = Store(":memory:")
+    for code in ("ARC301", "AIM310-R1", "AIM101-S", "INV201-S-R1", "KEY001", "DEV202-S"):
+        assert target_name(code, st, "ev") == code
+    assert target_name("1780441463028001GEdS", st, "ev") == "a pinned sitting"

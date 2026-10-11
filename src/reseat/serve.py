@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from . import guard, pages
+from . import __version__, guard, pages
 from .campus import EVENT_DAYS, VEGAS
 from .changes import Tracker
 from .client import ApiError
@@ -52,6 +52,7 @@ from .guard import _OPEN as OPEN_BANDS
 from .models import Session
 from .reminders import Reminders
 from .reminders import how as reminders_how
+from .router import target_name
 from .rules import Rules
 from .store import Store
 from .watcher import ApprovalFailed, Watcher, WatchEvent
@@ -65,7 +66,7 @@ LOGIN_TRIES = 5          # failed sign-ins allowed per minute
 APPROVE_WAIT = 120       # seconds an approve may take: check, cancel, reserve, read-backs
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAX_BODY = 2048
-VIEWS = ("/", "/approve", "/today", "/activity", "/demo")
+VIEWS = ("/", "/approve", "/today", "/activity", "/demo", "/targets", "/status", "/day")
 REFRESH_EVERY = 20       # seconds between snapshot refreshes, so leave-now never waits on a sweep
 
 
@@ -291,7 +292,8 @@ class App:
             "held": [self._row(s) for s in today],
             "next_leave": next_leave,
             "advice": self._advice(held, day, now),
-            "proposals": [{"plan_id": p.plan_id, "target": p.target, "held": self._code(p.held_id),
+            "proposals": [{"plan_id": p.plan_id, "target": target_name(p.target, self.store, self.event_id),
+                           "held": self._code(p.held_id),
                            "wanted": self._code(p.wanted_id), "expires": p.expires}
                           for p in self.watcher.pending()],
             "warnings": [w for w in warnings if w.startswith(day)],
@@ -457,7 +459,7 @@ def static(name: str) -> bytes:
     return resources.files("reseat").joinpath("static", name).read_bytes()
 
 
-def page(app: App, path: str) -> bytes:
+def page(app: App, path: str, query: str = "") -> bytes:
     snap = app.snapshot()
     if not snap.get("view"):
         return pages.render_starting(app.clock(), app.demo, snap.get("view_error")).encode()
@@ -468,6 +470,14 @@ def page(app: App, path: str) -> bytes:
         return pages.render_today(snap, app.demo).encode()
     if path == "/activity":
         return pages.render_activity(snap, app.demo).encode()
+    if path == "/targets":
+        return pages.render_targets(snap, app.demo).encode()
+    if path == "/status":
+        return pages.render_status(snap, app.demo, version=__version__).encode()
+    if path == "/day":
+        d = (parse_qs(query).get("d") or ["0"])[0]
+        index = int(d) if d.isascii() and d.isdigit() and len(d) < 3 else 0
+        return pages.render_day(snap, index, app.demo).encode()
     if path == "/demo" and app.demo:
         return pages.render_demo(snap).encode()
     return pages.render_dashboard(snap, app.demo).encode()
@@ -544,7 +554,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     self._json(401 if app.auth_required else 403, {"error": "not allowed"})
                 return
             if url.path in VIEWS and (url.path != "/demo" or app.demo):
-                self._send(200, page(app, url.path), "text/html")
+                self._send(200, page(app, url.path, url.query), "text/html")
             elif url.path == "/api/state":
                 self._json(200, app.snapshot())
             else:

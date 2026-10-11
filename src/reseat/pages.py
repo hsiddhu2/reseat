@@ -28,6 +28,7 @@ from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, overlaps, room_label, wal
 from .changes import GHOSTS
 from .client import QUOTAS
 from .models import PersonalTime, Session
+from .router import target_name
 from .swap import Swap
 from .watcher import ONSITE_CAP, ONSITE_EVERY
 
@@ -108,7 +109,65 @@ def build(app: App, now: float) -> dict[str, Any]:
         "clock": f"{local(now):%a %d %b, %H:%M}",
         "tour": app.tour_label,
         "blocks": dict(app.blocks_state) if app.blocks_state else None,
+        "targets": _targets(app, held_ids, pending),
+        "health": _health(app, now, last_sweep),
     }
+
+
+def _targets(app: App, held_ids: list[str], pending: list[Any]) -> list[dict[str, Any]]:
+    """Every target in rule order: what is held or proposed, and each sitting with its band. Codes only:
+    a target pinned by session id is named by its sitting's code."""
+    held, proposed = set(held_ids), {p.wanted_id for p in pending}
+    out = []
+    for i, t in enumerate(app.rules.targets, 1):
+        tree = app.watcher.router.tree(t)
+        own = [s for s, b in tree if not b]             # the target's own sittings, not its backups
+        first = own[0] if own else None
+        name = t.code or (first.abbreviation if first else "A pinned sitting not in the catalog yet")
+        got = next((s for s, _ in tree if s.session_id in held), None)
+        offer = next((s for s, _ in tree if s.session_id in proposed), None)
+        if got:
+            state, text = "held", f"Held: {got.abbreviation}, {_when(got)}, {got.campus_venue or ''}"
+        elif offer:
+            state, text = "proposed", f"Swap proposed: {offer.abbreviation}, {_when(offer)}"
+        elif not own:
+            state, text = "none", "No sitting in the catalog yet" + (", watching the backups" if tree else "")
+        else:
+            state, text = "waiting", "Not held. Watching every sitting below"
+        notes = []
+        if not t.repeats:
+            notes.append("only the sittings you picked")
+        if t.auto_swap:
+            notes.append("swaps without asking")
+        if t.backups:
+            notes.append(f"backups: {', '.join(t.backups)}")
+        out.append({"n": i, "name": name, "title": t.title or (first.title if first else ""), "state": state,
+                    "text": text, "notes": notes,
+                    "sittings": [{"code": s.abbreviation, "when": _when(s), "venue": s.campus_venue or "",
+                                  "band": s.seat_availability or "not shown", "backup": b,
+                                  "held": s.session_id in held, "proposed": s.session_id in proposed}
+                                 for s, b in tree]})
+    return out
+
+
+def _health(app: App, now: float, last_sweep: float | None) -> dict[str, Any]:
+    """What re:Seat knows about itself. Never the push topic, the secret or the token."""
+    w, r = app.watcher, app.rules
+    rows = [
+        ("Watcher", "Reading only until you sign in again" if w.read_only else "Watching"),
+        ("Events API", f"Unreachable since {hm(w.down_since)}" if w.down_since else "Reachable"),
+        ("Bookings", f"Closed (409). Next try {hm(w.writes_closed_until)}" if w.writes_closed_until
+         else "Open"),
+        ("Last sweep", f"{local(last_sweep):%a %H:%M:%S}" if last_sweep else "None yet"),
+        ("Leave-now blocks", f"{sum(1 for p in w.personal_time if guard.is_mine(p))} in your schedule"
+         + (", out of date" if app.blocks_state else "")),
+        ("Push", ("On" + (", Swap now and Keep in the notification" if r.ntfy_approve else ""))
+         if r.ntfy_topic else "Off. Set ntfy_topic in the rules file"),
+        ("Quiet hours", f"{r.notify.quiet}, Las Vegas time" if r.notify.quiet else "None"),
+        ("Muted", ", ".join(r.notify.mute) or "Nothing"),
+    ]
+    quota = [{"op": op, "left": w.client.quota.remaining(op), "max": n} for op, n in QUOTAS.items()]
+    return {"rows": rows, "quota": quota}
 
 
 def _change(c: Any) -> dict[str, str]:
@@ -188,7 +247,7 @@ def _card(app: App, p: Any, held_ids: list[str], last_sweep: float | None) -> di
                   else {"ok": "ask", "text": "Rules say ask first for this target"})
     base = b.base_code if b else sb["code"]
     return {
-        "plan_id": p.plan_id, "target": p.target,
+        "plan_id": p.plan_id, "target": target_name(p.target, app.store, app.event_id),
         "kind": "New sitting" if added else "Seat opened", "at": hm(p.created),
         "title": f"Move {base} to {sb['day']}" if same else f"Replace {sa['code']} with {sb['code']}",
         "question": (f"Move {base} from {sa['day']} to {sb['day']}?" if same
@@ -656,6 +715,11 @@ def _nav(view: str, demo: bool = False) -> str:
 
 
 def _status_line(s: dict[str, Any]) -> str:
+    return _status_bar(s).replace('<div class="grow"></div>', '<div class="grow"></div><nav class="links">'
+                                  '<a href="/targets">Targets</a><a href="/status">Status</a></nav>', 1)
+
+
+def _status_bar(s: dict[str, Any]) -> str:
     sweep = (f"<span>· last sweep {e(s['last_sweep'])}</span><span>· {s['sessions']:,} sessions</span>"
              if s["last_sweep"] else "<span>· no sweep yet</span>")
     nxt = f'<span>· next in <b data-until="{s["next_at"]:.0f}">…</b></span>' if s["next_at"] else ""
@@ -734,6 +798,84 @@ def render_activity(snap: dict[str, Any], demo: bool = False) -> str:
             for j in v.get("log", [])] or ["<li>The journal is empty.</li>"]
     out.append("</ul></section></main>" + _nav("activity", demo) + "</body></html>")
     return "".join(out)
+
+
+def _page(snap: dict[str, Any], title: str, view: str, demo: bool, body: str) -> str:
+    v = snap.get("view") or {}
+    return (_head(f"re:Seat · {title}", view, demo, [c["plan_id"] for c in v.get("cards", [])], snap["now"],
+                  v["status"]["last_sweep"])
+            + _status_line(v["status"]) + f'<main class="page">{body}</main>' + _nav(view, demo)
+            + "</body></html>")
+
+
+def render_targets(snap: dict[str, Any], demo: bool = False) -> str:
+    """Targets: the rules file read back, in order, with what re:Seat holds or watches for each."""
+    v = snap.get("view") or {}
+    out = ['<h1>Targets</h1><p class="fine">In the order of your rules file. re:Seat books the first sitting '
+           "that has a seat and fits your day, and asks before any swap.</p>"]
+    for t in v.get("targets", []):
+        rows = "".join(
+            f'<li class="r-{"held" if x["held"] else "proposed" if x["proposed"] else "plain"}">'
+            f'<b>{e(x["code"])}</b> <span>{e(x["when"])}, {e(x["venue"])}</span> '
+            f'<span class="band">{e(x["band"])}</span>{" · backup" if x["backup"] else ""}'
+            f'{" · held" if x["held"] else ""}{" · proposed" if x["proposed"] else ""}</li>'
+            for x in t["sittings"])
+        notes = f'<p class="fine">{e("; ".join(t["notes"]))}</p>' if t["notes"] else ""
+        out.append(f'<section class="panel target t-{e(t["state"])}"><div class="kind">#{t["n"]} '
+                   f'{e(t["name"])}</div><h3>{e(t["title"])}</h3><p>{e(t["text"])}</p>{notes}'
+                   f'<ul class="rows">{rows}</ul></section>')
+    if not v.get("targets"):
+        out.append('<p class="empty">No targets yet. Add some to the rules file, or run reseat rules init.'
+                   "</p>")
+    return _page(snap, "Targets", "targets", demo, "".join(out))
+
+
+def _share(left: int, most: int) -> int:
+    return max(0, min(100, round(100 * left / most))) if most else 0
+
+
+def render_status(snap: dict[str, Any], demo: bool = False, version: str = "") -> str:
+    """Status: how re:Seat is doing, the per-minute quotas left, and the push settings."""
+    h = (snap.get("view") or {}).get("health") or {"rows": [], "quota": []}
+    rows = "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in h["rows"])
+    quota = "".join(f'<li><span class="mono">{e(q["op"])}</span> <b>{q["left"]}</b> of {q["max"]} left'
+                    f'<i style="width:{_share(q["left"], q["max"])}%"></i></li>' for q in h["quota"])
+    body = (f'<h1>Status</h1><section class="panel"><dl class="facts">{rows}</dl>'
+            f'<p class="fine">re:Seat {e(version)}. Push topic, sign-in and secrets are never shown here.</p>'
+            '</section><section class="panel"><h2>Quota left this minute</h2><p class="fine">AWS counts each '
+            "operation per minute, and bulk calls by session. re:Seat never sends more than is left.</p>"
+            f'<ul class="quota">{quota}</ul></section>')
+    return _page(snap, "Status", "status", demo, body)
+
+
+def render_day(snap: dict[str, Any], index: int, demo: bool = False) -> str:
+    """One day of the week in full: every session in time order with its details, and the leave times."""
+    w = (snap.get("view") or {}).get("week") or {"days": [], "blocks": [], "leaves": []}
+    if not 0 <= index < len(w["days"]):
+        index = 0
+    items = sorted((b for b in w["blocks"] if b["day"] == index), key=lambda b: b["top"])
+    leaves = sorted((lv for lv in w["leaves"] if lv["day"] == index), key=lambda lv: lv["top"])
+    days = "".join(f'<a href="/day?d={i}"{" aria-current=page" if i == index else ""}>{e(d)}</a>'
+                   for i, d in enumerate(w["days"]))
+    out = [f'<nav class="daytabs" aria-label="Days">{days}</nav>'
+           f'<h1>{e(w["days"][index]) if w["days"] else ""}</h1>']
+    rows_in_time = sorted([(lv["top"], 0, lv) for lv in leaves] + [(b["top"], 1, b) for b in items],
+                          key=lambda x: (x[0], x[1]))
+    for _, is_session, b in rows_in_time:
+        if not is_session:
+            out.append(f'<p class="leave-row">{e(b["title"])}</p>')
+            continue
+        d = b["detail"]
+        rows = "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in d["rows"])
+        m = b.get("mark")
+        mark = f'<em class="mk mk-{e(m["kind"])}">{e(m["label"])}</em> ' if m else ""
+        out.append(f'<section class="panel day-item d-{e(b["kind"])}"><div class="kind">{mark}'
+                   f'{e(b["time"])} · {e(b["code"])} · {e(b["kind"])}</div><h3>{e(d["title"])}</h3>'
+                   f'<p>{e(d["status"])}</p>'
+                   f'<dl class="facts">{rows}</dl></section>')
+    if not items:
+        out.append('<p class="empty">Nothing held or wanted on this day.</p>')
+    return _page(snap, "Day", "week", demo, "".join(out))
 
 
 def render_demo(snap: dict[str, Any]) -> str:
@@ -860,7 +1002,8 @@ def _week_html(w: dict[str, Any]) -> str:
         if w.get("now") and w["now"]["day"] == i:
             inner.append(f'<div class="now" style="top:{w["now"]["top"]}%"><span>now {e(w["now"]["label"])}'
                          '</span></div>')
-        cols.append(f'<div class="col"><div class="dh">{e(label)}</div><div class="slots">{"".join(inner)}'
+        cols.append(f'<div class="col"><a class="dh" href="/day?d={i}">{e(label)}</a>'
+                    f'<div class="slots">{"".join(inner)}'
                     f'</div></div>')
     return (f'<div class="weekhead"><h1>{e(w["title"])}</h1><div class="legend">{legend}</div></div>'
             f'<div class="scroll"><div class="week"><div class="axis"><div class="dh"></div>'

@@ -442,7 +442,9 @@ def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_pa
     script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
     site = runpy.run_path(str(script), run_name="site")
     names = site["build"](tmp_path)
-    assert names == ["activity.html", "after.html", "approve.html", "demo.html", "index.html", "today.html"]
+    assert names == ["activity.html", "after.html", "approve.html", "day-0.html", "day-1.html", "day-2.html",
+                     "day-3.html", "day-4.html", "demo.html", "index.html", "status.html", "targets.html",
+                     "today.html"]
     for n in names:
         html = (tmp_path / n).read_text(encoding="utf-8")
         assert "<script" not in html and "/static/" not in html and "data-approve" not in html
@@ -530,9 +532,9 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False, **kw):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title, click_base=click_base, approve=approve)
+                             code_title=code_title, click_base=click_base, approve=approve, **kw)
             made["p"] = self
 
         def start(self):
@@ -615,9 +617,9 @@ def test_cli_push_links_to_the_page_when_served_on_a_reachable_address(monkeypat
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False, **kw):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title, click_base=click_base, approve=approve)
+                             code_title=code_title, click_base=click_base, approve=approve, **kw)
             made["p"] = self
 
         def start(self):
@@ -1251,3 +1253,126 @@ def test_no_other_sitting_push_when_the_talk_is_held_or_the_sitting_is_past():
     d.watcher.tick()
     d.offset += 7 * 86400                                            # the week is over
     assert d.app._other_sittings(sorted(d.watcher.last_held)) == []
+
+
+# ---- Targets, Status, Day
+
+
+def test_targets_status_and_day_views_show_codes_and_never_a_secret_or_id():
+    d = D.Demo(port=0, push_topic="reseat-demo-7f3k9q2m", require_secret=True)
+    d.watcher.tick()
+    d.seat_opens()
+    d.watcher.tick()
+    snap = d.app.snapshot()
+    targets = pages.render_targets(snap, demo=True)
+    status = pages.render_status(snap, demo=True, version="9.9.9")
+    day = pages.render_day(snap, 0, demo=True)
+    v = snap["view"]
+    names = [t["name"] for t in v["targets"]]
+    assert names[0] == "SVS306" and "ARC306" in names               # the pinned target named by its code
+    assert next(t for t in v["targets"] if t["name"] == "SVS306")["state"] == "proposed"
+    assert "only the sittings you picked" in targets and "Swap proposed: SVS306-R" in targets
+    assert "Quota left this minute" in status and "ListSessions" in status and "9.9.9" in status
+    assert "Swap now and Keep in the notification" in status
+    assert "Mon 30" in day and "CMP409-R" in day and "Leave" in day
+    page_text = targets + status + day + json.dumps(snap, default=str)
+    assert "reseat-demo-7f3k9q2m" not in page_text and d.secret not in page_text
+    for sid in ids(d):
+        assert sid not in targets + status + day
+    assert pages.render_day(snap, 99, demo=True) == pages.render_day(snap, 0, demo=True)
+    assert 'href="/day?d=2"' in pages.render_dashboard(snap, demo=True)
+    d.watcher.stop()
+
+
+def test_the_new_views_are_served_behind_the_same_access():
+    d = D.Demo(port=0)
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        assert wait_until(lambda: d.app.snapshot().get("view"))
+        http = httpx.Client(base_url=f"http://127.0.0.1:{d.app.port}", timeout=10)
+        for path in ("/targets", "/status", "/day?d=1", "/day?d=x", "/day?d=12345", "/day?d=%C2%B2",
+                     "/day?d=-1"):
+            r = http.get(path)
+            assert r.status_code == 200 and "re:Seat" in r.text, path
+        assert http.get("/targets", headers={"Host": "evil.example"}).status_code != 200
+    finally:
+        d.watcher.stop()
+        server.shutdown()
+        server.server_close()
+
+
+# ---- QA: Targets, Status, Day edge cases, and target names
+
+
+def test_targets_with_backups_or_nothing_in_the_catalog_never_show_an_id():
+    from reseat import rules as R
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    d.app.rules = R.parse("targets:\n- code: ZZZ999\n  backups: [ARC306]\n- code: QQQ111\n"
+                          "- session_id: not-a-real-session-id-0001\n")
+    t = pages._targets(d.app, sorted(d.watcher.last_held), d.watcher.pending())
+    assert [x["name"] for x in t] == ["ZZZ999", "QQQ111", "A pinned sitting not in the catalog yet"]
+    assert t[0]["notes"] == ["backups: ARC306"] and t[0]["sittings"]
+    assert all(s["backup"] and s["code"].startswith("ARC306") for s in t[0]["sittings"])
+    assert t[1]["state"] == "none" and t[2]["state"] == "none" and t[2]["sittings"] == []
+    snap = d.app.snapshot()
+    snap = {**snap, "view": {**snap["view"], "targets": t}}
+    html = pages.render_targets(snap, demo=True)
+    assert "No sitting in the catalog yet" in html and "not-a-real-session-id-0001" not in html
+    empty = pages.render_targets({**snap, "view": {**snap["view"], "targets": []}}, demo=True)
+    assert "No targets yet" in empty
+    d.watcher.stop()
+
+
+def test_status_rows_for_push_off_offline_writes_closed_and_read_only():
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    now = d.clock()
+    rows = dict(pages._health(d.app, now, None)["rows"])
+    assert rows["Push"].startswith("Off") and rows["Watcher"] == "Watching"
+    assert rows["Last sweep"] == "None yet"
+    assert rows["Events API"] == "Reachable" and rows["Bookings"] == "Open" and rows["Quiet hours"] == "None"
+    w = d.watcher
+    w.read_only, w._down_since, w.writes_closed_until = True, now - 120, now + 60
+    rows = dict(pages._health(d.app, now, now)["rows"])
+    assert rows["Watcher"].startswith("Reading only") and rows["Events API"].startswith("Unreachable since")
+    assert rows["Bookings"].startswith("Closed (409)")
+    on = D.Demo(port=0, push_topic="reseat-demo-7f3k9q2m")
+    on.watcher.tick()
+    rows = dict(pages._health(on.app, now, None)["rows"])
+    assert rows["Push"].startswith("On") and "reseat-demo-7f3k9q2m" not in json.dumps(rows)
+    d.watcher.stop()
+    on.watcher.stop()
+
+
+def test_day_view_shows_a_ghost_and_a_mark_in_time_order():
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    snap = d.app.snapshot()
+    week = snap["view"]["week"]
+    first = next(b for b in week["blocks"] if b["day"] == 0)
+    ghost = {**first, "kind": "ghost", "code": "GHO101", "top": -1,
+             "mark": {"kind": "released", "label": "Released"},
+             "detail": {"code": "GHO101", "title": "Gone talk", "rows": [("Was", "Venetian")],
+                        "status": "Released at 09:00.", "history": [], "sittings": []}}
+    snap = {**snap, "view": {**snap["view"], "week": {**week, "blocks": week["blocks"] + [ghost]}}}
+    html = pages.render_day(snap, 0, demo=True)
+    assert "d-ghost" in html and "mk-released" in html and "Gone talk" in html
+    assert html.index("GHO101") < html.index(first["code"] + " ·")
+    d.watcher.stop()
+
+
+def test_target_name_shows_codes_and_never_an_id():
+    from reseat.router import target_name
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    for code in ("AIM310-R1", "KEY001", "ARC306", "SVS306-R"):
+        assert target_name(code, d.store, D.EVENT) == code
+    sid = next(iter(d.fake.sessions))
+    assert target_name(sid, d.store, D.EVENT) == d.store.get(D.EVENT, sid).abbreviation
+    assert target_name("arc306", d.store, D.EVENT) == "arc306"       # a code, whatever its case
+    for unknown in ("not-a-real-session-id-0001", ""):
+        assert target_name(unknown, d.store, D.EVENT) == "a pinned sitting"
+    d.watcher.stop()

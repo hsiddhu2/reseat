@@ -26,11 +26,14 @@ import json
 import queue
 import re
 import threading
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Iterable
+from datetime import datetime
 from typing import Any
 
 import httpx
 
+from .campus import VEGAS
 from .watcher import WatchEvent
 
 NTFY = "https://ntfy.sh"
@@ -114,6 +117,34 @@ PAGE = {"proposed": "/approve", "expiring": "/approve", "blocks": "/today", "lea
         "leave_soon": "/today", "briefing": "/today", "wanted_soon": "/today"}   # others open the Week
 
 
+CATEGORY = {
+    "proposed": "swaps", "expiring": "swaps", "swap": "swaps",
+    "booked": "bookings", "not_booked": "bookings", "unconfirmed": "bookings", "other_sitting": "bookings",
+    "catalog": "bookings",
+    "moved": "schedule", "removed": "schedule", "tight": "schedule", "blocks": "schedule",
+    "blocks_done": "schedule",
+    "briefing": "on_site", "leave_soon": "on_site", "leave": "on_site", "wanted_soon": "on_site",
+    "offline": "health", "back": "health", "signin": "health", "writes": "health",
+}
+
+
+def urgent(ev: WatchEvent) -> bool:
+    """Always sent, through quiet hours and a muted category: the attendee must act or check now.
+    blocks_done answers a tap the attendee just made."""
+    if ev.kind in ("signin", "blocks_done"):
+        return True
+    return ev.kind == "swap" and ev.data.get("state") not in ("verified", "rolled_back")
+
+
+def in_quiet(quiet: str | None, ts: float) -> bool:
+    """Quiet hours as "HH:MM-HH:MM" in Las Vegas time. The window may run past midnight."""
+    if not quiet:
+        return False
+    a, b = quiet.split("-")
+    now = datetime.fromtimestamp(ts, VEGAS).strftime("%H:%M")
+    return a <= now < b if a < b else (now >= a or now < b)
+
+
 def page_for(ev: WatchEvent) -> str:
     """The web app page a tap on this push should open."""
     return PAGE.get(ev.kind, "/")
@@ -145,8 +176,12 @@ class Pusher:
 
     def __init__(self, topic: str, transport: httpx.BaseTransport | None = None,
                  code_title: Callable[[str], str] = str, click_base: str | None = None,
-                 approve: bool = False):
+                 approve: bool = False, quiet: str | None = None, mute: Iterable[str] = (),
+                 clock: Callable[[], float] = time.time):
         self.url, self.topic, self.approve = f"{NTFY}/{topic}", topic, approve
+        self.quiet, self.mute, self.clock = quiet, set(mute), clock
+        self._held: list[str] = []         # titles that waited out quiet hours
+        self._held_lock = threading.Lock()  # events come from the watcher, HTTP and reply threads
         self.click_base = click_base       # e.g. http://100.64.0.7:8490, or None on loopback
         self.code_title = code_title
         self.http = httpx.Client(timeout=10, transport=transport)
@@ -156,7 +191,18 @@ class Pusher:
         self._thread: threading.Thread | None = None
 
     def __call__(self, ev: WatchEvent) -> None:
+        quiet = in_quiet(self.quiet, self.clock())
+        if not quiet:
+            self._digest()
         msg = message(ev, self.code_title)
+        if msg and not urgent(ev):
+            if CATEGORY.get(ev.kind) in self.mute:
+                return
+            if quiet:
+                what = msg[1].split(". ")[0].strip(" .")[:60]
+                with self._held_lock:
+                    self._held.append(f"{msg[0]}: {what}" if what and what != msg[0] else msg[0])
+                return
         if msg:
             buttons = None
             if (self.approve and ev.kind in ("proposed", "expiring") and not ev.data.get("auto")
@@ -168,6 +214,20 @@ class Pusher:
                 self._q.put_nowait((*msg, page_for(ev), buttons))
             except queue.Full:
                 self.failures += 1
+
+    def _digest(self) -> None:
+        """Quiet hours are over: one push listing what waited, newest last, then the Activity page."""
+        with self._held_lock:
+            held, self._held = self._held, []
+        if not held:
+            return
+        titles = list(dict.fromkeys(held))
+        body = "; ".join(titles[:8]) + (f"; and {len(titles) - 8} more" if len(titles) > 8 else "") + "."
+        try:
+            self._q.put_nowait((f"While it was quiet: {len(held)} update{'s' if len(held) > 1 else ''}",
+                                body, "/activity", None))
+        except queue.Full:
+            self.failures += 1
 
     def send(self, title: str, body: str, page: str = "/", buttons: str | None = None) -> bool:
         """One plain-text POST. No auth header, nothing from the keychain. A tap opens `page`."""
@@ -210,6 +270,7 @@ class Pusher:
         self._thread.start()
 
     def stop(self) -> None:
+        self._digest()           # re:Seat is stopping: what waited out quiet hours goes now, not never
         try:
             self._q.put_nowait(None)
         except queue.Full:       # stuck on a dead network: the daemon thread ends with the process

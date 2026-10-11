@@ -757,7 +757,8 @@ def serve(event: str = config.DEFAULT_EVENT,
             reachable = public not in serve_mod.LOOPBACK            # a tap on the phone can open the page
             pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
                                  click_base=f"http://{public}:{a.port}" if reachable else None,
-                                 approve=rules_now.ntfy_approve)
+                                 approve=rules_now.ntfy_approve, quiet=rules_now.notify.quiet,
+                                 mute=rules_now.notify.mute, clock=d.clock if demo else time.time)
             pusher.start()
             w.subscribe(pusher)
             if rules_now.ntfy_approve:
@@ -832,11 +833,15 @@ def _approve_wait() -> float:
 
 
 @app.command("mcp")
-def mcp_cmd(event: str = config.DEFAULT_EVENT):
+def mcp_cmd(event: str = config.DEFAULT_EVENT,
+            demo: bool = typer.Option(False, "--demo", help="Use the demo's fake Events API. No sign-in.")):
     """Run the local MCP server on stdio. Needs: pip install "reseat[mcp]"."""
+    from . import demo as demo_mod
     from . import mcp_server
     try:
-        server = mcp_server.build_server(mcp_server.Tools(_client(), _store(), _rules(), event))
+        tools = (mcp_server.Tools(*demo_mod.mcp_parts()) if demo
+                 else mcp_server.Tools(_client(), _store(), _rules(), event))
+        server = mcp_server.build_server(tools)
     except ImportError:
         typer.echo('The MCP server needs the extra: pip install "reseat[mcp]"', err=True)
         raise typer.Exit(2) from None

@@ -159,9 +159,9 @@ def test_cli_demo_push_turns_on_the_buttons_and_the_listener(monkeypatch):
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False, **kw):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title, click_base=click_base, approve=approve)
+                             code_title=code_title, click_base=click_base, approve=approve, **kw)
             made["p"] = self
 
         def start(self):

@@ -107,6 +107,29 @@ class Meal(BaseModel):
         return session_window(date, self.start, int((b - a).total_seconds() // 60))
 
 
+CATEGORIES = ("swaps", "bookings", "schedule", "on_site", "health")
+
+
+class Notify(BaseModel):
+    """Which pushes reach the phone. Sign-in needed and a swap that failed always do."""
+    model_config = ConfigDict(extra="forbid")
+
+    quiet: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}-\d{2}:\d{2}$")   # Las Vegas time
+    mute: list[Literal["swaps", "bookings", "schedule", "on_site", "health"]] = Field(default_factory=list)
+
+    @field_validator("quiet")
+    @classmethod
+    def _hours(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        a, b = v.split("-")
+        for t in (a, b):
+            datetime.strptime(t, "%H:%M")
+        if a == b:
+            raise ValueError("quiet hours start and end at the same time")
+        return v
+
+
 class Rules(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -120,6 +143,7 @@ class Rules(BaseModel):
     ntfy_topic: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{16,64}$")
     ntfy_approve: bool = False   # Swap now and Keep buttons in the push. Sends the proposal's plan id
     probe_session: str | None = None   # a session you can never hold, used to check if writes are open
+    notify: Notify = Field(default_factory=Notify)
 
     @field_validator("home_venue")
     @classmethod
@@ -302,6 +326,10 @@ home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 # ntfy_topic: a random 16 to 64 character name. Push goes to https://ntfy.sh/<topic>.
 # ntfy_approve: true adds Swap now and Keep buttons to a swap proposal push. The tap
 #   comes back through ntfy.sh, carrying the proposal's single-use plan id.
+# notify: which pushes reach the phone. Optional.
+#   quiet: "22:00-07:00"   Las Vegas time. Pushes wait and arrive as one summary when it ends.
+#   mute: [on_site]        any of swaps, bookings, schedule, on_site, health.
+#   Sign-in needed and a swap that failed always come through.
 # probe_session: id of a session that takes no reservations, so it can never be held.
 #   While writes are closed, re:Seat checks with it once a minute and resumes at once.
 """
