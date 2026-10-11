@@ -107,7 +107,7 @@ re:Seat's sync read the empty answer as every session removed and emptied its lo
 
 - It manages seats you already chose. It does not recommend sessions or solve your schedule.
 - Queue-or-go advice is a rule by session type, improved by seat band history once there is some. It is a heuristic, never a prediction.
-- Walking times between venues are conservative estimates, not official figures. Wynn and Encore come from the API as one venue and are split by room name.
+- Walking times between venues are conservative estimates, not official figures, and every screen, push and leave-now block says so: "about 60 min (estimate)". AWS publishes no walking or shuttle times, so re:Seat adds none of its own. Wynn and Encore come from the API as one venue and are split by room name.
 - The web app is plain HTTP. Use it over Tailscale, not open hotel Wi-Fi. It is access control, not a security product.
 - It cannot help with the first rush when reserved seating opens in the portal, two days before the API opens.
 - The MCP server tells an agent to ask before approving a change, but cannot check that it did.

@@ -56,7 +56,8 @@ def test_leave_times_walk_cutoff_and_buffer(held, store):
     assert got["ARC301"] == ("2026-12-01T17:44:00", "2026-12-01T17:49:00", "The Venetian")
     # G3 first of Wednesday. Home Venetian to Caesars Forum 20 min. 14:00 - 31 = 13:29 PST.
     assert got["DOP302"] == ("2026-12-02T21:29:00", "2026-12-02T21:34:00", "Caesars Forum")
-    assert len(warnings) == 1 and "walk from MGM Grand is 50 min, the gap is 15 min" in warnings[0]
+    assert len(warnings) == 1
+    assert "walk from MGM Grand is about 50 min (estimate), the gap is 15 min" in warnings[0]
 
 
 def test_blocks_are_utc_seconds_zero_five_minutes_and_tagged(held, client, store):
@@ -69,7 +70,7 @@ def test_blocks_are_utc_seconds_zero_five_minutes_and_tagged(held, client, store
         assert (b - a).total_seconds() == 300
         assert p["description"].endswith(G.TAG) and len(p["description"]) <= 250
     assert blocks_by_code(held)["ARC301"]["description"] == (
-        "re:Seat leave-now. Walk MGM Grand to The Venetian, 50 min. [reseat]")
+        "re:Seat leave-now. Walk MGM Grand to The Venetian, about 50 min (estimate). [reseat]")
 
 
 def test_sync_is_idempotent(held, client, store):

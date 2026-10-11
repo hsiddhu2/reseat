@@ -122,12 +122,13 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
                 if walk is not None and walk > gap:
                     warnings.append(f"{day}: {prev.abbreviation} ends at {_local(prev_end)}, "
                                     f"{s.abbreviation} starts at {_local(start)} at {dest}. "
-                                    f"The walk from {origin} is {walk} min, the gap is {gap} min.")
+                                    f"The walk from {origin} is about {walk} min (estimate), "
+                                    f"the gap is {gap} min.")
         code = s.abbreviation or s.session_id
         if walk is None:
             how = f"Be at {dest or 'the venue'} by {_local(start - timedelta(minutes=CUTOFF_MINUTES))}."
         else:
-            how = f"Walk {origin} to {dest}, {walk} min."
+            how = f"Walk {origin} to {dest}, about {walk} min (estimate)."   # never an official figure
         blocks.append(Block(
             code=code, session_id=s.session_id,
             start=to_personal_time(leave), end=to_personal_time(leave + timedelta(minutes=BLOCK_MINUTES)),

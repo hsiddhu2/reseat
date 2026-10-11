@@ -86,7 +86,8 @@ def test_week_grid_marks_held_wanted_proposed_fallback_leave_moved_and_walks(dem
     assert by["CMP409-R"]["pending"] and "swap pending" in by["CMP409-R"]["sub"]
     assert "moved to Level 3 | Premier 319" in by["CMP303"]["sub"]
     assert by["CMP409-R"]["lanes"] == 2 and {by["CMP409-R"]["lane"], by["SVS306-R"]["lane"]} == {0, 1}
-    assert by["ANT335"]["badge"] == "walk 35 m, gap 30 m"          # after COP335 at Wynn, to Caesars Palace
+    # after COP335 at Wynn, to Caesars Palace
+    assert by["ANT335"]["badge"] == "walk about 35 m (estimate), gap 30 m"
     assert w["days"] == ["Mon 30", "Tue 1", "Wed 2", "Thu 3", "Fri 4"] and len(w["leaves"]) >= 10
     assert all(0 <= b["top"] < 100 and b["height"] > 0 for b in w["blocks"])
 

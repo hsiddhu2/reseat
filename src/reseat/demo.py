@@ -512,7 +512,7 @@ class Demo:
             update={"date": at.date().isoformat(), "time": f"{at:%H:%M}"})} if s.session_time else {})
         self._sweep()
         return (f"API319 now starts at {at:%a %H:%M}, {self._tight} minutes after {prev.abbreviation} ends "
-                f"at {prev.campus_venue}. The walk to Caesars Forum is longer than the gap.")
+                f"at {prev.campus_venue}. The estimated walk to Caesars Forum is longer than the gap.")
 
     def _sc_stale(self) -> str:
         why = self._blocked()

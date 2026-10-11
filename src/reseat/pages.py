@@ -482,7 +482,8 @@ def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[
             ("Type", s.type_key or "Not set"), ("Seats now", s.seat_availability or "Not shown")]
     if leave:
         at = datetime.fromisoformat(leave.start).replace(tzinfo=UTC).astimezone(VEGAS)
-        walk = f", {leave.walk} min walk from {leave.origin}" if leave.walk is not None else ""
+        walk = (f", about {leave.walk} min walk from {leave.origin} (estimate)" if leave.walk is not None
+                else "")
         rows.append(("Leave", f"{at:%H:%M}{walk}. Doors close {CUTOFF_MINUTES} min before the start."))
     if blk.get("moved"):
         rows.append(("Moved", f"Now in {blk['moved']}"))
@@ -576,9 +577,9 @@ def _badges(blocks: list[dict[str, Any]]) -> None:
         walk = walk_minutes(p["venue"], b["venue"])
         gap = int((b["start"] - p["end"]).total_seconds() // 60)
         if walk is not None and walk > gap:
-            b["badge"] = f"walk {walk} m, gap {gap} m"
-            b["walk_note"] = (f"{walk} min walk from {p['code']} at {p['venue']}, but only {gap} min between "
-                              "them.")
+            b["badge"] = f"walk about {walk} m (estimate), gap {gap} m"
+            b["walk_note"] = (f"About {walk} min walk (estimate) from {p['code']} at {p['venue']}, "
+                              f"but only {gap} min between them.")
 
 
 # ---------------------------------------------------------------------- today
@@ -662,7 +663,8 @@ def _clash(s: Session, held_today: list[Session]) -> str | None:
         walk = walk_minutes(h.campus_venue, s.campus_venue)
         late = (_window(h)[1] + timedelta(minutes=walk or 0) - win[0]).total_seconds() // 60  # type: ignore[index]
         if walk is not None and late > 0:
-            return f"After {h.abbreviation} the walk is {walk} min. You would miss the first {int(late)} min."
+            return (f"After {h.abbreviation} the walk is about {walk} min (estimate). You would miss the "
+                    f"first {int(late)} min.")
     if after:
         h = min(after, key=lambda x: _window(x)[0])  # type: ignore[index]
         walk = walk_minutes(s.campus_venue, h.campus_venue)
@@ -1116,7 +1118,8 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
            '</p><div class="two"><div class="col">']
     h = t["hero"]
     if h:
-        walk = (f"Walk {h['origin']} → {h['venue']}, {h['walk']} min. " if h["walk"] is not None
+        walk = (f"Walk {h['origin']} → {h['venue']}, about {h['walk']} min (estimate). "
+                if h["walk"] is not None
                 else f"Be at {h['venue']} by the doors. ")
         mins = math.ceil(max(0, h["leave_at"] - snap["now"]) / 60)
         label, big = ("LEAVE IN", f"{mins} min") if mins > 0 else ("LEAVE NOW", "now")
