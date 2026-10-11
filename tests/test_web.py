@@ -886,7 +886,7 @@ def test_a_scenario_leaves_a_banner_and_highlights_what_changed():
     assert {"SVS306-R", "CMP409-R"} <= set(last["codes"])
     html = pages.render_dashboard(d.app.snapshot(), demo=True)
     assert "What happened at AWS:" in html and "Sent to your phone:</strong> Swap proposed" in html
-    assert 'class="blk b-proposed hl"' in html
+    assert 'class="blk b-proposed hl' in html
 
 
 def test_the_guided_tour_runs_five_steps_in_order_and_starts_again():

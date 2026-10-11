@@ -731,12 +731,15 @@ def _week_html(w: dict[str, Any], highlight: Iterable[str] = ()) -> str:
         inner = []
         for b in (x for x in w["blocks"] if x["day"] == i):
             width = 100 / b["lanes"]
-            badge = f'<em class="badge">{e(b["badge"])}</em>' if b["badge"] else ""
+            badge = (f'<em class="badge" title="{e(b["badge"])}" aria-label="Tight walk: {e(b["badge"])}">'
+                     '!</em>' if b["badge"] else "")
             hl = " hl" if b["code"] in marked else ""
-            inner.append(f'<a class="blk b-{e(b["kind"])}{" pending" if b["pending"] else ""}{hl}" '
+            narrow = " narrow" if b["lanes"] > 1 else ""
+            inner.append(f'<a class="blk b-{e(b["kind"])}{" pending" if b["pending"] else ""}{hl}{narrow}" '
                          f'href="#s-{b["i"]}" title="{e(b["title"])}" style="top:{b["top"]}%;'
                          f'height:{b["height"]}%;left:{b["lane"] * width:.2f}%;width:{width:.2f}%">'
-                         f'{badge}<b>{e(b["code"])} <small>{e(b["time"])}</small></b>'
+                         f'{badge}<b>{e(b["code"])}</b>'
+                         f'<small class="tm">{e(b["time"].split("–")[0] if narrow else b["time"])}</small>'
                          f'<span class="nm">{e(b["name"])}</span><span>{e(b["sub"])}</span></a>')
         for lv in (x for x in w["leaves"] if x["day"] == i):
             inner.append(f'<div class="leave" style="top:{lv["top"]}%" title="{e(lv["title"])}">'
