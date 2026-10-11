@@ -620,6 +620,9 @@ def _print_watch_event(ev: WatchEvent) -> None:
         con.print(f"  [green]back after {d['minutes']} min[/green]")
     elif ev.kind == "signin":
         con.print(f"  [{'red' if d['state'] == 'needed' else 'green'}]{_esc(d['message'])}[/]")
+    elif ev.kind in ("catalog", "removed", "unconfirmed", "not_booked"):
+        colour = "green" if ev.kind == "catalog" else "yellow"
+        con.print(f"  [{colour}]{_esc(d['message'])}[/{colour}]")
 
 
 @app.command()

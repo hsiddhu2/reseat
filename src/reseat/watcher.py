@@ -8,6 +8,10 @@ that wants to know what happened subscribes a callback and gets typed events:
     proposed  a better sitting overlaps a held lower-priority target: swap proposal
     swap      an auto swap ran, with its final state
     moved     a held session changed room, venue or time. re:Seat does not act
+    removed   a held session left the catalog. re:Seat does not act
+    catalog   the catalog is usable again after the API served an empty or partial one
+    unconfirmed  a reserve was sent but the read-back could not confirm it
+    not_booked   a target sitting opened or appeared and was not booked, with the reason
     error     the tick failed. The next tick tries again
 
 The first sweep into an empty catalog is a baseline. It records state and acts
@@ -64,7 +68,7 @@ from .auth import AuthError
 from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
 from .models import PersonalTime
-from .router import Router, run_booking
+from .router import FULL_SKIP, Router, run_booking
 from .rules import Rules, unresolved
 from .store import Store, SweepRefused
 
@@ -87,7 +91,8 @@ class ApprovalFailed(Exception):
 
 
 EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
-                    "outage", "offline", "back", "signin", "leave", "writes"]
+                    "outage", "offline", "back", "signin", "leave", "writes",
+                    "catalog", "removed", "unconfirmed", "not_booked"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 
@@ -396,7 +401,11 @@ class Watcher:
             self.store.journal(self.event_id, "watcher.outage", None,
                                {"minutes": minutes, "ticks": self._down_ticks}, "end")
             self._emit("back", since=self._down_since, minutes=minutes, announced=self._offline_sent,
-                       message="re:Seat back")
+                       down=self._down_kind, message="re:Seat back")
+            if self._down_kind == "catalog" and res.count:
+                self._emit("catalog", state="back", count=res.count,
+                           message=f"The re:Invent catalog is back: {res.count} sessions. re:Seat is "
+                                   "watching and booking within your rules again.")
             self._down_since, self._down_ticks, self._offline_sent = None, 0, False
 
     def _problem(self, res: TickResult, message: str) -> None:
@@ -410,10 +419,18 @@ class Watcher:
         # unsaved and the next tick sees them again, so no opening is lost.
         sched = self.client.get_schedule(self.event_id)
         held = set(sched.reserved)
+        known = {sid: self.store.get(self.event_id, sid) for sid in held}     # names, before a sweep
         sweep = self.store.apply_sweep(self.event_id, sessions, with_abstracts=False, now=now)
         res.count = sweep.count
         self.last_held = held
         self.personal_time = list(sched.personal_time)
+        for sid in sweep.removed:
+            s = known.get(sid)
+            if sid in held and s:
+                name = " ".join(x for x in (s.abbreviation, s.title) if x) or "a session"
+                self._emit("removed", session_id=sid, code=s.abbreviation, title=s.title,
+                           message=f"AWS removed {name} from the catalog. You held it. "
+                                   "Check the official app.")
         if sweep.baseline:
             # New ids are not news: a first, re-keyed or forced catalog. Sessions that kept
             # their id can still open or move, so those are handled as usual.
@@ -579,6 +596,42 @@ class Watcher:
         for o in run.outcomes:
             if o.status == "unconfirmed":
                 self._problem(res, f"{o.session_id} may be held: {o.note}. Check your schedule.")
+                s = self.store.get(self.event_id, o.session_id)
+                self._emit("unconfirmed", session_id=o.session_id, code=s.abbreviation if s else None,
+                           title=s.title if s else None,
+                           message="re:Seat sent a reserve but could not confirm it. Check the official app.")
+        if not run.closed and not any(ex.error for ex in run.executions):
+            self._not_booked(candidates, run, res)
+
+    def _not_booked(self, candidates: list[str], run: Any, res: TickResult) -> None:
+        """Openings the rules did not book, each with the reason, once per opening."""
+        held_now = set(run.schedule.reserved) if run.schedule else self.last_held
+        held_targets = {t for p in run.plans for t in p.held_targets}
+        with self._lock:                      # this tick's proposals and any still waiting from before
+            proposed = {p.wanted_id for p in res.proposals}
+            proposed |= {p.wanted_id for p in self.proposals.values()}
+        why: dict[str, str] = {}
+        for p in run.plans:
+            for sk in p.skipped:
+                why.setdefault(sk.session_id, sk.reason)
+        for o in run.outcomes:
+            if o.status in ("full", "conflict", "refused"):
+                why.setdefault(o.session_id, {"full": "it filled before the reserve",
+                                              "conflict": "it clashes with a session you hold"}
+                               .get(o.status, o.note or "the API refused it"))
+        for sid in candidates:
+            if sid in held_now or sid in res.booked or sid in proposed or sid not in why:
+                continue
+            if why[sid] == FULL_SKIP:
+                continue                      # a full sitting did not open: nothing to tell
+            target = next((sk.target for p in run.plans for sk in p.skipped if sk.session_id == sid), None)
+            if target in held_targets:
+                continue                      # that talk is already held: not news
+            s = self.store.get(self.event_id, sid)
+            code = s.abbreviation if s else "a target"
+            what = f"New sitting {code}" if sid in res.added else f"Seat opened for {code}"
+            self._emit("not_booked", session_id=sid, code=code, title=s.title if s else None,
+                       reason=why[sid], new=sid in res.added, message=f"{what}, not booked: {why[sid]}.")
 
     def _priorities(self) -> dict[str, int]:
         """Session id -> priority index of the first target whose tree holds it."""

@@ -60,7 +60,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - A sweep that comes back empty, falls short of the API's own `totalCount`, or would drop most of the catalog without bringing back one of about the same size, is refused and the local catalog kept. A catalog of about the same size with mostly new ids is recorded as a new baseline, not as thousands of new sessions. Nothing is booked while a held session is missing from the local catalog. Seen live on 8 October: see [proof/](proof/).
 - Survives outages. A refused connection, a timeout or any 5xx never ends the loop. The wait between sweeps doubles from the normal interval up to 5 minutes and drops back on recovery. A sweep that fails halfway is not saved, so no opening is lost. Each outage is journaled.
 - After 10 minutes down it reports `offline`, and `back` on recovery. A failed token refresh reports `signin` once and switches to read-only until a sweep works again.
-- Emits typed events (sweep, booked, proposed, swap, moved, error, outage, offline, back, signin) to any subscriber. The CLI prints them. The web app subscribes the same way.
+- Emits typed events (sweep, booked, proposed, swap, moved, removed, unconfirmed, not_booked, catalog, error, outage, offline, back, signin) to any subscriber. A not_booked event carries the router's reason, and is not raised for a sitting that is simply full, for a talk already held, or after a 409. The CLI prints them. The web app subscribes the same way.
 - Keeps the attendee's personal time from the GetSchedule read each sweep already makes, in memory, for the Today view. No extra call.
 
 **Swap** (built)

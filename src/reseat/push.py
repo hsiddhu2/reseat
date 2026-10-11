@@ -54,8 +54,24 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         if state == "failed":
             return "Swap failed", "Check the web app for what is held now."
         return None
+    if ev.kind == "back" and d.get("down") == "catalog":
+        return None                        # the catalog event says it better
     if ev.kind in ("offline", "back"):
         return d["message"], d["message"]
+    if ev.kind == "catalog":
+        return "The re:Invent catalog is back", d["message"]
+    if ev.kind == "moved":
+        b, a = d.get("before") or {}, d.get("after") or {}
+        change = ", ".join(f"{b.get(k) or 'none'} to {a.get(k) or 'none'}"
+                           for k in ("date", "time", "room", "venue") if b.get(k) != a.get(k))
+        return f"{d.get('code') or 'A session you hold'} moved", change or "Details changed."
+    if ev.kind == "removed":
+        return f"{d.get('code') or 'A session you hold'} left the catalog", d["message"]
+    if ev.kind == "unconfirmed":
+        return "Check your schedule", f"{d.get('code') or 'A session'} {d.get('title') or ''}: {d['message']}"
+    if ev.kind == "not_booked":
+        return (f"{'New sitting' if d.get('new') else 'Seat opened'}: {d.get('code')}",
+                f"Not booked: {d['reason']}.")
     if ev.kind == "signin" and d.get("state") == "needed":
         return "Sign in needed", "Run reseat login on the laptop. Nothing is booked until then."
     if ev.kind == "writes":

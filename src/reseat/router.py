@@ -220,7 +220,8 @@ class Router:
             for other in booked:
                 ow = self._window(other)
                 if ow and overlaps(w, ow):
-                    return f"overlaps {other.abbreviation or other.session_id}", other.session_id
+                    name = other.abbreviation or other.title or "a session you hold"   # never an id
+                    return f"overlaps {name}", other.session_id
             if any(overlaps(w, m) for m in meals):
                 return "overlaps a meal in the rules", None
             day = s.session_time.date if s.session_time else None
