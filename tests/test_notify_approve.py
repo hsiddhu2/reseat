@@ -214,3 +214,11 @@ def test_a_held_back_approve_can_be_tapped_again():
         d.watcher.stop()
         server.shutdown()
         server.server_close()
+
+
+def test_a_title_with_a_line_break_cannot_split_the_push_headers():
+    seen, transport = capture()
+    p = push.Pusher(TOPIC, transport=transport)
+    p(WatchEvent("moved", 0, {"code": "ABC\r\nX-Evil: 1", "before": {"room": "a"}, "after": {"room": "b"}}))
+    p.flush()
+    assert seen[0].headers["title"] == "ABC  X-Evil: 1 moved" and "x-evil" not in seen[0].headers

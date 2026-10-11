@@ -33,11 +33,12 @@ from typing import Any
 
 from . import guard, push
 from . import rules as R
-from .campus import VEGAS
+from .campus import EVENT_DAYS, VEGAS
 from .client import EventsClient
 from .fakeapi import FakeEventsApi
 from .fixtures import load_catalog
 from .models import Session
+from .reminders import LEAVE_SOON, WANTED_SOON, free_to_attend, starts_at
 from .serve import LOOPBACK, App
 from .store import Store
 from .swap import Swap
@@ -56,7 +57,7 @@ BANDS = {"SVS306-R": "unavailable", "SVS306-R1": "unavailable", "ANT335": "unava
          "BIZ108": "unavailable"}
 TARGETS = ("SVS306", "ARC302", "CMP409", "DVT201", "API319", "COP335", "ANT335", "COM402", "CMP303",
            "SVS402", "COP301", "SEC351", "AIM310", "IND424", "ARC306", "BIZ108")
-SEATS, SCHEDULE, AWS = "Seats", "Your schedule", "AWS and the network"
+SEATS, SCHEDULE, ONSITE, AWS = "Seats", "Your schedule", "On site", "AWS and the network"
 TOUR = ("seat", "fill", "repeat", "close", "open")   # the guided tour, one scenario per press
 PROBE = "demo-probe-never-held"   # a session id nobody can hold: the watcher asks it whether writes are open
 NEW_SITTING_ID = "demo-AIM310-R1"
@@ -189,9 +190,19 @@ class Demo:
             ("remove", SCHEDULE, "AWS removes a held session",
              "AWS drops SEC351, which you hold, from the catalog.", "SEC351 left the catalog.",
              self._sc_remove),
-            ("leave", SCHEDULE, "Jump to the next leave time",
+            ("briefing", ONSITE, "Jump to the next morning",
+             "The demo clock jumps to 07:00 on the next conference day.",
+             "The morning briefing: your sessions today and when to leave for the first.",
+             self._sc_briefing),
+            ("leave10", ONSITE, "Jump to 10 minutes before you leave",
+             "The demo clock jumps to 10 minutes before your next leave time.",
+             "Leave in 10 minutes, with the walk.", self._sc_leave10),
+            ("leave", ONSITE, "Jump to the next leave time",
              "The demo clock jumps to when you must leave for your next session.",
              "Leave now, with the walk.", self._sc_leave),
+            ("soon", ONSITE, "Jump to a wanted session about to start",
+             "The demo clock jumps to 20 minutes before a talk you want but hold no seat for.",
+             "It starts soon, with whether to queue for a walk-up seat.", self._sc_soon),
             ("close", AWS, "AWS switches writes off",
              "AWS stops accepting bookings for a while, as it did before 8 October.",
              "Booking paused. The seat it wanted waits in a queue.", self._sc_close),
@@ -426,6 +437,46 @@ class Demo:
         self.offset += at + 5 - now                     # forward only: the demo clock never goes back
         self.app.refresh()
         return f"The demo clock jumped to the leave time for {code}.{self._expired(waiting)}"
+
+    def _jump(self, to: float) -> str:
+        """Move the demo clock forward to `to`, never back, and let the reminders look."""
+        waiting = bool(self.watcher.pending())
+        self.offset += max(0.0, to - self.clock())
+        self.app.refresh()
+        return self._expired(waiting)
+
+    def _sc_briefing(self) -> str:
+        now = self.clock()
+        today = datetime.fromtimestamp(now, VEGAS).date().isoformat()
+        days = sorted(d for d in EVENT_DAYS.values() if d > today)
+        if not days:
+            return "No conference morning is left this week."
+        at = datetime.fromisoformat(f"{days[0]}T07:00").replace(tzinfo=VEGAS).timestamp()
+        said = self._jump(at + 5)
+        return f"The demo clock jumped to 07:00 on {datetime.fromisoformat(days[0]):%A}.{said}"
+
+    def _sc_leave10(self) -> str:
+        now = self.clock()
+        held = guard.held_sessions(self.store, EVENT, sorted(self.watcher.last_held))
+        blocks, _ = guard.leave_blocks(held, self.rules)
+        later = sorted((_utc(b.start), b.code) for b in blocks if _utc(b.start) - LEAVE_SOON > now + 30)
+        if not later:
+            return "No leave time is left this week."
+        at, code = later[0]
+        said = self._jump(at - LEAVE_SOON + 5)
+        return f"The demo clock jumped to 10 minutes before the leave time for {code}.{said}"
+
+    def _sc_soon(self) -> str:
+        now = self.clock()
+        held = sorted(self.watcher.last_held)
+        sessions = guard.held_sessions(self.store, EVENT, held)
+        free = free_to_attend(sessions, self.app._wanted_sittings(held))
+        later = sorted((t, s.abbreviation or "") for s in free
+                       if (t := starts_at(s)) and t - WANTED_SOON > now + 30)
+        if not later:
+            return "No wanted session without a seat is left this week."
+        at, code = later[0]
+        return f"The demo clock jumped to 20 minutes before {code}.{self._jump(at - WANTED_SOON + 5)}"
 
     def _sc_close(self) -> str:
         if self.fake.closed:

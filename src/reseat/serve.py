@@ -47,6 +47,8 @@ import httpx
 from . import guard, pages
 from .campus import EVENT_DAYS, VEGAS
 from .models import Session
+from .reminders import Reminders
+from .reminders import how as reminders_how
 from .rules import Rules
 from .store import Store
 from .watcher import ApprovalFailed, Watcher, WatchEvent
@@ -103,7 +105,8 @@ class App:
         self._link_expires = clock() + LINK_TTL
         self._failures: deque[float] = deque()
         self._snapshot: dict[str, Any] = {}
-        self._leave_sent: set[str] = set()
+        self._held_known = False
+        self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid))
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         watcher.subscribe(self._on_event)
 
@@ -232,6 +235,8 @@ class App:
     # ---- the snapshot, built on the watcher's thread
 
     def _on_event(self, ev: WatchEvent) -> None:
+        if ev.kind == "sweep" and not ev.data.get("error"):
+            self._held_known = True
         if ev.kind in ("sweep", "booked", "proposed", "swap", "signin", "back", "offline"):
             self.refresh()
 
@@ -257,7 +262,9 @@ class App:
                 next_leave = {"code": b.code, "leave_at": leave_at,
                               "leave_local": vegas(leave_at).strftime("%H:%M"), "how": _how(b)}
                 break
-        self._announce_leave(blocks, now)
+        if self._held_known:          # what is held comes from a sweep in this process, never a guess
+            self.reminders.check(now, sessions, blocks, self._wanted_sittings(held),
+                                 len(self.watcher.pending()), fresh=self.watcher.down_since is None)
         snap = {
             "now": now, "day": day,
             "status": {"online": self.watcher.down_since is None, "read_only": self.watcher.read_only,
@@ -323,24 +330,21 @@ class App:
         a = guard.queue_or_go(s, self.store.band_history(self.event_id, s.session_id))
         return {**self._row(s), "verdict": a.verdict, "basis": a.basis}
 
-    def _announce_leave(self, blocks: list[guard.Block], now: float) -> None:
-        """Once per block, from its leave time until the session starts."""
-        for b in blocks:
-            leave_at = datetime.fromisoformat(b.start).replace(tzinfo=UTC).timestamp()
-            s = self.store.get(self.event_id, b.session_id)
-            starts = guard._window(s)[0].timestamp() if s and guard._window(s) else leave_at + 300
-            key = f"{b.session_id}@{b.start}"
-            if leave_at <= now < starts and key not in self._leave_sent:
-                self._leave_sent.add(key)
-                self.watcher.emit("leave", code=b.code, message=_how(b))
+    def _wanted_sittings(self, held: list[str]) -> list[Session]:
+        """Every sitting of a target none of whose sittings is held."""
+        held_set, out = set(held), []
+        for t in self.rules.targets:
+            tree = [s for s, _ in self.watcher.router.tree(t)]
+            if not any(s.session_id in held_set for s in tree):
+                out += tree
+        return out
 
     def onsite_day(self) -> str | None:
         today = vegas(self.clock()).date().isoformat()
         return today if today in EVENT_DAYS.values() else None
 
 
-def _how(b: guard.Block) -> str:
-    return b.description.removeprefix(guard.PREFIX).removesuffix(guard.TAG).strip()
+_how = reminders_how
 
 
 # ---------------------------------------------------------------------- HTTP

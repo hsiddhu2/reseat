@@ -78,10 +78,22 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         return ("Booking paused" if d.get("state") == "closed" else "Booking resumed"), d["message"]
     if ev.kind == "leave":
         return f"Leave now for {d['code']}", d["message"]
+    if ev.kind == "leave_soon":
+        return f"Leave in 10 minutes for {d['code']}", f"Leave at {d['at']}. {d['message']}"
+    if ev.kind == "briefing":
+        return d["title"], d["message"]
+    if ev.kind == "wanted_soon":
+        where = f", {d['venue']}" if d.get("venue") else ""
+        return (f"{d.get('code') or 'A session you want'} starts at {d['at']}",
+                f"{d.get('title') or ''}{where}. You do not hold a seat. "
+                f"{WALK_UP.get(d.get('verdict') or '', '')} {d.get('basis') or ''}".strip())
     return None
 
 
-PAGE = {"proposed": "/approve", "leave": "/today"}       # every other event opens the dashboard
+WALK_UP = {"likely": "Walk-up likely.", "early": "Go early.", "unlikely": "Walk-up unlikely.",
+           "unknown": "No call on walk-ups."}
+PAGE = {"proposed": "/approve", "leave": "/today", "leave_soon": "/today", "briefing": "/today",
+        "wanted_soon": "/today"}       # every other event opens the dashboard
 
 
 def page_for(ev: WatchEvent) -> str:
@@ -89,6 +101,7 @@ def page_for(ev: WatchEvent) -> str:
     return PAGE.get(ev.kind, "/")
 
 
+CONTROL = re.compile(r"[\x00-\x1f\x7f]")    # a catalog title never splits a header
 COMMAND = re.compile(r"^(approve|skip) ([A-Za-z0-9_-]{16,64})$")
 
 
@@ -132,7 +145,8 @@ class Pusher:
 
     def send(self, title: str, body: str, page: str = "/", buttons: str | None = None) -> bool:
         """One plain-text POST. No auth header, nothing from the keychain. A tap opens `page`."""
-        headers = {"Title": title.encode("ascii", "replace").decode(), "Tags": "seat"}   # headers are ASCII
+        clean = CONTROL.sub(" ", title).encode("ascii", "replace").decode()      # headers are ASCII
+        headers = {"Title": clean, "Tags": "seat"}
         if self.click_base:
             headers["Click"] = self.click_base + page
         if buttons:

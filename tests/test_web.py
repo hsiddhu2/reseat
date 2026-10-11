@@ -9,6 +9,7 @@ import json
 import pathlib
 import threading
 import time
+from datetime import datetime
 
 import httpx
 import keyring
@@ -18,6 +19,7 @@ from typer.testing import CliRunner
 from reseat import cli, config, pages
 from reseat import demo as D
 from reseat import serve as S
+from reseat.campus import VEGAS
 from reseat.fakeapi import FakeEventsApi
 from reseat.models import Session
 from reseat.store import Store
@@ -673,7 +675,8 @@ def test_a_dropped_or_cut_off_socket_prints_no_traceback(capsys):
 
 
 EXPECT = [("seat", "proposed"), ("fill", "swap"), ("repeat", "booked"), ("blocked", "not_booked"),
-          ("unsure", "unconfirmed"), ("move", "moved"), ("remove", "removed"), ("leave", "leave"),
+          ("unsure", "unconfirmed"), ("move", "moved"), ("remove", "removed"),
+          ("briefing", "briefing"), ("leave10", "leave_soon"), ("leave", "leave"), ("soon", "wanted_soon"),
           ("close", "writes"), ("open", "writes"), ("down", "offline"), ("up", "back"),
           ("empty", "catalog"), ("signout", "signin"), ("signin", "sweep")]
 
@@ -874,8 +877,9 @@ def test_scenarios_are_headings_with_what_happens_and_what_you_will_see():
     html = pages.render_dashboard(d.app.snapshot(), demo=True)
     for s in d.app.scenarios:
         assert f"<h4>{pages.e(s['label'])}</h4>" in html and pages.e(s["story"]) in html
-    assert {s["group"] for s in d.app.scenarios} == {"Seats", "Your schedule", "AWS and the network"}
-    assert 'data-scenario="tour"' in html and "Show all 15 scenarios" in html
+    groups = {"Seats", "Your schedule", "On site", "AWS and the network"}
+    assert {s["group"] for s in d.app.scenarios} == groups
+    assert 'data-scenario="tour"' in html and "Show all 18 scenarios" in html
 
 
 def test_a_scenario_leaves_a_banner_and_highlights_what_changed():
@@ -964,3 +968,27 @@ def test_an_empty_week_renders_without_blocks_or_panels():
     snap = d.app.snapshot()
     html = pages.render_dashboard(snap, demo=True)
     assert snap["view"]["week"]["blocks"] == [] and 'class="detail"' not in html
+
+
+def test_no_reminder_goes_out_before_the_first_sweep():
+    d = D.Demo(port=0)
+    events = []
+    d.watcher.subscribe(events.append)
+    tuesday_7am = datetime.fromisoformat("2026-12-01T07:00").replace(tzinfo=VEGAS).timestamp()
+    d.offset += tuesday_7am - d.clock()
+    d.app.refresh()
+    assert not [e for e in events if e.kind == "briefing"]
+    d.watcher.tick()
+    assert [e.data["title"] for e in events if e.kind == "briefing"] == ["Today: 1 session"]
+
+
+def test_a_failed_first_sweep_sends_no_free_day_briefing():
+    d = D.Demo(port=0)
+    events = []
+    d.watcher.subscribe(events.append)
+    d.offset += datetime.fromisoformat("2026-12-01T07:00").replace(tzinfo=VEGAS).timestamp() - d.clock()
+    d.fake.fail_next("ListSessions", 503)
+    d.watcher.tick()
+    assert not [e for e in events if e.kind == "briefing"]
+    d.watcher.tick()
+    assert [e.data["title"] for e in events if e.kind == "briefing"] == ["Today: 1 session"]
