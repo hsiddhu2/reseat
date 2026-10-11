@@ -6,6 +6,7 @@ touches the keychain, the network or ~/.reseat.
 """
 
 import json
+import pathlib
 import threading
 import time
 
@@ -687,7 +688,7 @@ def test_every_scenario_produces_its_event_through_the_real_engine():
     http = httpx.Client(base_url=f"http://127.0.0.1:{d.app.port}", timeout=60)
     try:
         assert wait_until(lambda: d.app.snapshot().get("view"))
-        assert [k for k, _ in EXPECT] == [k for k, _, _ in d.app.scenarios]
+        assert [k for k, _ in EXPECT] == [s["key"] for s in d.app.scenarios]
         for key, kind in EXPECT:
             before = len(events)
             r = http.post(f"/demo/{key}", headers={"X-Reseat": "1"})
@@ -744,7 +745,7 @@ def panel():
     d.app.refresh()
     events = []
     d.watcher.subscribe(events.append)
-    return d, events, {k: fn for k, _, _, fn in d.scenarios()}
+    return d, events, {k: fn for k, _, _, fn in d.scenarios() if k != "tour"}
 
 
 def test_each_scenario_leaves_the_state_its_button_promises():
@@ -863,3 +864,103 @@ def test_a_clock_jump_mentions_an_expired_swap_only_when_one_was_waiting():
     sc["up"]()
     sc["seat"]()
     assert "The waiting swap expired with the jump." in sc["leave"]()
+
+
+# ---- the clearer dashboard: scenario headings, the result banner, session details
+
+
+def test_scenarios_are_headings_with_what_happens_and_what_you_will_see():
+    d, _, sc = panel()
+    html = pages.render_dashboard(d.app.snapshot(), demo=True)
+    for s in d.app.scenarios:
+        assert f"<h4>{pages.e(s['label'])}</h4>" in html and pages.e(s["story"]) in html
+    assert {s["group"] for s in d.app.scenarios} == {"Seats", "Your schedule", "AWS and the network"}
+    assert 'data-scenario="tour"' in html and "Show all 15 scenarios" in html
+
+
+def test_a_scenario_leaves_a_banner_and_highlights_what_changed():
+    d, _, sc = panel()
+    sc["seat"]()
+    last = d.app.snapshot()["view"]["last"]
+    assert last["label"] == "A seat opens" and last["phone"] == ["Swap proposed"]
+    assert {"SVS306-R", "CMP409-R"} <= set(last["codes"])
+    html = pages.render_dashboard(d.app.snapshot(), demo=True)
+    assert "What happened at AWS:" in html and "Sent to your phone:</strong> Swap proposed" in html
+    assert 'class="blk b-proposed hl"' in html
+
+
+def test_the_guided_tour_runs_five_steps_in_order_and_starts_again():
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    tour = dict((k, fn) for k, _, _, fn in d.scenarios())["tour"]
+    steps = []
+    for _ in range(6):
+        tour()
+        steps.append((d.app.last_scenario["step"], d.app.last_scenario["label"]))
+    assert [s for s, _ in steps] == [f"Tour step {i} of 5" for i in (1, 2, 3, 4, 5, 1)]
+    assert [label for _, label in steps][:5] == ["A seat opens", "The new seat fills mid-swap",
+                                                 "AWS adds a repeat sitting", "AWS switches writes off",
+                                                 "AWS switches writes back on"]
+
+
+def test_every_week_block_opens_a_detail_panel_with_its_facts(demo):
+    snap = demo.app.snapshot()
+    html = pages.render_dashboard(snap)
+    blocks = snap["view"]["week"]["blocks"]
+    for b in blocks:
+        assert f'href="#s-{b["i"]}"' in html and f'id="s-{b["i"]}"' in html
+    cmp = next(b for b in blocks if b["code"] == "CMP409-R")
+    rows = dict(cmp["detail"]["rows"])
+    assert rows["When"].startswith("Monday 30 November, 13:00") and "MGM Grand" in rows["Where"]
+    assert rows["Leave"].startswith("12:") and cmp["detail"]["status"] == "You hold this seat."
+    assert any(x["code"] == "CMP409-R1" for x in cmp["detail"]["sittings"])
+    ant = next(b for b in blocks if b["code"] == "ANT335")
+    assert "Queue or go" in dict(ant["detail"]["rows"]) and "Tight walk" in dict(ant["detail"]["rows"])
+    for sid in ids(demo):
+        assert sid not in html
+
+
+def test_the_banner_sits_above_the_layout_and_its_close_rule_wins():
+    d, _, sc = panel()
+    sc["move"]()
+    html = pages.render_dashboard(d.app.snapshot(), demo=True)
+    assert html.index('class="banner"') < html.index('class="layout"')
+    css = (pathlib.Path(pages.__file__).parent / "static" / "app.css").read_text(encoding="utf-8")
+    assert "[hidden] { display: none !important; }" in css      # .banner is display:flex
+
+
+def test_the_tour_button_says_which_step_comes_next_even_after_another_scenario():
+    d, _, sc = panel()
+    tour = dict((k, fn) for k, _, _, fn in d.scenarios())["tour"]
+    assert d.app.snapshot()["view"]["tour"] == "Start the guided tour"
+    tour()
+    sc["move"]()
+    assert d.app.snapshot()["view"]["tour"] == "Guided tour: step 2 of 5"
+    for _ in range(4):
+        tour()
+    assert d.app.snapshot()["view"]["tour"] == "Start the guided tour"
+
+
+def test_a_detail_panel_for_a_session_with_little_data_says_not_set():
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    bare = Session.model_validate({"sessionId": "bare-1", "abbreviation": "XYZ100", "title": "Bare talk",
+                                   "isReservable": True,
+                                   "sessionTime": {"date": "2026-12-01", "time": "15:00", "length": "60"}})
+    d.fake.add_session(bare)
+    d.fake.schedule.reserved.add("bare-1")
+    d.watcher.tick()
+    b = next(x for x in d.app.snapshot()["view"]["week"]["blocks"] if x["code"] == "XYZ100")
+    rows = dict(b["detail"]["rows"])
+    assert rows["Where"] == rows["Type"] == "Not set" and b["detail"]["sittings"] == []
+    assert "bare-1" not in pages.render_dashboard(d.app.snapshot(), demo=True)
+
+
+def test_an_empty_week_renders_without_blocks_or_panels():
+    d = D.Demo(port=0)
+    d.fake.sessions.clear()
+    d.fake.schedule.reserved.clear()
+    d.watcher.tick()
+    snap = d.app.snapshot()
+    html = pages.render_dashboard(snap, demo=True)
+    assert snap["view"]["week"]["blocks"] == [] and 'class="detail"' not in html

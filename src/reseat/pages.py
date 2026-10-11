@@ -100,7 +100,9 @@ def build(app: App, now: float) -> dict[str, Any]:
         "today": _today(app, held, wanted, now),
         "bookings": _bookings(app, now),
         "kept": _kept(app),
-        "scenarios": [{"key": k, "label": label, "see": see} for k, label, see in app.scenarios],
+        "scenarios": list(app.scenarios),
+        "last": dict(app.last_scenario) if app.last_scenario else None,
+        "tour": app.tour_label,
     }
 
 
@@ -357,6 +359,8 @@ def _week(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]]
             sub += f" · moved to {moved[s.session_id] or 'a new room'}"
         blocks.append({"day": days.index(a.date().isoformat()), "kind": kind, "code": s.abbreviation,
                        "title": f"{s.abbreviation} {s.title} · {_when(s)} · {s.campus_venue or ''}",
+                       "name": s.title, "time": f"{a:%H:%M}–{b:%H:%M}", "session": s,
+                       "moved": moved.get(s.session_id) if s.session_id in moved else None,
                        "sub": sub, "pending": kind == "held" and s.session_id in swapping,
                        "top": _pct(max(top, DAY_START)),
                        "height": _pct(min(bottom, DAY_END)) - _pct(max(top, DAY_START)),
@@ -372,11 +376,56 @@ def _week(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]]
                            "title": f"Leave {at:%H:%M} for {blk.code}"})
     labels = [f"{datetime.fromisoformat(d):%a} {datetime.fromisoformat(d).day}" for d in days]
     first, last = datetime.fromisoformat(days[0]), datetime.fromisoformat(days[-1])
+    leave_at = {b.session_id: b for b in blocks_now}
+    held_ids = {s.session_id for s in held}
+    swaps = {p.wanted_id: p.held_id for p in pending}
+    for i, blk in enumerate(blocks):
+        blk["i"] = i
+        blk["detail"] = _detail(app, blk, leave_at.get(blk["session"].session_id), held_ids, swaps)
     for blk in blocks:
-        blk.pop("start"), blk.pop("end"), blk.pop("venue")
+        blk.pop("start"), blk.pop("end"), blk.pop("venue"), blk.pop("session")
     return {"title": f"Week of {first.day} {first:%b} – {last.day} {last:%b}", "days": labels,
             "blocks": blocks, "leaves": leaves,
             "hours": [{"label": f"{h}:00", "top": _pct(h * 60)} for h in range(8, 19, 2)]}
+
+
+STATUS = {"held": "You hold this seat.", "wanted": "You want this talk and do not hold it.",
+          "proposed": "A swap is proposed: re:Seat would book this instead of a seat you hold.",
+          "fallback": "The fallback: if the proposed swap fails, re:Seat books this."}
+
+
+def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[str],
+            swaps: dict[str, str]) -> dict[str, Any]:
+    """Everything the detail panel shows for one block, from the store, the guard and the rules."""
+    st, ev = app.store, app.event_id
+    s: Session = blk["session"]
+    a = _start(s)
+    status = STATUS[blk["kind"]]
+    if s.session_id in swaps:
+        status = f"A swap is proposed: re:Seat would book this instead of {_code(app, swaps[s.session_id])}."
+    rows = [("When", f"{a:%A} {a.day} {a:%B}, {blk['time']}"),
+            ("Where", ", ".join(x for x in (s.campus_venue, s.room_label) if x) or "Not set"),
+            ("Type", s.type_key or "Not set"), ("Seats now", s.seat_availability or "Not shown")]
+    if leave:
+        at = datetime.fromisoformat(leave.start).replace(tzinfo=UTC).astimezone(VEGAS)
+        walk = f", {leave.walk} min walk from {leave.origin}" if leave.walk is not None else ""
+        rows.append(("Leave", f"{at:%H:%M}{walk}. Doors close {CUTOFF_MINUTES} min before the start."))
+    if blk.get("moved"):
+        rows.append(("Moved", f"Now in {blk['moved']}"))
+    if blk.get("walk_note"):
+        rows.append(("Tight walk", blk["walk_note"]))
+    bands = st.band_history(ev, s.session_id)
+    if s.session_id not in held:
+        adv = guard.queue_or_go(s, bands)
+        rows.append(("Queue or go", f"{VERDICT.get(adv.verdict, '')} {adv.basis}".strip()))
+    history = [f"{hm(ts)} {old or 'none'} → {new or 'none'}" for ts, old, new in bands[-5:]
+               if old is not None]
+    sittings = [{"code": x.abbreviation, "when": _when(x), "venue": x.campus_venue or "",
+                 "band": x.seat_availability or "none", "held": x.session_id in held}
+                for x in (st.by_base_code(ev, s.base_code) if s.base_code else [])
+                if x.session_id != s.session_id]
+    return {"code": s.abbreviation, "title": s.title, "status": status, "rows": rows,
+            "history": history, "sittings": sittings}
 
 
 def _minutes(dt: datetime) -> int:
@@ -422,6 +471,8 @@ def _badges(blocks: list[dict[str, Any]]) -> None:
         gap = int((b["start"] - p["end"]).total_seconds() // 60)
         if walk is not None and walk > gap:
             b["badge"] = f"walk {walk} m, gap {gap} m"
+            b["walk_note"] = (f"{walk} min walk from {p['code']} at {p['venue']}, but only {gap} min between "
+                              "them.")
 
 
 # ---------------------------------------------------------------------- today
@@ -585,8 +636,9 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
     v = snap.get("view") or {}
     cards = v.get("cards", [])
     plans = [c["plan_id"] for c in cards]
+    last = v.get("last")
     out = [_head("re:Seat", "week", demo, plans, snap["now"], v["status"]["last_sweep"]),
-           _status_line(v["status"]),
+           _status_line(v["status"]), _banner_html(last),
            '<div class="layout"><aside class="side">', _kept_html(v.get("kept"))
            + f'<h2>Needs your approval <span class="count">{len(cards)}</span></h2>']
     for c in cards:
@@ -603,16 +655,10 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
     out.append('<h2>Last changes</h2><ul class="mono list">')
     out += [f'<li>{e(x["at"])} {e(x["text"])}</li>' for x in v.get("changes", [])] or [
         '<li>No changes since the first sweep.</li>']
-    out.append("</ul>")
+    out.append("</ul></aside><main class='main'>")
     if v.get("scenarios"):
-        out.append('<section class="panel scenarios" aria-label="Demo scenarios"><h2>Try a scenario</h2>'
-                   '<p class="fine">Each one changes the fake Events API the way the real one could, runs a '
-                   'real sweep, and shows you what happens. With --push, watch your phone too.</p><ul>')
-        out += [f'<li><button data-scenario="{e(s["key"])}">{e(s["label"])}</button>'
-                f'<span class="fine">You should see: {e(s["see"])}</span></li>' for s in v["scenarios"]]
-        out.append('</ul><p class="result" role="status" aria-live="polite"></p></section>')
-    out.append("</aside><main class='main'>")
-    out.append(_week_html(v["week"]))
+        out.append(_scenarios_html(v["scenarios"], v.get("tour", "Start the guided tour")))
+    out.append(_week_html(v["week"], (last or {}).get("codes", [])))
     out.append('<section class="panel"><h2>Journal</h2><ul class="mono list journal">')
     out += [f'<li><span class="t">{e(j["at"])}</span> {e(j["op"])} <span>{e(j["status"])}</span> '
             f'<span class="o o-{e(j["outcome"].split(":")[-1])}">{e(j["outcome"])}</span> {e(j["what"])}</li>'
@@ -632,10 +678,52 @@ def _kept_html(k: dict[str, Any] | None) -> str:
             "</section>")
 
 
-def _week_html(w: dict[str, Any]) -> str:
+def _banner_html(last: dict[str, Any] | None) -> str:
+    """The last scenario's result, kept at the top of the page until it is closed."""
+    if not last:
+        return ""
+    phone = "; ".join(last["phone"]) if last["phone"] else "nothing this time"
+    step = f'<div class="kind">{e(last["step"])}</div>' if last.get("step") else ""
+    return (f'<section class="banner" data-at="{last["at"]:.0f}" role="status">{step}'
+            f'<button class="x" data-dismiss aria-label="Close">×</button>'
+            f'<h2>{e(last["label"])}</h2><p><strong>What happened at AWS:</strong> {e(last["story"])}</p>'
+            f'<p><strong>What re:Seat did:</strong> {e(last["did"])}</p>'
+            f'<p><strong>Sent to your phone:</strong> {e(phone)}</p>'
+            + (f'<p class="fine">Highlighted below: {e(", ".join(last["codes"]))}</p>'
+               if last["codes"] else "")
+            + (f'<p class="fine">Next on the tour: {e(last["next"])}</p>' if last.get("step") else "")
+            + "</section>")
+
+
+def _scenarios_html(scenarios: list[dict[str, str]], tour: str) -> str:
+    """Demo mode only: each scenario as a heading with what happens at AWS and what you will see."""
+    groups: dict[str, list[dict[str, str]]] = {}
+    for sc in scenarios:
+        groups.setdefault(sc["group"], []).append(sc)
+    out = ['<section class="scenarios" aria-label="Demo scenarios"><div class="sc-head"><div>'
+           "<h2>Try a scenario</h2><p class=\"fine\">Each one makes something happen at the fake AWS, "
+           "the way "
+           "the real one can during re:Invent. re:Seat reacts as it would for real: watch the week, the "
+           "journal and, with --push, your phone.</p></div>"
+           '<button class="primary" data-scenario="tour">'
+           + e(tour)
+           + '</button></div><p class="result" role="status" aria-live="polite"></p>'
+           f'<details class="sc-all"><summary>Show all {len(scenarios)} scenarios</summary>']
+    for group, items in groups.items():
+        out.append(f'<h3>{e(group)}</h3><div class="sc-grid">')
+        out += [f'<article class="sc"><h4>{e(sc["label"])}</h4><p>{e(sc["story"])}</p>'
+                f'<p class="fine">You will see: {e(sc["see"])}</p>'
+                f'<button data-scenario="{e(sc["key"])}">Run it</button></article>' for sc in items]
+        out.append("</div>")
+    out.append("</details></section>")
+    return "".join(out)
+
+
+def _week_html(w: dict[str, Any], highlight: Iterable[str] = ()) -> str:
     legend = "".join(f'<span class="lg lg-{k}"><i></i>{label}</span>' for k, label in (
         ("held", "Held"), ("wanted", "Wanted"), ("proposed", "Proposed"), ("leave", "Leave now"),
         ("fallback", "Fallback")))
+    marked = set(highlight)
     hours = "".join(f'<div class="hr" style="top:{h["top"]}%"><span>{e(h["label"])}</span></div>'
                     for h in w["hours"])
     cols = []
@@ -644,10 +732,12 @@ def _week_html(w: dict[str, Any]) -> str:
         for b in (x for x in w["blocks"] if x["day"] == i):
             width = 100 / b["lanes"]
             badge = f'<em class="badge">{e(b["badge"])}</em>' if b["badge"] else ""
-            inner.append(f'<div class="blk b-{e(b["kind"])}{" pending" if b["pending"] else ""}" '
-                         f'title="{e(b["title"])}" style="top:{b["top"]}%;height:{b["height"]}%;'
-                         f'left:{b["lane"] * width:.2f}%;width:{width:.2f}%"><b>{e(b["code"])}</b>'
-                         f'<span>{e(b["sub"])}</span>{badge}</div>')
+            hl = " hl" if b["code"] in marked else ""
+            inner.append(f'<a class="blk b-{e(b["kind"])}{" pending" if b["pending"] else ""}{hl}" '
+                         f'href="#s-{b["i"]}" title="{e(b["title"])}" style="top:{b["top"]}%;'
+                         f'height:{b["height"]}%;left:{b["lane"] * width:.2f}%;width:{width:.2f}%">'
+                         f'{badge}<b>{e(b["code"])} <small>{e(b["time"])}</small></b>'
+                         f'<span class="nm">{e(b["name"])}</span><span>{e(b["sub"])}</span></a>')
         for lv in (x for x in w["leaves"] if x["day"] == i):
             inner.append(f'<div class="leave" style="top:{lv["top"]}%" title="{e(lv["title"])}">'
                          f'<span class="sr">{e(lv["title"])}</span></div>')
@@ -655,7 +745,26 @@ def _week_html(w: dict[str, Any]) -> str:
                     f'</div></div>')
     return (f'<div class="weekhead"><h1>{e(w["title"])}</h1><div class="legend">{legend}</div></div>'
             f'<div class="scroll"><div class="week"><div class="axis"><div class="dh"></div>'
-            f'<div class="slots">{hours}</div></div>{"".join(cols)}</div></div>')
+            f'<div class="slots">{hours}</div></div>{"".join(cols)}</div></div>'
+            f'<p class="fine">Click a session for its details.</p>{_details_html(w)}')
+
+
+def _details_html(w: dict[str, Any]) -> str:
+    """One panel per block, shown by its #s-N link with CSS :target. Works without the script."""
+    out = []
+    for b in w["blocks"]:
+        d = b["detail"]
+        rows = "".join(f"<dt>{e(k)}</dt><dd>{e(v)}</dd>" for k, v in d["rows"])
+        hist = "".join(f"<li>{e(h)}</li>" for h in d["history"]) or "<li>No change seen yet.</li>"
+        sits = "".join(f'<li><b>{e(x["code"])}</b> {e(x["when"])}, {e(x["venue"])} · {e(x["band"])}'
+                       f'{" · you hold this" if x["held"] else ""}</li>' for x in d["sittings"])
+        out.append(f'<section class="detail" id="s-{b["i"]}" aria-label="{e(d["code"])} details">'
+                   f'<a class="close" href="#">Close</a><div class="kind">{e(d["code"])}</div>'
+                   f'<h3>{e(d["title"])}</h3><p>{e(d["status"])}</p><dl>{rows}</dl>'
+                   f'<h4>Seat band changes</h4><ul class="mono list">{hist}</ul>'
+                   + (f'<h4>Other sittings of this talk</h4><ul class="list">{sits}</ul>' if sits else "")
+                   + "</section>")
+    return "".join(out)
 
 
 def _phone_top(left: str, right: str, state: str) -> str:

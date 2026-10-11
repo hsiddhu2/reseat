@@ -32,7 +32,8 @@
       // A new or gone proposal always reloads. A new sweep reloads the read-only views, and the
       // dashboard only while it is scrolled to the top, so reading the week is never interrupted.
       const swept = sweep !== (body.dataset.sweep || "");
-      const readOnly = body.classList.contains("v-today") || (body.classList.contains("v-week") && window.scrollY < 40);
+      const readOnly = !reading() && (body.classList.contains("v-today")
+        || (body.classList.contains("v-week") && window.scrollY < 40));
       if (plans !== (body.dataset.plans || "") || body.dataset.empty || (swept && readOnly)) {
         location.reload();
         return;
@@ -75,7 +76,13 @@
       } catch (e) {
         out.textContent = "No answer from the laptop.";
       }
-      setTimeout(() => location.reload(), 3500);
+      setTimeout(() => location.reload(), 600);
+      return;
+    }
+    if (ev.target.closest("[data-dismiss]")) {
+      const banner = ev.target.closest(".banner");
+      try { sessionStorage.setItem("reseat-dismissed", banner.dataset.at); } catch (e) { /* private mode */ }
+      banner.hidden = true;
       return;
     }
     const b = ev.target.closest("[data-approve],[data-skip]");
@@ -98,6 +105,19 @@
     setTimeout(() => location.reload(), 4000);
   });
 
+  const all = document.querySelector(".sc-all");
+  try {
+    if (all && sessionStorage.getItem("reseat-scenarios-open") === "1") all.open = true;
+    if (all) all.addEventListener("toggle", () => {
+      try { sessionStorage.setItem("reseat-scenarios-open", all.open ? "1" : "0"); } catch (e) { /* private mode */ }
+    });
+  } catch (e) { /* private mode: it starts closed */ }
+  const banner = document.querySelector(".banner");
+  try {
+    if (banner && sessionStorage.getItem("reseat-dismissed") === banner.dataset.at) banner.hidden = true;
+  } catch (e) { /* private mode: the banner simply stays */ }
+  // Do not reload while a session's details are open.
+  const reading = () => location.hash.startsWith("#s-");
   tick();
   setInterval(tick, 1000);
   setInterval(poll, 10000);
