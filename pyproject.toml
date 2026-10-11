@@ -1,6 +1,6 @@
 [project]
 name = "reseat"
-version = "0.5.1"
+version = "0.5.2"
 description = "re:Seat keeps your AWS re:Invent seats: watches for freed seats and new repeats, books within your rules, swaps safely, and tells you when to leave."
 readme = "README.md"
 requires-python = ">=3.11"
