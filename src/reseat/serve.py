@@ -47,6 +47,8 @@ import httpx
 from . import guard, pages
 from .campus import EVENT_DAYS, VEGAS
 from .changes import Tracker
+from .client import ApiError
+from .guard import _OPEN as OPEN_BANDS
 from .models import Session
 from .reminders import Reminders
 from .reminders import how as reminders_how
@@ -108,6 +110,8 @@ class App:
         self._snapshot: dict[str, Any] = {}
         self._held_known = False
         self.tracker = Tracker()
+        self.blocks_state: dict[str, Any] | None = None     # leave-now blocks out of date, with a token
+        self._blocks_key: str | None = None
         self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid))
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         watcher.subscribe(self._on_event)
@@ -200,6 +204,9 @@ class App:
         id the watcher is holding right now is acted on, and only once: a phone that gives no feedback
         gets tapped again and again, and a stranger's made-up id must cost nothing and send nothing.
         """
+        if verb == "update":             # single use: only the live token does anything, and its own
+            self.update_blocks(plan_id, wait=False)   # push says how it went; Swap now taps never queue
+            return None
         if not self.watcher.is_pending(plan_id):
             return None                  # unknown, used or expired: no push, no work for the watcher
         with self._lock:
@@ -272,6 +279,10 @@ class App:
             self.tracker.look(now, sessions, proposed)
             self.reminders.check(now, sessions, blocks, self._wanted_sittings(held),
                                  len(self.watcher.pending()), fresh=self.watcher.down_since is None)
+            self.reminders.expiring(now, self.watcher.pending())
+            self.reminders.tight(now, warnings)
+            self.reminders.other_sittings(self._other_sittings(held))
+            self._check_blocks(held, blocks)
         snap = {
             "now": now, "day": day,
             "status": {"online": self.watcher.down_since is None, "read_only": self.watcher.read_only,
@@ -336,6 +347,86 @@ class App:
         s = best[1]
         a = guard.queue_or_go(s, self.store.band_history(self.event_id, s.session_id))
         return {**self._row(s), "verdict": a.verdict, "basis": a.basis}
+
+    def _other_sittings(self, held: list[str]) -> list[tuple[Session, Session]]:
+        """Targets pinned to their own sittings (repeats: false) whose sittings are all full while
+        another sitting of the talk has seats. The rules stop re:Seat booking it, so the attendee hears."""
+        held_set, out, now = set(held), [], self.clock()
+        held_bases = {s.base_code for s in (self.store.get(self.event_id, i) for i in held)
+                      if s and s.base_code}
+        for t in self.rules.targets:
+            if t.repeats:
+                continue
+            tree = [s for s, _ in self.watcher.router.tree(t)]
+            if not tree or any(s.session_id in held_set or s.seat_availability in OPEN_BANDS for s in tree):
+                continue
+            base = tree[0].base_code
+            if not base or base in held_bases:
+                continue                     # another sitting of this talk is held already
+            mine = {s.session_id for s in tree}
+            out += [(tree[0], s) for s in self.store.by_base_code(self.event_id, base)
+                    if s.session_id not in mine and s.seat_availability in OPEN_BANDS
+                    and (w := guard._window(s)) and w[0].timestamp() > now]
+        return out
+
+    def _check_blocks(self, held: list[str], blocks: list[guard.Block]) -> None:
+        """Leave-now blocks re:Seat wrote earlier no longer match what is held: offer an Update, once per
+        difference. Only when the attendee uses the blocks, and from the schedule the last sweep read."""
+        mine = [p for p in self.watcher.personal_time if guard.is_mine(p)]
+        missing = any(self.store.get(self.event_id, i) is None for i in held)
+        gp = guard.plan(blocks, self.watcher.personal_time, allow_delete=not missing)
+        if not mine or gp.empty or self.watcher.read_only:
+            with self._lock:
+                self.blocks_state, self._blocks_key = None, None
+            return
+        key = repr((sorted((b.title, b.start) for b in gp.create),
+                    sorted((pid, b.start) for pid, b in gp.update),
+                    sorted(p.personal_time_id for p in gp.delete)))
+        if key == self._blocks_key:
+            return
+        state = {"token": secrets.token_urlsafe(18), "create": len(gp.create), "update": len(gp.update),
+                 "delete": len(gp.delete)}
+        with self._lock:
+            self._blocks_key, self.blocks_state = key, state
+        self.watcher.emit("blocks", **state)
+
+    def update_blocks(self, token: str, wait: bool = True) -> dict[str, Any] | None:
+        """Update from the phone or Today. Single use: only the token of the current difference works.
+        Runs guard.sync on the watcher's thread: it reads the schedule, writes, and reads back."""
+        with self._lock:
+            state = self.blocks_state
+            if not state or not PLAN_ID.match(token) or not hmac.compare_digest(state["token"], token):
+                return None
+            if self.watcher.read_only:          # signed out since the offer: keep it for after sign-in
+                return {"ok": False, "message": "Sign in needed. Nothing was sent."}
+            self.blocks_state = None
+
+        def run() -> dict[str, Any]:
+            try:
+                res = guard.sync(self.watcher.client, self.store, self.event_id, self.rules)
+            except (ApiError, httpx.HTTPError) as e:     # the first schedule read failed: nothing was sent
+                ok, msg = False, f"The schedule could not be read ({type(e).__name__}). Nothing was sent."
+            else:
+                ok = not res.problems and not res.closed
+                msg = f"{len(res.done)} changed and read back." if ok else " ".join(res.problems)
+            try:
+                sched = self.watcher.client.get_schedule(self.event_id)
+                self.watcher.personal_time = list(sched.personal_time)
+            except Exception:  # noqa: BLE001  the next sweep reads it again
+                pass
+            if not ok:
+                with self._lock:
+                    self._blocks_key = None          # offer the same difference again once it can work
+            self.watcher.emit("blocks_done", ok=ok, message=msg)
+            self.refresh()
+            return {"ok": ok, "message": msg}
+        job = self.watcher.submit(run)
+        if not wait:
+            return {"ok": True, "message": "Running on the laptop."}     # its own push says how it went
+        try:
+            return dict(job.result(timeout=60))
+        except concurrent.futures.TimeoutError:
+            return {"ok": False, "message": "Still running on the laptop. Check the journal."}
 
     def _wanted_sittings(self, held: list[str]) -> list[Session]:
         """Every sitting of a target none of whose sittings is held."""
@@ -510,6 +601,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     self._json(200, {"message": app.run_scenario(parts[1])})
                 except Exception as e:  # noqa: BLE001  a demo scenario must never take the server down
                     self._json(500, {"error": f"The scenario did not finish: {type(e).__name__}"})
+            elif len(parts) == 2 and parts[0] == "guard":
+                res = app.update_blocks(parts[1])
+                self._json(200, res) if res else self._json(404, {"error": "unknown or used token"})
             elif len(parts) == 2 and parts[0] == "skip":
                 ok = app.skip(parts[1])
                 self._json(200, {"skipped": True}) if ok else self._json(404, {"error": "unknown plan"})

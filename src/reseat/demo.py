@@ -27,7 +27,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from typing import Any
 
@@ -35,10 +35,10 @@ from . import guard, push
 from . import rules as R
 from .campus import EVENT_DAYS, VEGAS
 from .changes import Tracker
-from .client import EventsClient
+from .client import EventsClient, QuotaTracker
 from .fakeapi import FakeEventsApi
 from .fixtures import load_catalog
-from .models import Session
+from .models import PersonalTime, Session
 from .reminders import LEAVE_SOON, WANTED_SOON, free_to_attend, starts_at
 from .serve import LOOPBACK, App
 from .store import Store
@@ -60,6 +60,7 @@ TARGETS = ("SVS306", "ARC302", "CMP409", "DVT201", "API319", "COP335", "ANT335",
            "SVS402", "COP301", "SEC351", "AIM310", "IND424", "ARC306", "BIZ108")
 SEATS, SCHEDULE, ONSITE, AWS = "Seats", "Your schedule", "On site", "AWS and the network"
 TOUR = ("seat", "fill", "repeat", "close", "open")   # the guided tour, one scenario per press
+PINNED = ("ARC306",)    # rules allow only this exact sitting (repeats: false)
 PROBE = "demo-probe-never-held"   # a session id nobody can hold: the watcher asks it whether writes are open
 NEW_SITTING_ID = "demo-AIM310-R1"
 NEW_ROOM = "Level 3 | Premier 319"
@@ -85,8 +86,10 @@ def rules_text(secret: str | None, push_topic: str | None = None) -> str:
         raise R.RulesError("The push topic must be 16 to 64 letters, digits, - or _.")
     head = f"serve_secret: {secret}\n" if secret else ""
     head += f"ntfy_topic: {push_topic}\nntfy_approve: true\n" if push_topic else ""
+    ids = {s.abbreviation: s.session_id for s in catalog()}
     return (head + f"home_venue: The Venetian\nprobe_session: {PROBE}\ntargets:\n"
-            + "".join(f"  - code: {c}\n" for c in TARGETS))
+            + "".join(f"  - session_id: {ids[c]}\n    repeats: false\n" if c in PINNED else f"  - code: {c}\n"
+                      for c in TARGETS))
 
 
 class Demo:
@@ -104,7 +107,8 @@ class Demo:
             "personalTimeId": "demo-dinner", "startDateTime": "2026-12-01T01:30:00",
             "endDateTime": "2026-12-01T03:00:00", "title": "Team dinner", "description": "Booked by hand",
             "location": "Wynn"}
-        self.client = EventsClient(token_provider=lambda: self.fake.token, transport=self.fake.transport())
+        self.client = EventsClient(token_provider=lambda: self.fake.token, transport=self.fake.transport(),
+                                   quota=QuotaTracker(clock=self.clock))      # real quotas, demo clock
         self.store = Store(":memory:", clock=self.clock)       # journal times on the demo clock
         self.rules = R.parse(rules_text(self.secret, push_topic))     # RulesError on a bad topic
         self.watcher = Watcher(self.client, self.store, self.rules, EVENT, interval=INTERVAL,
@@ -116,6 +120,9 @@ class Demo:
         self.done: list[str] = []
         self._busy = threading.Lock()                  # one scenario at a time
         self._repeats = 0
+        self._pinned = 0
+        self._tight = 5
+        self._orig_times: dict[str, Any] = {}
         self._removed: Session | None = None
         self._notes: list[str] = []
         self._tour_at = 0
@@ -185,12 +192,25 @@ class Demo:
             ("unsure", SEATS, "A booking cannot be confirmed",
              "AWS says yes to a booking, but your schedule never shows it.",
              "Check your schedule. Nothing more is sent.", self._sc_unsure),
+            ("expiring", SEATS, "A swap offer is about to lapse",
+             "A swap waits for you, and you have not answered. The demo clock jumps to 2 minutes before it "
+             "lapses.", "Swap offer expires in 2 minutes, with Swap now and Keep.", self._sc_expiring),
+            ("pinned", SEATS, "Your exact sitting is full, another has seats",
+             "Your rules allow only the ARC306 sitting you picked, and it is full. AWS adds another sitting "
+             "with seats.", "Not booked, and you are told which sitting has seats.", self._sc_pinned),
             ("move", SCHEDULE, "A held session changes room",
              "AWS moves CMP303, which you hold, to another room.", "CMP303 moved, with the new room.",
              self._sc_move),
             ("remove", SCHEDULE, "AWS removes a held session",
              "AWS drops SEC351, which you hold, from the catalog.", "SEC351 left the catalog.",
              self._sc_remove),
+            ("tight", SCHEDULE, "AWS moves a session too close to another",
+             "AWS moves API319 to start ten minutes after CMP409-R ends, two venues apart.",
+             "API319 moved, and a walk you cannot make in time.", self._sc_tight),
+            ("stale", SCHEDULE, "Your leave-now blocks go out of date",
+             "re:Seat wrote leave-now blocks into your schedule. Then AWS moves ARC302-R half an hour.",
+             "Leave-now blocks out of date, with an Update button on the phone and on Today.",
+             self._sc_stale),
             ("briefing", ONSITE, "Jump to the next morning",
              "The demo clock jumps to 07:00 on the next conference day.",
              "The morning briefing: your sessions today and when to leave for the first.",
@@ -357,6 +377,7 @@ class Demo:
         if why:
             return why
         held, wanted = self._codes["CMP409-R"], self._codes["SVS306-R"]
+        self._restore_times()
         self._hold(held, True)                           # back to the start: CMP409-R held, SVS306-R full
         self._reset_band("SVS306-R")
         self.fake.set_band(wanted, "limited")
@@ -421,6 +442,91 @@ class Demo:
         self.fake.ghost.add(self._codes["ARC306"])       # the API says yes, the schedule never shows it
         return self._reopen("ARC306") or ("ARC306 opened. The reserve said yes but the read-back did not "
                                           "show it, so re:Seat asks you to check and sends nothing more.")
+
+    def _sc_expiring(self) -> str:
+        if not self.watcher.pending():
+            said = self._sc_seat()
+            if not self.watcher.pending():
+                return said
+            self._notes.append("a seat opened first, so a swap waits")
+        [p] = self.watcher.pending()[:1]
+        said = self._jump(p.expires - 115)
+        return f"The demo clock jumped to 2 minutes before the swap offer lapses.{said}"
+
+    def _sc_pinned(self) -> str:
+        why = self._blocked()
+        if why:
+            return why
+        self._reset_band("ARC306")                      # back to the start: the picked sitting is full
+        self._pinned += 1
+        base = self.fake.sessions[self._codes["ARC306"]]
+        code = f"ARC306-R{self._pinned}"
+        self.fake.add_session(base.model_copy(update={
+            "session_id": f"demo-ARC306-{self._pinned}", "abbreviation": code,
+            "seat_availability": "available",
+            "session_time": base.session_time.model_copy(update={"date": "2026-12-03", "time": "14:00"})
+            if base.session_time else None}))
+        self._sweep()
+        return (f"ARC306 is still full. AWS added {code} on Thursday with seats. Your rules allow only the "
+                "sitting you picked, so re:Seat did not book it and told you.")
+
+    def _restore_times(self) -> None:
+        """Demo set-up only: put sessions the tight and stale scenarios moved back where they were."""
+        for sid, st in self._orig_times.items():
+            s = self.fake.sessions.get(sid)
+            if s and s.session_time != st:
+                self.fake.sessions[sid] = s.model_copy(update={"session_time": st})
+                when = f"{st.date} {st.time}" if st else "its first time"
+                self._notes.append(f"{s.abbreviation} back to {when}")
+
+    def _keep_time(self, sid: str) -> None:
+        self._orig_times.setdefault(sid, self.fake.sessions[sid].session_time)
+
+    def _shift(self, code: str, times: tuple[str, str]) -> str:
+        """Move a held session between two start times, so each press is a new change."""
+        sid = self._codes[code]
+        self._keep_time(sid)
+        s = self.fake.sessions[sid]
+        st = s.session_time
+        new = times[1] if st and st.time == times[0] else times[0]
+        self.fake.sessions[sid] = s.model_copy(update={"session_time": st.model_copy(update={"time": new})})
+        return new
+
+    def _sc_tight(self) -> str:
+        why = self._blocked()
+        if why:
+            return why
+        now, api = self.clock(), self._codes["API319"]
+        ahead = sorted(((w[1], s) for sid in self.fake.schedule.reserved
+                        if sid != api and (s := self.fake.sessions.get(sid))
+                        and s.campus_venue != "Caesars Forum"
+                        and (w := guard._window(s)) and w[0].timestamp() > now + 1800), key=lambda x: x[0])
+        if not ahead:
+            return "No held session is left this week to move API319 next to."
+        end, prev = ahead[0]
+        self._keep_time(api)
+        self._tight = 10 if self._tight == 5 else 5     # each press is a new change
+        at = (end + timedelta(minutes=self._tight)).astimezone(VEGAS)
+        s = self.fake.sessions[api]
+        self.fake.sessions[api] = s.model_copy(update={"session_time": s.session_time.model_copy(
+            update={"date": at.date().isoformat(), "time": f"{at:%H:%M}"})} if s.session_time else {})
+        self._sweep()
+        return (f"API319 now starts at {at:%a %H:%M}, {self._tight} minutes after {prev.abbreviation} ends "
+                f"at {prev.campus_venue}. The walk to Caesars Forum is longer than the gap.")
+
+    def _sc_stale(self) -> str:
+        why = self._blocked()
+        if why:
+            return why
+        if not any(guard.is_mine(PersonalTime.model_validate(p))
+                   for p in self.fake.schedule.personal_time.values()):
+            res = guard.sync(self.client, self.store, EVENT, self.rules)
+            self._notes.append(f"re:Seat wrote your leave-now blocks ({len(res.done)} created, read back)")
+            self._sweep()
+        new = self._shift("ARC302-R", ("12:00", "11:30"))
+        self._sweep()
+        return (f"ARC302-R on Monday now starts at {new}. Its leave-now block no longer matches. Tap Update "
+                "on Today or on the phone to rewrite the blocks.")
 
     def _sc_move(self) -> str:
         why = self._blocked()

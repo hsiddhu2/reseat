@@ -222,3 +222,16 @@ def test_a_title_with_a_line_break_cannot_split_the_push_headers():
     p(WatchEvent("moved", 0, {"code": "ABC\r\nX-Evil: 1", "before": {"room": "a"}, "after": {"room": "b"}}))
     p.flush()
     assert seen[0].headers["title"] == "ABC  X-Evil: 1 moved" and "x-evil" not in seen[0].headers
+
+
+def test_stale_blocks_push_carries_an_update_button_and_expiring_carries_swap_buttons():
+    seen, transport = capture()
+    p = push.Pusher(TOPIC, transport=transport, approve=True)
+    p(WatchEvent("blocks", 0, {"token": "Tok_0123456789abcdefgh", "create": 1, "update": 0, "delete": 0}))
+    p(WatchEvent("expiring", 0, {"plan_id": PLAN, "held_id": "A", "wanted_id": "B"}))
+    p.flush()
+    reply = f"https://ntfy.sh/{push.reply_topic(TOPIC)}"
+    want = f"http, Update, {reply}, method=POST, body=update Tok_0123456789abcdefgh, clear=true"
+    assert seen[0].headers["actions"] == want
+    assert "body=approve " + PLAN in seen[1].headers["actions"]
+    assert push.COMMAND.match("update Tok_0123456789abcdefgh")

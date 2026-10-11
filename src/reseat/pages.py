@@ -107,6 +107,7 @@ def build(app: App, now: float) -> dict[str, Any]:
         "week_log": [_change(c) for c in reversed(app.tracker.log)],
         "clock": f"{local(now):%a %d %b, %H:%M}",
         "tour": app.tour_label,
+        "blocks": dict(app.blocks_state) if app.blocks_state else None,
     }
 
 
@@ -948,6 +949,14 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     else:
         out.append('<section class="panel"><p>No walk to start today. Nothing held is still ahead.</p>'
                    "</section>")
+    b = v.get("blocks")
+    if b:
+        parts = ", ".join(f"{n} {w}" for n, w in ((b["create"], "to add"), (b["update"], "to change"),
+                                                   (b["delete"], "to remove")) if n)
+        out.append(f'<section class="card blocks-card"><div class="kind">LEAVE-NOW BLOCKS</div>'
+                   f'<h3>Out of date</h3><p>Your schedule changed since they were written: {e(parts)}.</p>'
+                   f'<div class="actions"><button class="primary" data-update="{e(b["token"])}">'
+                   'Update</button></div><p class="result" role="status" aria-live="polite"></p></section>')
     out.append('<section class="panel"><h2>Next</h2>')
     out += [f'<div class="row"><div class="mono t">{e(n["time"])}</div><div><strong>{e(n["name"])}</strong>'
             f'<div class="muted">{e(n["sub"])}</div></div></div>' for n in t["next"]] or [

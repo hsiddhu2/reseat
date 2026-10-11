@@ -232,3 +232,61 @@ def test_reminder_events_carry_no_session_id():
     _, got = run(at("2026-12-01", "14:45"), wanted=[want])
     for ev in got:
         assert "session_id" not in ev.data and "w1" not in str(ev.data)
+
+
+# ---- the four that were missing: swap offer expiring, exact sitting full, a tight walk, stale blocks
+
+
+class P:
+    def __init__(self, plan_id, expires, auto=False):
+        self.plan_id, self.expires, self.auto = plan_id, expires, auto
+        self.held_id, self.wanted_id = "h1", "w1"
+
+
+def sink():
+    log = []
+    return log, Reminders(lambda kind, **d: log.append(WatchEvent(kind, 0, d)))
+
+
+def test_a_swap_offer_about_to_lapse_is_pushed_once_with_its_buttons():
+    log, rem = sink()
+    rem.expiring(1000, [P("Plan_id_0123456789", 1000 + 300)])
+    assert log == []
+    rem.expiring(1000, [P("Plan_id_0123456789", 1000 + 110), P("Auto_plan_0123456789", 1100, auto=True)])
+    rem.expiring(1010, [P("Plan_id_0123456789", 1000 + 110)])
+    [ev] = log
+    title, body = push.message(ev, lambda sid: {"h1": "CMP409-R", "w1": "SVS306-R"}[sid])
+    assert title == "Swap offer expires in 2 minutes" and body.startswith("SVS306-R instead of CMP409-R.")
+    assert push.page_for(ev) == "/approve"
+
+
+def test_a_tight_walk_is_pushed_once_and_only_for_today_or_later():
+    log, rem = sink()
+    w = ("2026-12-01: CMP409-R ends at 14:00, API319 starts at 14:05 at Caesars Forum. "
+         "The walk from MGM Grand is 20 min, the gap is 5 min.")
+    rem.tight(at("2026-12-02", "08:00"), [w])
+    assert log == []
+    rem.tight(at("2026-12-01", "08:00"), [w])
+    rem.tight(at("2026-12-01", "09:00"), [w])
+    [ev] = log
+    assert push.message(ev, str) == ("A walk you cannot make in time, Tuesday", w.split(": ", 1)[1])
+
+
+def test_the_only_allowed_sitting_full_and_another_with_seats_is_pushed_once():
+    log, rem = sink()
+    pinned = mk("p1", "ARC306", date="2026-12-02", time_="08:30")
+    other = mk("o1", "ARC306-R1", date="2026-12-03", time_="14:00", venue="Encore")
+    rem.other_sittings([(pinned, other)])
+    rem.other_sittings([(pinned, other)])
+    [ev] = log
+    title, body = push.message(ev, str)
+    assert title == "ARC306 is full. ARC306-R1 has seats"
+    assert body.startswith("ARC306-R1 Thu 14:00, Encore.") and "repeats: true" in body
+    assert "p1" not in title + body and "o1" not in title + body
+
+
+def test_stale_blocks_push_has_one_update_button_and_counts():
+    ev = WatchEvent("blocks", 0, {"token": "Tok_0123456789abcdefgh", "create": 1, "update": 2, "delete": 0})
+    title, body = push.message(ev, str)
+    assert title == "Leave-now blocks out of date" and "1 to add, 2 to change." in body
+    assert "Tok_" not in body and push.page_for(ev) == "/today"

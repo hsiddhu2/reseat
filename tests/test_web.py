@@ -677,7 +677,8 @@ def test_a_dropped_or_cut_off_socket_prints_no_traceback(capsys):
 
 
 EXPECT = [("seat", "proposed"), ("fill", "swap"), ("repeat", "booked"), ("blocked", "not_booked"),
-          ("unsure", "unconfirmed"), ("move", "moved"), ("remove", "removed"),
+          ("unsure", "unconfirmed"), ("expiring", "expiring"), ("pinned", "other_sitting"),
+          ("move", "moved"), ("remove", "removed"), ("tight", "tight"), ("stale", "blocks"),
           ("briefing", "briefing"), ("leave10", "leave_soon"), ("leave", "leave"), ("soon", "wanted_soon"),
           ("close", "writes"), ("open", "writes"), ("down", "offline"), ("up", "back"),
           ("empty", "catalog"), ("signout", "signin"), ("signin", "sweep")]
@@ -809,6 +810,7 @@ def test_scenarios_work_after_the_timed_script_and_an_approve_and_on_a_second_pa
     d.app.refresh()
     assert d.watcher.approve(d.watcher.pending()[0].plan_id).state == "verified"
     for round_ in (1, 2):
+        d.offset += 61                     # a person takes over a minute per pass: GetSchedule is 60 a minute
         for key, kind in EXPECT:
             before = len(events)
             msg = sc[key]()
@@ -1090,3 +1092,162 @@ def test_the_now_line_shows_only_inside_the_event_days_and_hours():
     assert pages._week(d.app, [], [], [], _vegas_ts(2026, 11, 20, 10))["now"] is None
     assert pages._week(d.app, [], [], [], _vegas_ts(2026, 12, 1, 19))["now"] is None
     assert pages._week(d.app, [], [], [], _vegas_ts(2026, 12, 1, 7, 59))["now"] is None
+
+
+def test_stale_blocks_offer_one_update_that_rewrites_them_and_reads_back():
+    d, events, sc = panel()
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    try:
+        msg = d.app.run_scenario("stale")
+        assert "Leave-now blocks out of date" in msg
+        state = d.app.snapshot()["view"]["blocks"]
+        assert state and state["update"] >= 1
+        today = pages.render_today(d.app.snapshot(), demo=True)
+        assert f'data-update="{state["token"]}"' in today
+        assert d.app.update_blocks("Made_up_token_0123456789") is None        # a stranger's token: nothing
+        res = d.app.update_blocks(state["token"])
+        assert res["ok"] and "read back" in res["message"]
+        assert d.app.update_blocks(state["token"]) is None                    # single use
+        assert d.app.snapshot()["view"]["blocks"] is None
+        done = [e for e in events if e.kind == "blocks_done"]
+        assert done and done[-1].data["ok"]
+        ops = d.watcher.submit(lambda: [r["op"] for r in d.store.journal_entries(D.EVENT, 50)]).result(30)
+        assert "UpdatePersonalTime" in ops and "GetSchedule" in ops
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_update_from_the_notification_runs_once_and_unknown_tokens_cost_nothing():
+    d, events, sc = panel()
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    try:
+        d.app.run_scenario("stale")
+        token = d.app.snapshot()["view"]["blocks"]["token"]
+        writes = d.fake.counts.get("UpdatePersonalTime", 0)
+        assert d.app.handle_reply("update", "Made_up_token_0123456789") is None
+        assert d.fake.counts.get("UpdatePersonalTime", 0) == writes
+        assert d.app.handle_reply("update", token) is None
+        assert wait_until(lambda: [e for e in events if e.kind == "blocks_done"])   # runs in the background
+        after = d.fake.counts.get("UpdatePersonalTime", 0)
+        assert after > writes
+        for _ in range(3):
+            assert d.app.handle_reply("update", token) is None
+        assert d.fake.counts.get("UpdatePersonalTime", 0) == after
+        assert len([e for e in events if e.kind == "blocks_done"]) == 1
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_no_stale_blocks_offer_for_an_attendee_who_never_used_them():
+    d, events, sc = panel()
+    d.fake.schedule.personal_time = {k: v for k, v in d.fake.schedule.personal_time.items()
+                                     if k == "demo-dinner"}
+    d.watcher.tick()
+    assert d.app.snapshot()["view"]["blocks"] is None and not [e for e in events if e.kind == "blocks"]
+
+
+def _stale_offer():
+    """A served demo with a stale-blocks offer up. Returns the stack, events, server and token."""
+    d, events, sc = panel()
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    d.app.run_scenario("stale")
+    return d, events, server, d.app.snapshot()["view"]["blocks"]["token"]
+
+
+def _guard_readbacks(d):
+    rows = d.watcher.submit(lambda: [dict(r) for r in d.store.journal_entries(D.EVENT, 100)]).result(30)
+    return [r for r in rows if r["op"] == "GetSchedule" and "guard read-back" in str(r)]
+
+
+def test_update_blocks_while_writes_are_closed_reports_409_and_reads_back():
+    d, events, server, token = _stale_offer()
+    try:
+        d.fake.closed = True
+        writes = d.fake.counts.get("UpdatePersonalTime", 0)
+        res = d.app.update_blocks(token)
+        assert res is not None and not res["ok"] and "closed" in res["message"]
+        done = [e for e in events if e.kind == "blocks_done"]
+        assert len(done) == 1 and not done[0].data["ok"] and done[0].data["message"]
+        assert d.fake.counts.get("UpdatePersonalTime", 0) == writes + 1   # one attempt, no retry
+        assert _guard_readbacks(d)
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_update_blocks_after_a_5xx_stops_does_not_retry_and_reads_back():
+    d, events, server, token = _stale_offer()
+    try:
+        d.fake.fail_next("UpdatePersonalTime", 503)
+        before = d.fake.counts.get("UpdatePersonalTime", 0)
+        res = d.app.update_blocks(token)
+        assert res is not None and not res["ok"] and "Stopped" in res["message"]
+        assert d.fake.counts.get("UpdatePersonalTime", 0) == before + 1
+        done = [e for e in events if e.kind == "blocks_done"]
+        assert len(done) == 1 and not done[0].data["ok"]
+        assert _guard_readbacks(d)
+        assert d.app.update_blocks(token) is None                           # the token is spent
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_sign_in_expiry_withdraws_the_offer_and_a_late_tap_sends_no_write():
+    d, events, server, token = _stale_offer()
+    try:
+        d.fake.fail_next("GetSchedule", 401, times=10_000)   # expires after the offer, before the tap
+        before = sum(d.fake.counts.get(op, 0) for op in
+                     ("UpdatePersonalTime", "CreatePersonalTime", "DeletePersonalTime"))
+        res = d.app.update_blocks(token)
+        assert res is not None and not res["ok"] and res["message"]
+        done = [e for e in events if e.kind == "blocks_done"]
+        assert len(done) == 1 and not done[0].data["ok"]
+        after = sum(d.fake.counts.get(op, 0) for op in
+                    ("UpdatePersonalTime", "CreatePersonalTime", "DeletePersonalTime"))
+        assert after == before
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_a_read_only_watcher_offers_no_update():
+    d, events, sc = panel()
+    sc["stale"]()
+    token = d.app.snapshot()["view"]["blocks"]["token"]
+    sc["signout"]()
+    assert d.watcher.read_only and d.app.snapshot()["view"]["blocks"] is None
+    assert d.app.update_blocks(token) is None
+
+
+def test_a_failed_update_is_offered_again_once_writes_reopen():
+    d, events, server, token = _stale_offer()
+    try:
+        d.fake.closed = True
+        assert not d.app.update_blocks(token)["ok"]
+        d.fake.closed = False
+        d.watcher.submit(d.watcher.tick).result(timeout=30)
+        again = d.app.snapshot()["view"]["blocks"]
+        assert again and again["token"] != token
+    finally:
+        d.watcher.stop()
+        server.server_close()
+
+
+def test_no_other_sitting_push_when_the_talk_is_held_or_the_sitting_is_past():
+    d, events, sc = panel()
+    sc["pinned"]()
+    other = next(s for s in d.fake.sessions.values() if s.abbreviation == "ARC306-R1")
+    held = sorted(d.watcher.last_held)
+    assert d.app._other_sittings(held)
+    d.fake.schedule.reserved.add(other.session_id)                    # held by hand in the official app
+    d.watcher.tick()
+    assert d.app._other_sittings(sorted(d.watcher.last_held)) == []
+    d.fake.schedule.reserved.discard(other.session_id)
+    d.watcher.tick()
+    d.offset += 7 * 86400                                            # the week is over
+    assert d.app._other_sittings(sorted(d.watcher.last_held)) == []

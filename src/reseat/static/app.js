@@ -80,6 +80,25 @@
       setTimeout(() => { location.href = "/demo"; }, 600);
       return;
     }
+    const up = ev.target.closest("[data-update]");
+    if (up && !busy) {
+      busy = true;
+      const card = up.closest(".card");
+      const out = card.querySelector(".result");
+      up.disabled = true;
+      out.textContent = "Rewriting the blocks on the laptop.";
+      try {
+        const r = await fetch("/guard/" + encodeURIComponent(up.dataset.update), {
+          method: "POST", headers: { "X-Reseat": "1" }, credentials: "same-origin",
+        });
+        const j = await r.json();
+        out.textContent = r.status === 404 ? "Already updated, or the schedule changed again." : j.message;
+      } catch (e) {
+        out.textContent = "No answer from the laptop.";
+      }
+      setTimeout(() => location.reload(), 3000);
+      return;
+    }
     const b = ev.target.closest("[data-approve],[data-skip]");
     if (!b || busy) return;
     busy = true;

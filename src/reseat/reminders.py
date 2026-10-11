@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 from . import guard
 from .campus import EVENT_DAYS, VEGAS
@@ -22,6 +23,7 @@ from .models import Session
 
 LEAVE_SOON = 10 * 60          # leave in 10 minutes
 WANTED_SOON = 20 * 60         # a wanted session you do not hold starts in 20 minutes
+EXPIRING = 2 * 60             # a swap proposal that asks first lapses in 2 minutes
 BRIEF_FROM, BRIEF_UNTIL = 6, 10   # the morning briefing goes out between 06:00 and 10:00 Las Vegas time
 
 MAX_SENT = 5000
@@ -63,6 +65,30 @@ class Reminders:
             self._briefing(now, held, blocks, waiting)
         self._leave(now, held, blocks)
         self._wanted(now, held, wanted)
+
+    def expiring(self, now: float, pending: Iterable[Any]) -> None:
+        """A swap proposal that asks first is about to lapse: one last push, with its buttons."""
+        for p in pending:
+            if not p.auto and 0 < p.expires - now <= EXPIRING and self._once(f"expiring:{p.plan_id}"):
+                self.emit("expiring", plan_id=p.plan_id, held_id=p.held_id, wanted_id=p.wanted_id,
+                          left=int(p.expires - now))
+
+    def tight(self, now: float, warnings: Iterable[str]) -> None:
+        """Two held sessions with a walk longer than the gap between them, today or later. Once each."""
+        today = vegas(now).date().isoformat()
+        for w in warnings:
+            day, _, text = w.partition(": ")
+            if day >= today and self._once(f"tight:{w}"):
+                self.emit("tight", day=f"{datetime.fromisoformat(day):%A}", message=text)
+
+    def other_sittings(self, found: Iterable[tuple[Session, Session]]) -> None:
+        """(pinned, other): the only sitting the rules allow is full, another sitting has seats."""
+        for pinned, other in found:
+            start = starts_at(other)
+            if start is None or not self._once(f"other:{pinned.session_id}:{other.session_id}"):
+                continue
+            self.emit("other_sitting", code=pinned.abbreviation, other=other.abbreviation,
+                      at=f"{vegas(start):%a %H:%M}", venue=other.campus_venue, band=other.seat_availability)
 
     def _once(self, key: str) -> bool:
         if key in self.sent:

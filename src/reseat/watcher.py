@@ -93,7 +93,8 @@ class ApprovalFailed(Exception):
 EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
                     "outage", "offline", "back", "signin", "leave", "writes",
                     "catalog", "removed", "unconfirmed", "not_booked",
-                    "briefing", "leave_soon", "wanted_soon"]
+                    "briefing", "leave_soon", "wanted_soon", "expiring", "tight", "other_sitting",
+                    "blocks", "blocks_done"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 

@@ -78,6 +78,24 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         return ("Booking paused" if d.get("state") == "closed" else "Booking resumed"), d["message"]
     if ev.kind == "leave":
         return f"Leave now for {d['code']}", d["message"]
+    if ev.kind == "expiring":
+        return ("Swap offer expires in 2 minutes",
+                f"{code_title(d['wanted_id'])} instead of {code_title(d['held_id'])}. "
+                "Tap Swap now or Keep, or it lapses and your seat stays as it is.")
+    if ev.kind == "other_sitting":
+        where = f", {d['venue']}" if d.get("venue") else ""
+        return (f"{d.get('code') or 'Your sitting'} is full. {d.get('other')} has seats",
+                f"{d.get('other')} {d.get('at')}{where}. Your rules allow only the sitting you picked, so "
+                "re:Seat will not book it. Add it to the target, or set repeats: true.")
+    if ev.kind == "tight":
+        return f"A walk you cannot make in time, {d['day']}", d["message"]
+    if ev.kind == "blocks":
+        parts = [f"{n} {w}" for n, w in ((d["create"], "to add"), (d["update"], "to change"),
+                                          (d["delete"], "to remove")) if n]
+        return ("Leave-now blocks out of date",
+                f"Your schedule changed. {', '.join(parts)}. Tap Update to rewrite them.")
+    if ev.kind == "blocks_done":
+        return ("Leave-now blocks updated" if d.get("ok") else "Leave-now blocks not updated"), d["message"]
     if ev.kind == "leave_soon":
         return f"Leave in 10 minutes for {d['code']}", f"Leave at {d['at']}. {d['message']}"
     if ev.kind == "briefing":
@@ -92,8 +110,8 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
 
 WALK_UP = {"likely": "Walk-up likely.", "early": "Go early.", "unlikely": "Walk-up unlikely.",
            "unknown": "No call on walk-ups."}
-PAGE = {"proposed": "/approve", "leave": "/today", "leave_soon": "/today", "briefing": "/today",
-        "wanted_soon": "/today"}       # every other event opens the dashboard
+PAGE = {"proposed": "/approve", "expiring": "/approve", "blocks": "/today", "leave": "/today",
+        "leave_soon": "/today", "briefing": "/today", "wanted_soon": "/today"}   # others open the Week
 
 
 def page_for(ev: WatchEvent) -> str:
@@ -102,7 +120,7 @@ def page_for(ev: WatchEvent) -> str:
 
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")    # a catalog title never splits a header
-COMMAND = re.compile(r"^(approve|skip) ([A-Za-z0-9_-]{16,64})$")
+COMMAND = re.compile(r"^(approve|skip|update) ([A-Za-z0-9_-]{16,64})$")
 
 
 def reply_topic(topic: str) -> str:
@@ -115,6 +133,11 @@ def actions(topic: str, plan_id: str) -> str:
     url = f"{NTFY}/{reply_topic(topic)}"
     return (f"http, Swap now, {url}, method=POST, body=approve {plan_id}, clear=true; "
             f"http, Keep, {url}, method=POST, body=skip {plan_id}, clear=true")
+
+
+def update_action(topic: str, token: str) -> str:
+    """One Update button for out-of-date leave-now blocks. The token is single use, like a plan id."""
+    return f"http, Update, {NTFY}/{reply_topic(topic)}, method=POST, body=update {token}, clear=true"
 
 
 class Pusher:
@@ -136,8 +159,11 @@ class Pusher:
         msg = message(ev, self.code_title)
         if msg:
             buttons = None
-            if self.approve and ev.kind == "proposed" and not ev.data.get("auto") and ev.data.get("plan_id"):
+            if (self.approve and ev.kind in ("proposed", "expiring") and not ev.data.get("auto")
+                    and ev.data.get("plan_id")):
                 buttons = actions(self.topic, ev.data["plan_id"])
+            if self.approve and ev.kind == "blocks" and ev.data.get("token"):
+                buttons = update_action(self.topic, ev.data["token"])
             try:
                 self._q.put_nowait((*msg, page_for(ev), buttons))
             except queue.Full:
