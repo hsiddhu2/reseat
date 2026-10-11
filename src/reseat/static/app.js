@@ -60,6 +60,16 @@
     return j.error || "The laptop did not run it. Check the journal before trying again.";
   }
 
+  // The phone's More menu closes on Escape or a tap anywhere else.
+  document.addEventListener("keydown", (ev) => {
+    const more = document.querySelector(".tabs .more[open]");
+    if (more && ev.key === "Escape") { more.open = false; more.querySelector("summary").focus(); }
+  });
+  document.addEventListener("click", (ev) => {
+    const more = document.querySelector(".tabs .more[open]");
+    if (more && !more.contains(ev.target)) more.open = false;
+  });
+
   document.addEventListener("click", async (ev) => {
     const sc = ev.target.closest("[data-scenario]");
     if (sc && !busy) {

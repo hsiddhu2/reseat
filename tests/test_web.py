@@ -1376,3 +1376,42 @@ def test_target_name_shows_codes_and_never_an_id():
     for unknown in ("not-a-real-session-id-0001", ""):
         assert target_name(unknown, d.store, D.EVENT) == "a pinned sitting"
     d.watcher.stop()
+
+
+def test_every_page_has_the_same_menu_under_its_header():
+    d, _, sc = panel()
+    sc["seat"]()
+    snap = d.app.snapshot()
+    rendered = {"week": pages.render_dashboard(snap, demo=True), "today": pages.render_today(snap, True),
+                "approve": pages.render_approve(snap, True), "activity": pages.render_activity(snap, True),
+                "targets": pages.render_targets(snap, True), "status": pages.render_status(snap, True),
+                "demo": pages.render_demo(snap), "week-day": pages.render_day(snap, 1, True)}
+    for name, html in rendered.items():
+        assert html.count('<nav class="tabs"') == 1, name
+        assert html.index("</header>") < html.index('<nav class="tabs"'), name       # right under the header
+        for href in ('href="/"', 'href="/today"', 'href="/approve"', 'href="/activity"', 'href="/targets"',
+                     'href="/status"', 'href="/demo"'):
+            assert href in html, (name, href)
+        current = {"week-day": "week"}.get(name, name)
+        here = {"week": 'href="/"', "today": 'href="/today"', "approve": 'href="/approve"',
+                "activity": 'href="/activity"', "targets": 'href="/targets"', "status": 'href="/status"',
+                "demo": 'href="/demo"'}[current]
+        assert f'{here} aria-current=page' in html, name
+    assert 'Approve <span class="count">1</span>' in rendered["week"]
+    assert '<details class="more here">' in rendered["targets"]
+    assert 'href="/demo"' not in pages.render_dashboard(snap, demo=False)
+
+
+def test_static_site_pages_each_have_one_menu_with_sibling_links(tmp_path):
+    import runpy
+    from pathlib import Path
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
+    site = runpy.run_path(str(script), run_name="site")
+    for n in site["build"](tmp_path):
+        html = (tmp_path / n).read_text(encoding="utf-8")
+        assert html.count('<nav class="tabs"') == 1, n
+        nav = html[html.index('<nav class="tabs"'):html.index("</nav>", html.index('<nav class="tabs"'))]
+        for page in ("index.html", "today.html", "approve.html", "activity.html", "targets.html",
+                     "status.html", "demo.html"):
+            assert f'href="{page}"' in nav, (n, page)
+        assert nav.count('href="targets.html"') == 2 and "<details" in nav, n    # row link and More item

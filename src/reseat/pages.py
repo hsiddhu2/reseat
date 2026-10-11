@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from html import escape
@@ -706,17 +707,47 @@ def render_starting(now: float, demo: bool = False, error: str | None = None) ->
             + f'<main class="phone"><p>{text}</p></main></body></html>')
 
 
-def _nav(view: str, demo: bool = False) -> str:
-    links = [("approve", "/approve", "Approve"), ("today", "/today", "Today"), ("week", "/", "Week"),
-             ("activity", "/activity", "Activity")] + ([("demo", "/demo", "Demo")] if demo else [])
-    a = "".join(f'<a href="{href}"{" aria-current=page" if key == view else ""}>{label}</a>'
-                for key, href, label in links)
-    return f'<nav class="tabs" aria-label="Views">{a}</nav>'
+MAIN = [("week", "/", "Week", "Your calendar, and swaps to approve"),
+        ("today", "/today", "Today", "When to leave, what is next"),
+        ("approve", "/approve", "Approve", "One swap at a time"),
+        ("activity", "/activity", "Activity", "Every change and every write")]
+MORE = [("targets", "/targets", "Targets", "Your rules, in order, and each sitting"),
+        ("status", "/status", "Status", "Watcher, quota left, push settings")]
+DEMO = ("demo", "/demo", "Demo", "Try every scenario on demo data")
+
+
+def _nav(view: str, demo: bool = False, waiting: int = 0) -> str:
+    """One menu for every page. Under the header on a laptop, every page in one row. At phone width a
+    bottom bar: the four main pages and More, which opens the rest."""
+    more = MORE + ([DEMO] if demo else [])
+
+    def link(key: str, href: str, label: str, cls: str) -> str:
+        badge = f' <span class="count">{waiting}</span>' if key == "approve" and waiting else ""
+        cur = " aria-current=page" if key == view else ""
+        return f'<a class="{cls}" href="{href}"{cur}>{e(label)}{badge}</a>'
+    main = "".join(link(k, h, lbl, "t-main") for k, h, lbl, _ in MAIN)
+    wide = "".join(link(k, h, lbl, "t-wide") for k, h, lbl, _ in more)
+    here = " here" if view in {k for k, *_ in more} else ""
+    items = "".join(f'<a href="{h}"{" aria-current=page" if k == view else ""}><b>{e(lbl)}</b>'
+                    f"<span>{e(why)}</span></a>" for k, h, lbl, why in more)
+    return (f'<nav class="tabs" aria-label="Pages">{main}{wide}<details class="more{here}"><summary>More'
+            f'</summary><div class="menu">{items}</div></details></nav>')
+
+
+def _on_top(html: str, view: str, demo: bool) -> str:
+    """Put the menu right under the header, with the number of swaps waiting on Approve."""
+    m = re.search(r'data-plans="([^"]*)"', html)
+    waiting = len([p for p in (m.group(1) if m else "").split(",") if p])
+    nav = _nav(view, demo, waiting)
+    i = html.find("</header>")
+    if i < 0:
+        return html.replace("</body>", nav + "</body>", 1)
+    i += len("</header>")
+    return html[:i] + nav + html[i:]
 
 
 def _status_line(s: dict[str, Any]) -> str:
-    return _status_bar(s).replace('<div class="grow"></div>', '<div class="grow"></div><nav class="links">'
-                                  '<a href="/targets">Targets</a><a href="/status">Status</a></nav>', 1)
+    return _status_bar(s)
 
 
 def _status_bar(s: dict[str, Any]) -> str:
@@ -772,8 +803,8 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
         out.append("</ul>")
     out.append("</aside><main class='main'>")
     out.append(_week_html(v["week"]))
-    out.append("</main></div>" + _nav("week", demo) + "</body></html>")
-    return "".join(out)
+    out.append("</main></div></body></html>")
+    return _on_top("".join(out), "week", demo)
 
 
 def render_activity(snap: dict[str, Any], demo: bool = False) -> str:
@@ -781,7 +812,9 @@ def render_activity(snap: dict[str, Any], demo: bool = False) -> str:
     v = snap.get("view") or {}
     out = [_head("re:Seat · Activity", "activity", demo, [c["plan_id"] for c in v.get("cards", [])],
                  snap["now"], v["status"]["last_sweep"]),
-           _status_line(v["status"]), '<main class="page">', _kept_html(v.get("kept")),
+           _status_line(v["status"]), '<main class="page"><h1>Activity</h1><p class="intro">What re:Seat '
+           "did and saw, newest first: changes to your week, changes in the catalog, and every write it "
+           "sent to the Events API with its read-back.</p>", _kept_html(v.get("kept")),
            '<section class="panel"><h2>Changes on your week</h2><ul class="list changed">']
     out += [f'<li><span class="t mono">{e(c["at"])}</span> <em class="mk mk-{e(c["kind"])}">{e(c["label"])}'
             f'</em> {e(c["text"])}</li>' for c in v.get("week_log", [])] or [
@@ -796,23 +829,23 @@ def render_activity(snap: dict[str, Any], demo: bool = False) -> str:
     out += [f'<li><span class="t">{e(j["at"])}</span> {e(j["op"])} <span>{e(j["status"])}</span> '
             f'<span class="o o-{e(j["outcome"].split(":")[-1])}">{e(j["outcome"])}</span> {e(j["what"])}</li>'
             for j in v.get("log", [])] or ["<li>The journal is empty.</li>"]
-    out.append("</ul></section></main>" + _nav("activity", demo) + "</body></html>")
-    return "".join(out)
+    out.append("</ul></section></main></body></html>")
+    return _on_top("".join(out), "activity", demo)
 
 
 def _page(snap: dict[str, Any], title: str, view: str, demo: bool, body: str) -> str:
     v = snap.get("view") or {}
-    return (_head(f"re:Seat · {title}", view, demo, [c["plan_id"] for c in v.get("cards", [])], snap["now"],
-                  v["status"]["last_sweep"])
-            + _status_line(v["status"]) + f'<main class="page">{body}</main>' + _nav(view, demo)
-            + "</body></html>")
+    return _on_top(_head(f"re:Seat · {title}", view, demo, [c["plan_id"] for c in v.get("cards", [])],
+                         snap["now"], v["status"]["last_sweep"])
+                   + _status_line(v["status"]) + f'<main class="page">{body}</main></body></html>',
+                   view, demo)
 
 
 def render_targets(snap: dict[str, Any], demo: bool = False) -> str:
     """Targets: the rules file read back, in order, with what re:Seat holds or watches for each."""
     v = snap.get("view") or {}
-    out = ['<h1>Targets</h1><p class="fine">In the order of your rules file. re:Seat books the first sitting '
-           "that has a seat and fits your day, and asks before any swap.</p>"]
+    out = ['<h1>Targets</h1><p class="intro">In the order of your rules file. re:Seat books the first '
+           "sitting that has a seat and fits your day, and asks before any swap.</p>"]
     for t in v.get("targets", []):
         rows = "".join(
             f'<li class="r-{"held" if x["held"] else "proposed" if x["proposed"] else "plain"}">'
@@ -840,7 +873,9 @@ def render_status(snap: dict[str, Any], demo: bool = False, version: str = "") -
     rows = "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in h["rows"])
     quota = "".join(f'<li><span class="mono">{e(q["op"])}</span> <b>{q["left"]}</b> of {q["max"]} left'
                     f'<i style="width:{_share(q["left"], q["max"])}%"></i></li>' for q in h["quota"])
-    body = (f'<h1>Status</h1><section class="panel"><dl class="facts">{rows}</dl>'
+    body = ('<h1>Status</h1><p class="intro">How re:Seat is doing right now. Check here when a push said '
+            "it is offline, paused or needs a sign-in.</p>"
+            f'<section class="panel"><dl class="facts">{rows}</dl>'
             f'<p class="fine">re:Seat {e(version)}. Push topic, sign-in and secrets are never shown here.</p>'
             '</section><section class="panel"><h2>Quota left this minute</h2><p class="fine">AWS counts each '
             "operation per minute, and bulk calls by session. re:Seat never sends more than is left.</p>"
@@ -887,8 +922,8 @@ def render_demo(snap: dict[str, Any]) -> str:
                  v["status"]["last_sweep"]),
            _status_line(v["status"]), '<div class="demo-page">',
            _scenarios_html(v.get("scenarios", []), v.get("tour", "Start the guided tour")),
-           _result_html(last, v.get("clock", "")), "</div>", _nav("demo", True), "</body></html>"]
-    return "".join(out)
+           _result_html(last, v.get("clock", "")), "</div>", "</body></html>"]
+    return _on_top("".join(out), "demo", True)
 
 
 def _scenarios_html(scenarios: list[dict[str, str]], tour: str) -> str:
@@ -1062,8 +1097,8 @@ def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False)
         out.append(f'<article class="card booked"><div class="kind ok">BOOKED {e(b["at"])}</div>'
                    f'<div><strong>{e(b["code"])}</strong>, {e(b["when"])}, {e(b["venue"])}</div>'
                    f'<div class="muted">Within your rules. Read back ok.</div></article>')
-    out.append("</main>" + _nav("approve", demo) + "</body></html>")
-    return "".join(out)
+    out.append("</main></body></html>")
+    return _on_top("".join(out), "approve", demo)
 
 
 def _side_html(label: str, side: dict[str, Any], cls: str) -> str:
@@ -1113,5 +1148,5 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     if not t["wanted"]:
         out.append('<p class="muted">Nothing wanted today that is not held.</p>')
     out.append(f'</section><section class="panel foot"><i class="dot"></i><span class="mono">{e(t["cover"])}'
-               f'</span></section></main>' + _nav("today", demo) + "</body></html>")
-    return "".join(out)
+               f'</span></section></main></body></html>')
+    return _on_top("".join(out), "today", demo)
