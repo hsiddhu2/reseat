@@ -70,4 +70,6 @@ One line per check until the catalog returns, as `date time, command, result`. T
 2026-10-09 10:15 PDT  reseat sync --no-abstracts  refused, totalCount 0 also over HTTPS and MCP: see 2026-10-09-catalog-check.md
 2026-10-09 12:20 PDT  reseat sync --no-abstracts  refused: the API returned an empty catalog
 2026-10-10 13:45 PDT  reseat sync --no-abstracts  refused, totalCount 0 also through the official MCP server
+2026-10-10 15:31 PDT  reseat sync  refused: the API returned an empty catalog
+2026-10-11 16:47 PDT  reseat sync  refused: the API returned an empty catalog
 ```
