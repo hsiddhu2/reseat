@@ -736,6 +736,7 @@ def serve(event: str = config.DEFAULT_EVENT,
         if sig is not None:
             previous[sig] = signal.signal(sig, stop_cleanly)
     worker: threading.Thread | None = None
+    listener = None
     forwarded = False
     try:
         if tn:
@@ -752,9 +753,21 @@ def serve(event: str = config.DEFAULT_EVENT,
                 return f"{s.abbreviation} {s.title}" if s else "a session"
             reachable = public not in serve_mod.LOOPBACK            # a tap on the phone can open the page
             pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
-                                 click_base=f"http://{public}:{a.port}" if reachable else None)
+                                 click_base=f"http://{public}:{a.port}" if reachable else None,
+                                 approve=rules_now.ntfy_approve)
             pusher.start()
             w.subscribe(pusher)
+            if rules_now.ntfy_approve:
+                sender = pusher
+
+                def on_reply(verb: str, plan_id: str) -> None:
+                    msg = a.handle_reply(verb, plan_id)
+                    if msg:
+                        sender.send(*msg)
+                listener = push.ReplyListener(rules_now.ntfy_topic, on_reply)
+                listener.start()
+                con.print("Swap now and Keep buttons are on. A tap comes back through ntfy.sh with the "
+                          "proposal's single-use plan id.")
             link = f", and a link to http://{public}:{a.port} for a tap to open" if reachable else ""
             con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
                       "Nothing else.")
@@ -786,7 +799,7 @@ def serve(event: str = config.DEFAULT_EVENT,
     except KeyboardInterrupt:
         con.print("Stopping. A swap in progress finishes first.")
     finally:
-        _shutdown(w, worker, server, pusher)
+        _shutdown(w, worker, server, pusher, listener)
         if forwarded and tn:
             if tn.stop(a.port):
                 con.print("Tailscale forwarding removed.")
@@ -797,9 +810,11 @@ def serve(event: str = config.DEFAULT_EVENT,
             signal.signal(sig, handler)
 
 
-def _shutdown(w: Watcher, worker: threading.Thread | None, server: object, pusher: object) -> None:
+def _shutdown(w: Watcher, worker: threading.Thread | None, server: object, pusher: object,
+              listener: object = None) -> None:
     """Stop everything serve started. Each step runs even if an earlier one fails."""
-    steps = [w.stop, lambda: worker and worker.join(timeout=_approve_wait()),
+    steps = [getattr(listener, "stop", lambda: None), w.stop,
+             lambda: worker and worker.join(timeout=_approve_wait()),
              getattr(server, "server_close", lambda: None), getattr(pusher, "stop", lambda: None)]
     for step in steps:
         try:

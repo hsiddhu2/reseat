@@ -99,6 +99,7 @@ class App:
         self._failures: deque[float] = deque()
         self._snapshot: dict[str, Any] = {}
         self._leave_sent: set[str] = set()
+        self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         watcher.subscribe(self._on_event)
 
     # ---- access
@@ -181,6 +182,34 @@ class App:
         return {"state": getattr(result, "state", None), "alert": getattr(result, "alert", None),
                 "reasons": getattr(result, "reasons", []),
                 "held_now": [self._code(s) for s in getattr(result, "held_now", [])]}
+
+    def handle_reply(self, verb: str, plan_id: str) -> tuple[str, str] | None:
+        """A Swap now or Keep tap from the notification. Runs the same approve and skip as the page.
+
+        Returns a push to send back, or None when the swap's own result push says it all. Only a plan
+        id the watcher is holding right now is acted on, and only once: a phone that gives no feedback
+        gets tapped again and again, and a stranger's made-up id must cost nothing and send nothing.
+        """
+        if not self.watcher.is_pending(plan_id):
+            return None                  # unknown, used or expired: no push, no work for the watcher
+        with self._lock:
+            if plan_id in self._replied:
+                return None
+            self._replied.append(plan_id)
+        if verb == "skip":
+            if not self.skip(plan_id):
+                return None
+            return "Kept your seat", "The swap is dismissed. Nothing was sent."
+        out = self.approve(plan_id)
+        if out is None:
+            return None
+        if out.get("kept") or out.get("busy"):
+            with self._lock:             # it did not run and the proposal waits: a later tap may retry
+                if plan_id in self._replied:
+                    self._replied.remove(plan_id)
+        if out.get("error"):
+            return "Swap not run", str(out["error"])
+        return None                      # the swap event pushes done, rolled back or failed
 
     def skip(self, plan_id: str) -> bool:
         if not PLAN_ID.match(plan_id):

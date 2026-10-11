@@ -211,6 +211,12 @@ class Watcher:
                     self._retry.add(gone.wanted_id)
             return list(self.proposals.values())
 
+    def is_pending(self, plan_id: str) -> bool:
+        """Read-only, safe from any thread: is this plan id a live, unexpired proposal right now?"""
+        with self._lock:
+            p = self.proposals.get(plan_id)
+            return p is not None and not p.expired(self.clock())
+
     def take(self, plan_id: str) -> Proposal | None:
         """Remove and return an unexpired proposal. One use only."""
         with self._lock:

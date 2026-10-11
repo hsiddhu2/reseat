@@ -493,6 +493,21 @@ def test_a_failed_swap_that_booked_a_fallback_counts_as_restored():
 # ---- push in demo mode: the same pusher as the real server
 
 
+class StubListener:
+    """Stands in for the ntfy reply stream, so no test reaches ntfy.sh."""
+    made: list = []
+
+    def __init__(self, topic, handle, transport=None, clock=None):
+        self.topic, self.handle, self.started, self.stopped = topic, handle, False, False
+        StubListener.made.append(self)
+
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped = True
+
+
 def test_demo_push_topic_goes_into_the_demo_rules_and_a_bad_one_is_refused():
     from reseat.rules import RulesError
     d = D.Demo(port=0, push_topic="reseat-demo-7f3k9q2m")
@@ -509,9 +524,9 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str, click_base=None):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title, click_base=click_base)
+                             code_title=code_title, click_base=click_base, approve=approve)
             made["p"] = self
 
         def start(self):
@@ -529,6 +544,7 @@ def test_cli_serve_demo_push_wires_the_pusher_and_sends_codes_only(monkeypatch):
         t.start()
         return t
     monkeypatch.setattr(push, "Pusher", FakePusher)
+    monkeypatch.setattr(push, "ReplyListener", StubListener)
     monkeypatch.setattr(S, "make_server", lambda app: made.setdefault("app", app) and Server())
     monkeypatch.setattr(S, "run", run)
     monkeypatch.setattr(D.Demo, "start_script", lambda self: None)
@@ -593,9 +609,9 @@ def test_cli_push_links_to_the_page_when_served_on_a_reachable_address(monkeypat
     made = {}
 
     class FakePusher(push.Pusher):
-        def __init__(self, topic, transport=None, code_title=str, click_base=None):
+        def __init__(self, topic, transport=None, code_title=str, click_base=None, approve=False):
             super().__init__(topic, transport=httpx.MockTransport(lambda r: httpx.Response(200)),
-                             code_title=code_title, click_base=click_base)
+                             code_title=code_title, click_base=click_base, approve=approve)
             made["p"] = self
 
         def start(self):
@@ -613,6 +629,7 @@ def test_cli_push_links_to_the_page_when_served_on_a_reachable_address(monkeypat
         t.start()
         return t
     monkeypatch.setattr(push, "Pusher", FakePusher)
+    monkeypatch.setattr(push, "ReplyListener", StubListener)
     monkeypatch.setattr(S, "make_server", lambda app: Server())
     monkeypatch.setattr(S, "run", run)
     monkeypatch.setattr(D.Demo, "start_script", lambda self: None)

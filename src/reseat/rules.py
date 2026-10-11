@@ -118,6 +118,7 @@ class Rules(BaseModel):
     home_venue: str | None = None   # where the first walk of each day starts, e.g. your hotel
     serve_secret: str | None = Field(default=None, min_length=16, max_length=200)
     ntfy_topic: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{16,64}$")
+    ntfy_approve: bool = False   # Swap now and Keep buttons in the push. Sends the proposal's plan id
     probe_session: str | None = None   # a session you can never hold, used to check if writes are open
 
     @field_validator("home_venue")
@@ -299,6 +300,8 @@ home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 # Phone remote. Both optional.
 # serve_secret: a long random string. Needed to open the web app from another device.
 # ntfy_topic: a random 16 to 64 character name. Push goes to https://ntfy.sh/<topic>.
+# ntfy_approve: true adds Swap now and Keep buttons to a swap proposal push. The tap
+#   comes back through ntfy.sh, carrying the proposal's single-use plan id.
 # probe_session: id of a session that takes no reservations, so it can never be held.
 #   While writes are closed, re:Seat checks with it once a minute and resumes at once.
 """

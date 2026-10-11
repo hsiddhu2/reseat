@@ -77,7 +77,7 @@ def rules_text(secret: str | None, push_topic: str | None = None) -> str:
     if push_topic is not None and not TOPIC.fullmatch(push_topic):
         raise R.RulesError("The push topic must be 16 to 64 letters, digits, - or _.")
     head = f"serve_secret: {secret}\n" if secret else ""
-    head += f"ntfy_topic: {push_topic}\n" if push_topic else ""
+    head += f"ntfy_topic: {push_topic}\nntfy_approve: true\n" if push_topic else ""
     return head + "home_venue: The Venetian\ntargets:\n" + "".join(f"  - code: {c}\n" for c in TARGETS)
 
 
