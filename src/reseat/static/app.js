@@ -59,6 +59,25 @@
   }
 
   document.addEventListener("click", async (ev) => {
+    const sc = ev.target.closest("[data-scenario]");
+    if (sc && !busy) {
+      busy = true;
+      const panel = sc.closest(".scenarios");
+      const out = panel.querySelector(".result");
+      panel.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+      out.textContent = "Running on the laptop.";
+      try {
+        const r = await fetch("/demo/" + encodeURIComponent(sc.dataset.scenario), {
+          method: "POST", headers: { "X-Reseat": "1" }, credentials: "same-origin",
+        });
+        const j = await r.json();
+        out.textContent = j.message || j.error || "Done.";
+      } catch (e) {
+        out.textContent = "No answer from the laptop.";
+      }
+      setTimeout(() => location.reload(), 3500);
+      return;
+    }
     const b = ev.target.closest("[data-approve],[data-skip]");
     if (!b || busy) return;
     busy = true;

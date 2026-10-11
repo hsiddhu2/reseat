@@ -47,6 +47,11 @@ def staticize(html: str, now: float, done: str | None = None) -> str:
                   r'<a class="secondary" href="index.html">\1</a>', html)
     html = re.sub(r'<b data-until="(\d+)">…</b>',
                   lambda m: f"<b>{max(0, int(m.group(1)) - int(now))} s</b>", html)
+    html = re.sub(r'<button data-scenario="[^"]+">([^<]*)</button>', r"<strong>\1</strong>", html)
+    html = html.replace("Each one changes the fake Events API the way the real one could, runs a real sweep, "
+                        "and shows you what happens. With --push, watch your phone too.",
+                        "Run reseat serve --demo to press these. Each one changes the fake Events API "
+                        "the way the real one could, runs a real sweep, and shows you what happens.")
     banner = f'<div class="demo" role="status">{NOTE}</div>'
     html = re.sub(r'<div class="demo" role="status">.*?</div>', banner, html, count=1, flags=re.S)
     if done:

@@ -100,6 +100,7 @@ def build(app: App, now: float) -> dict[str, Any]:
         "today": _today(app, held, wanted, now),
         "bookings": _bookings(app, now),
         "kept": _kept(app),
+        "scenarios": [{"key": k, "label": label, "see": see} for k, label, see in app.scenarios],
     }
 
 
@@ -602,7 +603,15 @@ def render_dashboard(snap: dict[str, Any], demo: bool = False) -> str:
     out.append('<h2>Last changes</h2><ul class="mono list">')
     out += [f'<li>{e(x["at"])} {e(x["text"])}</li>' for x in v.get("changes", [])] or [
         '<li>No changes since the first sweep.</li>']
-    out.append("</ul></aside><main class='main'>")
+    out.append("</ul>")
+    if v.get("scenarios"):
+        out.append('<section class="panel scenarios" aria-label="Demo scenarios"><h2>Try a scenario</h2>'
+                   '<p class="fine">Each one changes the fake Events API the way the real one could, runs a '
+                   'real sweep, and shows you what happens. With --push, watch your phone too.</p><ul>')
+        out += [f'<li><button data-scenario="{e(s["key"])}">{e(s["label"])}</button>'
+                f'<span class="fine">You should see: {e(s["see"])}</span></li>' for s in v["scenarios"]]
+        out.append('</ul><p class="result" role="status" aria-live="polite"></p></section>')
+    out.append("</aside><main class='main'>")
     out.append(_week_html(v["week"]))
     out.append('<section class="panel"><h2>Journal</h2><ul class="mono list journal">')
     out += [f'<li><span class="t">{e(j["at"])}</span> {e(j["op"])} <span>{e(j["status"])}</span> '

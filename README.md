@@ -25,7 +25,7 @@ pip install reseat         # or: pipx install reseat
 reseat serve --demo        # a scripted week on a fake Events API. No sign-in. Open http://127.0.0.1:8491/
 ```
 
-Demo mode runs the real watcher, router and swap code against an in-process fake of the API, with a week of real sessions from the 1 October catalog. Within two minutes a seat opens and a swap waits for your approval, a new sitting is booked, and a held session changes room. Nothing is sent to AWS, nothing is read from the keychain, and nothing is written to `~/.reseat`. Every page says "Demo data".
+Demo mode runs the real watcher, router and swap code against an in-process fake of the API, with a week of real sessions from the 1 October catalog. Within two minutes a seat opens and a swap waits for your approval, a new sitting is booked, and a held session changes room. The dashboard's **Try a scenario** panel then lets you press each thing that can happen: a seat filling mid-swap (rolled back), a booking the read-back cannot confirm, writes switched off and on, the API going down, an empty catalog, a lost sign-in, and more. Each runs a real sweep on the fake API, and with `--push` each one reaches your phone. Nothing is sent to AWS, nothing is read from the keychain, and nothing is written to `~/.reseat`. Every page says "Demo data".
 
 With your own seats, `reseat serve` runs the watcher and the same web app at `http://127.0.0.1:8490/`, in one process.
 

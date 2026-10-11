@@ -53,7 +53,7 @@ def test_dashboard_shows_status_card_week_changes_and_journal(demo):
     snap = demo.app.snapshot()
     html = pages.render_dashboard(snap, demo=True)
     s = snap["view"]["status"]
-    assert s["state"] == "watching" and s["where"] == "in this process" and s["sessions"] == 18
+    assert s["state"] == "watching" and s["where"] == "in this process" and s["sessions"] == 21
     assert s["held"] == 11 and s["quota_max"] == 120 and 0 < s["quota_left"] <= 120
     assert "Demo data" in html and "Needs your approval" in html
     [card] = snap["view"]["cards"]
@@ -441,6 +441,7 @@ def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_pa
     for n in names:
         html = (tmp_path / n).read_text(encoding="utf-8")
         assert "<script" not in html and "/static/" not in html and "data-approve" not in html
+        assert "data-scenario" not in html
         assert "Static snapshot of demo data" in html and 'href="app.css"' in html
     assert 'href="after.html">Swap now</a>' in (tmp_path / "index.html").read_text(encoding="utf-8")
     after = (tmp_path / "after.html").read_text(encoding="utf-8")
@@ -665,3 +666,200 @@ def test_a_dropped_or_cut_off_socket_prints_no_traceback(capsys):
     except ValueError:
         server.handle_error(None, ("100.64.0.9", 1))
     assert "a real bug" in capsys.readouterr().err
+
+
+# ---- the demo control panel
+
+
+EXPECT = [("seat", "proposed"), ("fill", "swap"), ("repeat", "booked"), ("blocked", "not_booked"),
+          ("unsure", "unconfirmed"), ("move", "moved"), ("remove", "removed"), ("leave", "leave"),
+          ("close", "writes"), ("open", "writes"), ("down", "offline"), ("up", "back"),
+          ("empty", "catalog"), ("signout", "signin"), ("signin", "sweep")]
+
+
+def test_every_scenario_produces_its_event_through_the_real_engine():
+    d = D.Demo(port=0)
+    server = S.make_server(d.app)
+    S.run(d.app, server)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    events = []
+    d.watcher.subscribe(events.append)
+    http = httpx.Client(base_url=f"http://127.0.0.1:{d.app.port}", timeout=60)
+    try:
+        assert wait_until(lambda: d.app.snapshot().get("view"))
+        assert [k for k, _ in EXPECT] == [k for k, _, _ in d.app.scenarios]
+        for key, kind in EXPECT:
+            before = len(events)
+            r = http.post(f"/demo/{key}", headers={"X-Reseat": "1"})
+            assert r.status_code == 200 and r.json()["message"], key
+            assert kind in [e.kind for e in events[before:]], (key, [e.kind for e in events[before:]])
+        swap = next(e for e in events if e.kind == "swap")
+        assert swap.data["state"] == "rolled_back"
+        writes = [e.data["state"] for e in events if e.kind == "writes"]
+        assert writes == ["closed", "open"]
+        assert http.post("/demo/seat").status_code == 403                 # still needs the X-Reseat header
+        assert http.post("/demo/nope", headers={"X-Reseat": "1"}).status_code == 404
+        assert "Try a scenario" in http.get("/").text
+    finally:
+        d.watcher.stop()
+        server.shutdown()
+        server.server_close()
+
+
+def wait_until(cond, seconds=10):
+    end = time.time() + seconds
+    while time.time() < end:
+        if cond():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_the_control_panel_does_not_exist_on_a_real_server():
+    from reseat import rules as R
+    from reseat.client import EventsClient
+    from reseat.fakeapi import FakeEventsApi
+    from reseat.watcher import Watcher
+    fake = FakeEventsApi(sessions=[])
+    client = EventsClient(token_provider=lambda: fake.token, transport=fake.transport())
+    store = Store(":memory:")
+    rules = R.parse("targets: []\n")
+    app = S.App(Watcher(client, store, rules, D.EVENT), store, rules, D.EVENT, port=0)
+    server = S.make_server(app)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        http = httpx.Client(base_url=f"http://127.0.0.1:{app.port}", timeout=10)
+        for key in ("seat", "close", "down", "signout"):
+            assert http.post(f"/demo/{key}", headers={"X-Reseat": "1"}).status_code == 404
+        assert not app.demo and app.run_scenario is None
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def panel():
+    """A demo after its baseline sweep, with each scenario callable on this thread (no server)."""
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    d.app.refresh()
+    events = []
+    d.watcher.subscribe(events.append)
+    return d, events, {k: fn for k, _, _, fn in d.scenarios()}
+
+
+def test_each_scenario_leaves_the_state_its_button_promises():
+    d, events, sc = panel()
+    held = d.fake.schedule.reserved
+    sc["signout"]()
+    assert d.watcher.read_only
+    sc["signin"]()
+    assert not d.watcher.read_only                       # "Bookings resume" means read-only is cleared
+    sc["close"]()
+    assert d._codes["IND424"] not in held                # queued, nothing booked while closed
+    sc["open"]()
+    assert d._codes["IND424"] in held                    # "then Seat booked": the queued talk, read back
+    hero = d.app.snapshot()["view"]["today"]["hero"]
+    sc["leave"]()
+    assert [e.data["code"] for e in events if e.kind == "leave"] == [hero["code"]]
+    sc["remove"]()
+    assert d._codes["SEC351"] not in held
+    assert "SEC351" in [e.data["code"] for e in events if e.kind == "removed"]
+    assert d._codes["COP301"] in held                    # nothing the attendee held was touched
+
+
+def test_every_scenario_pressed_twice_answers_with_a_message():
+    d, _, sc = panel()
+    for key in sc:
+        for _ in range(2):
+            assert sc[key](), key
+
+
+def test_fill_while_signed_out_or_closed_says_why_and_leaves_the_fake_clean():
+    for off in ("signout", "close"):
+        d, _, sc = panel()
+        sc["seat"]()
+        sc[off]()
+        assert "sign" in sc["fill"]().lower() or "writes" in sc["fill"]().lower()
+        assert d._codes["SVS306-R"] not in d.fake.full
+        assert len(d.watcher.pending()) == 1                # the proposal is kept
+
+
+def test_seat_never_claims_a_swap_waits_when_none_does():
+    d, _, sc = panel()
+    sc["signout"]()
+    msg = sc["seat"]()
+    assert d.watcher.pending() or "swap waits" not in msg
+
+
+def test_scenarios_work_after_the_timed_script_and_an_approve_and_on_a_second_pass():
+    """The order the README gives: watch the timed script, press Swap now, then use the panel. Twice."""
+    d, events, sc = panel()
+    d.seat_opens()
+    d.watcher.tick()
+    d.new_sitting()
+    d.watcher.tick()
+    d.room_moves()
+    d.watcher.tick()
+    d.app.refresh()
+    assert d.watcher.approve(d.watcher.pending()[0].plan_id).state == "verified"
+    for round_ in (1, 2):
+        for key, kind in EXPECT:
+            before = len(events)
+            msg = sc[key]()
+            assert kind in [e.kind for e in events[before:]], (round_, key, msg)
+            assert "No notification" not in msg or kind == "sweep", (round_, key, msg)
+    states = [e.data["state"] for e in events if e.kind == "swap"]
+    assert states == ["verified", "rolled_back", "rolled_back"]   # the approve, then one per fill
+
+
+def test_a_scenario_message_lists_only_notifications_that_really_went_out():
+    d, _, sc = panel()
+    assert "Notifications: Swap proposed." in sc["seat"]()
+    msg = sc["seat"]()                                   # pressed again: nothing new happens
+    assert "already waiting" in msg and "No notification this time." in msg
+
+
+def test_only_one_scenario_runs_at_a_time():
+    d = D.Demo(port=0)
+    assert d._busy.acquire(blocking=False)
+    try:
+        assert d.run_scenario("seat").startswith("Another scenario is still running")
+    finally:
+        d._busy.release()
+
+
+def test_writes_back_on_during_an_outage_is_refused_not_claimed():
+    d, events, sc = panel()
+    sc["close"]()
+    sc["down"]()
+    msg = sc["open"]()
+    assert "API is down" in msg and d.fake.closed and "resumed" not in msg
+
+
+def test_the_api_coming_back_does_not_sign_you_in():
+    d, _, sc = panel()
+    sc["down"]()
+    sc["signout"]()
+    sc["up"]()
+    d.watcher.tick()
+    assert d.watcher.read_only                                         # still signed out
+    assert sc["signin"]().startswith("Signed in again")
+
+
+def test_a_demo_reset_is_said_and_journaled_never_silent():
+    d, _, sc = panel()
+    d.seat_opens()
+    d.watcher.tick()
+    d.watcher.approve(d.watcher.pending()[0].plan_id)                  # SVS306-R now held, CMP409-R not
+    msg = sc["seat"]()
+    assert msg.startswith("Demo reset first: CMP409-R held again; SVS306-R released.")
+    ops = [(r["op"], r["outcome"]) for r in d.store.journal_entries(D.EVENT, 50)]
+    assert ("demo.reset", "held") in ops and ("demo.reset", "released") in ops
+
+
+def test_a_clock_jump_mentions_an_expired_swap_only_when_one_was_waiting():
+    d, _, sc = panel()
+    assert "expired" not in sc["down"]()
+    sc["up"]()
+    sc["seat"]()
+    assert "The waiting swap expired with the jump." in sc["leave"]()

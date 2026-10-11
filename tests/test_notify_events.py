@@ -168,3 +168,25 @@ def test_names_never_fall_back_to_a_session_id(env):
     w.tick()
     title, body = pushed(of(events, "removed")[0])
     assert title == "A session you hold left the catalog" and "X1" not in title + body
+
+
+def test_a_held_session_removed_along_with_its_reservation_is_still_pushed(env):
+    fake, *_ = env
+    fake.schedule.reserved.add("X1")
+    w, events = start(env, "targets:\n- code: SEC201\n")
+    del fake.sessions["X1"]
+    fake.schedule.reserved.discard("X1")                    # the schedule drops it in the same moment
+    w.tick()
+    assert pushed(of(events, "removed")[0])[0] == "SEC201 left the catalog"
+
+
+def test_a_session_the_attendee_cancelled_earlier_is_not_pushed_as_held_when_removed(env):
+    fake, *_ = env
+    fake.schedule.reserved.add("X1")
+    w, events = start(env, "targets:\n- code: SEC201\n")
+    fake.schedule.reserved.discard("X1")                    # cancelled in the official app
+    w.tick()                                                # the read-back sees it go
+    del fake.sessions["X1"]
+    w.tick()
+    w.tick()
+    assert of(events, "removed") == []

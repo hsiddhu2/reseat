@@ -141,6 +141,10 @@ class FakeEventsApi:
         """The next `times` calls to `op` return `status`, with nothing applied."""
         self._fail[op] = (status, times)
 
+    def clear_fail(self, op: str) -> None:
+        """Stop failing `op` now, however many failures were left."""
+        self._fail.pop(op, None)
+
     def transport(self) -> httpx.BaseTransport:
         return httpx.MockTransport(self._handle)
 

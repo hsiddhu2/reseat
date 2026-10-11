@@ -181,6 +181,10 @@ class Watcher:
     def subscribe(self, fn: Subscriber) -> None:
         self._subscribers.append(fn)
 
+    def unsubscribe(self, fn: Subscriber) -> None:
+        if fn in self._subscribers:
+            self._subscribers.remove(fn)
+
     @property
     def stopped(self) -> threading.Event:
         """Set once stop() is called. Other threads wait on it."""
@@ -419,14 +423,17 @@ class Watcher:
         # unsaved and the next tick sees them again, so no opening is lost.
         sched = self.client.get_schedule(self.event_id)
         held = set(sched.reserved)
-        known = {sid: self.store.get(self.event_id, sid) for sid in held}     # names, before a sweep
+        # AWS may drop a reservation along with its session, so held-before counts too. Known edge: a seat
+        # the attendee cancelled elsewhere in the same interval as AWS removes it is still reported.
+        was_held = held | self.last_held
+        known = {sid: self.store.get(self.event_id, sid) for sid in was_held}   # names, before a sweep
         sweep = self.store.apply_sweep(self.event_id, sessions, with_abstracts=False, now=now)
         res.count = sweep.count
         self.last_held = held
         self.personal_time = list(sched.personal_time)
         for sid in sweep.removed:
             s = known.get(sid)
-            if sid in held and s:
+            if sid in was_held and s:
                 name = " ".join(x for x in (s.abbreviation, s.title) if x) or "a session"
                 self._emit("removed", session_id=sid, code=s.abbreviation, title=s.title,
                            message=f"AWS removed {name} from the catalog. You held it. "

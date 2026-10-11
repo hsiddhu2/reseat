@@ -90,6 +90,9 @@ class App:
         self.watcher, self.store, self.rules, self.event_id = watcher, store, rules, event_id
         self.host, self.port, self.clock, self.demo = host, port, clock, demo
         self.cookie = cookie       # browsers share cookies across ports, so the demo uses its own name
+        # Demo mode only: the control panel's scenarios, (key, label, what you should see), and a runner.
+        self.scenarios: list[tuple[str, str, str]] = []
+        self.run_scenario: Callable[[str], str] | None = None
         self.secret = rules.serve_secret
         self.auth_required = bool(self.secret)
         self._tokens: dict[str, float] = {}     # cookie token -> expiry. Cleared on restart.
@@ -482,6 +485,14 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                     self._json(409, out)
                 else:
                     self._json(200, out)
+            elif len(parts) == 2 and parts[0] == "demo" and app.demo and app.run_scenario:
+                if parts[1] not in {k for k, _, _ in app.scenarios}:
+                    self._json(404, {"error": "no such scenario"})
+                    return
+                try:
+                    self._json(200, {"message": app.run_scenario(parts[1])})
+                except Exception as e:  # noqa: BLE001  a demo scenario must never take the server down
+                    self._json(500, {"error": f"The scenario did not finish: {type(e).__name__}"})
             elif len(parts) == 2 and parts[0] == "skip":
                 ok = app.skip(parts[1])
                 self._json(200, {"skipped": True}) if ok else self._json(404, {"error": "unknown plan"})
