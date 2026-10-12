@@ -133,6 +133,7 @@ I want to be honest about which parts are rules and which are guesses.
 re:Seat does three things, all week, within rules you wrote: it books the seats you could not get, it upgrades the ones you hold only after checking there is a way back in, and it gets you to the room on time. It tells you what it did and why. The code, the proof files and the demo are all in the repo. If you are attending re:Invent 2026, install it, point it at your schedule, and let me know what it catches for you.
 
 - Code: [github.com/hsiddhu2/reseat](https://github.com/hsiddhu2/reseat)
+- On AWS Builder Center: [re:Seat: the seats you missed, booked while you sleep](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep)
 - Install: [pypi.org/project/reseat](https://pypi.org/project/reseat/)
 - How it works: [docs/architecture.md](architecture.md)
 - API facts it relies on: [docs/api-facts.md](api-facts.md)
