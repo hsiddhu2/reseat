@@ -144,7 +144,7 @@ a.dh:hover { text-decoration: underline; color: var(--accent); }
 .mk-released, .mk-removed { background: var(--muted); }
 .mk-moved { background: var(--wanted); }
 .mk-proposed { background: var(--accent); }
-.blk .mk { align-self: flex-start; margin-bottom: 2px; }
+.blk .mk { align-self: flex-start; margin-bottom: 2px; max-width: calc(100% - 20px); overflow: hidden; text-overflow: ellipsis; }
 .changed li { display: block; line-height: 1.5; }
 .changed .mk { margin-right: 6px; vertical-align: 1px; }
 .changed .t { margin-right: 6px; }

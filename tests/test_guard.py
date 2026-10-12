@@ -208,3 +208,30 @@ def test_stale_store_never_deletes_blocks(held, client, store):
     res = G.sync(client, store, EV, rules())
     assert res.plan.delete == [] and "DOP302" in blocks_by_code(held)
     assert any("not in the local catalog" in w for w in res.plan.warnings)
+
+
+def test_longest_venue_pair_fits_the_spec_limit_and_says_estimate(store):
+    """PersonalTimeInput.description is 1 to 250 characters. The walk is never an official figure."""
+    import itertools
+    import json
+    from pathlib import Path
+
+    from reseat import campus
+    spec = json.loads((Path(__file__).parents[1] / "docs" / "openapi.json").read_text())
+    limit = spec["components"]["schemas"]["PersonalTimeInput"]["properties"]["description"]["maxLength"]
+    pairs = [(a, b) for a, b in itertools.permutations(campus.VENUES, 2)
+             if campus.walk_minutes(a, b) is not None]
+    origin, dest = max(pairs, key=lambda p: len(p[0]) + len(p[1]))
+    s = mk("L2", "LNG200", "2026-12-01", "10:00", dest)
+    blocks, _ = G.leave_blocks([s], rules(f"home_venue: {origin}\ntargets: []\n"))
+    d = blocks[0].description
+    assert len(d) <= limit and "(estimate)" in d and d.endswith(G.TAG)
+
+
+def test_old_wording_is_updated_in_place_once(held, client, store):
+    G.sync(client, store, EV, rules())
+    for p in held.schedule.personal_time.values():
+        p["description"] = p["description"].replace(" (estimate)", "")
+    res = G.sync(client, store, EV, rules())
+    assert len(res.plan.update) == 3 and not res.plan.create and not res.plan.delete
+    assert G.sync(client, store, EV, rules()).plan.empty

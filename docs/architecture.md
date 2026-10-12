@@ -116,7 +116,10 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
 | Favorites sync | built | Mirror target sittings into favorites, read back. |
 | Web app | built | Local HTTP server: Week, Day, Approve, Today, Activity, Targets and Status views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
-| MCP server | built | Propose bookings and swaps, approve by plan id, explain. Optional extra `reseat[mcp]`. |
+| Reminders | built | `reminders.py`: morning briefing, leave in 10 minutes, leave now, a wanted talk soon, a swap offer about to lapse, a walk you cannot make, an exact sitting full while another has seats. Each once, from the local store. |
+| Change tracker | built | `changes.py`: compares held and proposed sessions at each refresh and labels what changed on the week. The first look is a baseline. |
+| Push | built | `push.py`: ntfy pushes with codes and titles only, quiet hours and muted categories, Swap now, Keep and Update buttons read back over a derived reply topic. |
+| MCP server | built | Propose bookings and swaps, approve by plan id, explain. Optional extra `reseat[mcp]`. `reseat mcp --demo` serves the same tools on demo data. |
 
 ## Key flows
 

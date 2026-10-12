@@ -2,7 +2,7 @@
 
 re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and your phone is the remote.
 
-![re:Seat demo mode: a seat opens and a swap waits for approval, a new sitting is booked, a room moves, the swap is verified](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
+![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
 **Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install reseat` then `reseat serve --demo`. See [Open the dashboard](#open-the-dashboard).
 
@@ -31,7 +31,7 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 
 | Week, laptop width | Approve, phone width | Today, phone width |
 |---|---|---|
-| ![Week: status line, a swap waiting for approval, what just changed, and the week grid with a NEW label](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/dashboard.png) | ![Approve: the held and opened sessions side by side, the checks and one button](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png) |
+| ![Week: status line, a swap waiting for approval, what just changed, and the week grid with a NEW label](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/week.png) | ![Approve: the held and opened sessions side by side, the checks and one button](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png) |
 
 ![Demo page: a scenario list, and beside it what AWS did, what re:Seat did, the week before and after, and the phone's notification](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/demo.png)
 
