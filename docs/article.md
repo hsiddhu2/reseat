@@ -88,6 +88,8 @@ Each button carries a plan id that expires after 10 minutes and works once, and 
 
 The first question people ask is why there is no hosted version. The Events API signs you in with OAuth and PKCE, using your own Builder ID, through a callback on a loopback port of the machine you sign in on. It has no hosted sign-in. A hosted re:Seat would have to hold other attendees' tokens, and those tokens can cancel their seats. So re:Seat runs on your laptop, keeps your tokens in the OS keychain, sends the access token only to `api.awsevents.com` and the refresh token only to the sign-in service, `oauth.awsevents.com`. Your phone never holds either.
 
+![How re:Seat fits together: the CLI, web app and MCP server on your laptop share one engine and one local store. Only the API client talks to the AWS Events API, only Auth talks to Builder ID sign-in, and the phone reaches the laptop through ntfy.sh](architecture.png)
+
 ## Seen live: an empty catalog
 
 On the evening of 8 October, the day API writes were scheduled to open, I ran the band inspection I had planned for after seating opened. The API served no catalog.
