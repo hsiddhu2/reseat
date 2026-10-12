@@ -235,3 +235,15 @@ def test_stale_blocks_push_carries_an_update_button_and_expiring_carries_swap_bu
     assert seen[0].headers["actions"] == want
     assert "body=approve " + PLAN in seen[1].headers["actions"]
     assert push.COMMAND.match("update Tok_0123456789abcdefgh")
+
+
+def test_a_proposal_with_buttons_says_to_use_them():
+    seen, transport = capture()
+    on = push.Pusher(TOPIC, transport=transport, approve=True)
+    off = push.Pusher(TOPIC, transport=transport)
+    on(proposed())
+    off(proposed())
+    on.flush()
+    off.flush()
+    assert "Long-press for Swap now or Keep" in seen[0].content.decode()
+    assert "Approve it in the web app." in seen[1].content.decode()

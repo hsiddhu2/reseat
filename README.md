@@ -1,10 +1,17 @@
 # re:Seat
 
-re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and your phone is the remote.
+re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and it can ask you on your phone, as a notification you approve with one tap.
 
 ![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
-**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install reseat` then `reseat serve --demo`. See [Open the dashboard](#open-the-dashboard).
+**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install reseat` then `reseat serve --demo`. See [Try it in two minutes](#try-it-in-two-minutes).
+
+**What re:Seat does:**
+
+- **Books what frees up.** Every minute it checks the catalog. A freed seat or a new repeat sitting of a talk you want is booked at once, inside your rules and the API's quota, and read back from your schedule.
+- **Swaps without losing a seat.** When a better sitting opens at the same time as one you hold, it asks you: on the Week page, and with `ntfy_approve: true` as a notification with Swap now and Keep. Swap now cancels only after a fresh read shows the new seat open and a fallback for yours, and books yours again if the new one is refused.
+- **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
+- **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
 ## The problem
 
@@ -18,7 +25,7 @@ Planners help you pick sessions. Attendees say the trouble starts after that:
 
 Seats free up, repeats get added, rooms move. Catching that means refreshing the app all week. re:Seat does the refreshing and acts on what it finds, within rules you set.
 
-## Open the dashboard
+## Try it in two minutes
 
 ```bash
 pip install reseat         # or: pipx install reseat
@@ -35,11 +42,16 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 
 ![Demo page: a scenario list, and beside it what AWS did, what re:Seat did, the week before and after, and the phone's notification](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/demo.png)
 
-- **Week** (`/`). What re:Seat has done for you, counted from the journal: seats booked, swaps verified, seats restored. Watching or paused, the last sweep and its session count, the next sweep, held and wanted counts, and ListSessions quota left. Swaps that need you, each with its checks from the last sweep: the target's band, a fallback, no overlap, and whether the rules allow it or ask first. What just changed. A week grid of held, wanted, proposed and fallback sessions with their titles and times, leave-now strips, a line at the current time, a badge where the walk is longer than the gap, and a label on anything that changed in the last 15 minutes: NEW, SWAPPED IN, MOVED, RELEASED (a crossed-out ghost where the seat was), LEFT CATALOG, PROPOSED. Click a session for its details, or a day for the Day view.
-- **Approve** (`/approve`). One proposal at a time: what you hold and what opened, side by side, the checks, and one button. Bookings within your rules happen at once and show on the week and under Activity.
-- **Today** (`/today`). How long until you leave for the next held session, with the walk and when the doors close. The rest of today, your own personal time included. Wanted sessions you do not hold, with queue-or-go advice, its basis, and any clash with a held session's walk.
+| Page | What it is for |
+|---|---|
+| **Week** (`/`) | Swaps that need you, with their checks. What just changed. The calendar: held, wanted, proposed and fallback sessions, leave-now strips, a line at the current time, and a 15-minute label on anything that changed: NEW, SWAPPED IN, MOVED, RELEASED, LEFT CATALOG, PROPOSED. Click a session for its details, or a day for the Day view. |
+| **Today** (`/today`) | How long until you leave, the walk (an estimate) and when the doors close. The rest of today. Talks you want but do not hold, with queue-or-go advice and its basis. |
+| **Approve** (`/approve`) | One swap at a time: what you hold and what opened, side by side, the checks, Swap now and Keep. Seats booked today beside it. |
+| **Activity** (`/activity`) | Seats booked, swaps verified and seats restored, counted from the journal. Every change to your week, catalog changes, and every write with its read-back. |
+| **Targets**, **Status** | Your rules read back in order with each sitting's seats. The watcher, bookings open or closed, the quota left this minute per operation, and your push settings. |
+| **Demo** (`/demo`, demo mode only) | Scenarios, and what each did at AWS, in re:Seat, on your week and on your phone. |
 
-Every page adjusts to the screen: two columns on a laptop, one on a phone. Every page has the same menu, except the few seconds of the starting screen: a row under the header on a laptop, and at phone width a bottom bar with Week, Today, Approve, Activity and More, which opens Targets, Status and, in demo mode, Demo. Approve shows how many swaps wait. It follows your system's light or dark setting. Approve and Dismiss send a plan id and nothing else. Pressing Swap now runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
+Every page fits the screen: two columns on a laptop, one on a phone, with one menu, a bottom bar on the phone. It follows your system's light or dark setting. Swap now sends a plan id and nothing else, and runs the same checked swap as `reseat swap`, with fresh reads. The CLI and the MCP server use the same engine.
 
 ## Install
 
@@ -63,8 +75,8 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 |---|---|
 | Before writes open | Takes your targets from the schedule you built in the AWS portal, or from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export, and mirrors them into your favorites. |
 | The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
-| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal on the dashboard and your phone. Leave-now reminders go into your official schedule. |
-| At re:Invent | The laptop stays in the hotel room. Your phone shows today's seats, a leave-now countdown and whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
+| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal: a card on the Week page, and a push, with Swap now and Keep if you opt in. Leave-now reminders go into your official schedule. |
+| At re:Invent | The laptop stays in the hotel room. Your phone gets the morning briefing, leave in 10 minutes and leave now, and a heads-up when a talk you want starts soon, with whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
 
 ## Safe swap
 
@@ -72,7 +84,7 @@ The API has no swap. To move from held session A to a better B at the same time,
 
 ## The phone remote
 
-Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. The web app that `reseat serve` runs also works at phone width, over [Tailscale](https://tailscale.com): approve a swap, see when to leave, and see what is wanted today. Optional push through ntfy. Designed for a laptop left in the hotel room. See [Running it all week](#running-it-all-week).
+Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. The phone gets notifications through the free ntfy app. With `ntfy_approve: true`, a swap proposal carries **Swap now** and **Keep** buttons: the tap goes back through ntfy.sh to the laptop, which only makes outgoing connections, so the phone never has to reach it. The topic name is the secret: see [what a leaked topic allows](#running-it-all-week). Opening the web app itself on the phone is optional, over [Tailscale](https://tailscale.com). Designed for a laptop left in the hotel room.
 
 ## Why re:Seat runs on your machine
 
@@ -101,7 +113,7 @@ GetSession <held session>   -> 404 "No session was found with the requested id"
 GetSchedule                 -> 200, reserved 14, favorites 16
 ```
 
-re:Seat's sync read the empty answer as every session removed and emptied its local copy of the catalog. It sent no write, and nothing on the attendee's AWS schedule changed. Three fixes followed, each tested against the fake: a sweep that comes back empty, or would drop more than half the catalog without bringing back one of about the same size, is refused and the local copy kept, a sweep of about the same size whose ids are mostly new is recorded as a new baseline, and nothing is booked while a held session is missing from the local catalog. The record, with commands and output, is in [docs/proof/2026-10-08-catalog-empty.md](docs/proof/2026-10-08-catalog-empty.md). It shows nothing about booking through the API.
+re:Seat's sync read the empty answer as every session removed and emptied its local copy of the catalog. It sent no write, and nothing on the attendee's AWS schedule changed. Three fixes followed, each tested against the fake: a sweep that comes back empty, or would drop more than half the catalog without bringing back one of about the same size, is refused and the local copy kept, a sweep of about the same size whose ids are mostly new is recorded as a new baseline, and nothing is booked while a held session is missing from the local catalog. The record, with commands and output, is in [docs/proof/2026-10-08-catalog-empty.md](docs/proof/2026-10-08-catalog-empty.md), with one line for each daily check since. The catalog was still empty at the last check, on 11 October. It shows nothing about booking through the API.
 
 ## Limits
 
@@ -114,7 +126,7 @@ re:Seat's sync read the empty answer as every session removed and emptied its lo
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. CI runs the tests on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 697 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 
@@ -142,7 +154,7 @@ reseat favorites sync              # mirror every target sitting into favorites.
 reseat watch                       # sweep every minute, book freed seats and new repeats. --once for cron
 reseat swap <held> <wanted>        # replace a held session safely: fallback checked, rolls back on failure
 reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
-reseat serve                       # watcher plus the web app: dashboard, approve, today. See "Running it all week"
+reseat serve                       # watcher plus the web app and push. See "Running it all week"
 reseat serve --demo                # the web app on a fake API with a scripted week. No sign-in
 reseat mcp                         # local MCP server on stdio. Needs pip install "reseat[mcp]"
 reseat mcp --demo                  # the same tools on the demo's fake API. No sign-in
@@ -177,30 +189,22 @@ The first target wins a time slot. Within a batch, formats that are not recorded
 
 ### Running it all week
 
-re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop does every API call and the phone only talks to the laptop. Run `reseat serve` there. It runs the watcher and serves the web app: Week (the calendar, with changed sessions labelled for 15 minutes, a crossed-out ghost where a seat was released, and a line at the current time), Approve, Today, and Activity (every change to your week, the catalog changes and the journal). Click a day on the week for that day in full. **Targets** reads your rules back in order with what is held or watched for each, and **Status** shows the watcher, bookings open or closed, the quota left this minute per operation, and your push settings, never the topic or a secret.
+re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop makes every API call. The phone gets notifications through the ntfy app and approves a swap from the notification. Opening the web app on the phone is optional, over Tailscale.
 
-**Set up the phone.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Add a long random `serve_secret` to the rules file, then start it on the laptop:
+**Keep the laptop awake with the lid closed.** Start it with `reseat serve`.
 
-```bash
-reseat serve --tailscale
-```
-
-re:Seat listens on 127.0.0.1 only and asks Tailscale to forward `http://<your laptop's Tailscale name>:8490` to it, so the page is reachable from your own Tailscale devices and nowhere else. Stopping `reseat serve` removes the forwarding. This also avoids macOS's Local Network rules, which can drop connections from other devices to a program they do not recognise. `--host <Tailscale address>` still works where those rules allow it.
-
-It prints a one-time link. Open it once on each device. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. A sign-in lasts 7 days. To sign every device out, stop and restart `reseat serve`: sign-ins live only in the running process. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. It never listens on every interface: `--host 0.0.0.0` is refused. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Swap now and Dismiss take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
-
-**Keep the laptop awake with the lid closed.**
-
-- macOS. `caffeinate -s reseat serve --tailscale` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
+- macOS. `caffeinate -s reseat serve` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
 - Windows. Settings, System, Power and battery: when plugged in, sleep after Never. Control Panel, Power Options, Choose what closing the lid does: when plugged in, Do nothing.
 
-**Reach it from the phone.** With `--tailscale`, open the printed link on the phone. The phone then reaches the laptop from any venue, and the page is not offered on the hotel network.
+**Set up the phone: notifications.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. Push is off unless the topic is set. The laptop posts to `https://ntfy.sh/<topic>`, each kind once:
 
-**If the phone cannot open it.** `reseat serve` checks it can reach its own address when it starts. On macOS, a terminal app without Local Network permission accepts connections and then drops them. Allow the app you run reseat in (Terminal, iTerm or VS Code) under System Settings, Privacy & Security, Local Network, then quit and reopen it. Also check Tailscale is switched on on both devices.
+- **Swaps:** a swap proposed, 2 minutes from lapsing, done, rolled back or failed.
+- **Bookings:** a seat booked. A seat opened or a new sitting appeared but your rules stopped it, with the reason. The only sitting your rules allow is full while another has seats. A booking the read-back could not confirm. The catalog back after the API served none.
+- **Schedule:** a session you hold moved or left the catalog. Two held sessions too far apart to walk between in the gap. The leave-now blocks re:Seat wrote no longer match what you hold, with, under `ntfy_approve: true`, an **Update** button that rewrites them and reads the schedule back (only if you use the blocks).
+- **On site:** a morning briefing between 06:00 and 10:00 on each conference day, leave in 10 minutes, leave now, and a talk you want but hold no seat for starting in 20 minutes, with whether to queue.
+- **Health:** writes paused or resumed, the API unreachable for 10 minutes or back, sign-in needed.
 
-**Put it on the home screen.** On the iPhone, open the web app in Safari, tap Share, then Add to Home Screen. re:Seat then opens full screen with its own icon, on Approve. If it asks you to sign in, open `/login` and enter `serve_secret`.
-
-**Push, if you want it.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. The laptop posts to `https://ntfy.sh/<topic>` when a seat is booked; a seat opens or a new sitting appears but your rules stop the booking, with the reason; a booking cannot be confirmed by the read-back; a session you hold moves or leaves the catalog; a swap is proposed, done or rolled back, or a proposal is 2 minutes from lapsing; the only sitting your rules allow is full while another sitting has seats; the re:Invent catalog comes back after the API served none; the API has been unreachable for 10 minutes, or is back; writes are paused or resumed; or sign-in is needed. While `reseat serve` runs it also sends the on-site reminders: a morning briefing between 06:00 and 10:00 on each conference day with the day's sessions and when to leave for the first, leave in 10 minutes, leave now, and a session you want but hold no seat for starting in 20 minutes, with whether to queue for a walk-up seat. Each is sent once. It also tells you when two sessions you hold are too far apart to walk between in the gap, and when the leave-now blocks re:Seat wrote no longer match what you hold, with an **Update** button that rewrites them and reads the schedule back (only if you use the blocks). What leaves the laptop: the event type, session codes and titles, and those status lines. When `reseat serve` listens on an address other than 127.0.0.1, each push also carries a link to that address and the page to open, so a tap on "Swap proposed" opens Approve. Use your Tailscale address: it only works inside your own Tailscale network. Never your token, an abstract or a session id. Push is off unless the topic is set.
+Each push carries the event, session codes, titles and those status lines, never your token, an abstract or a session id. When `reseat serve` listens on an address other than 127.0.0.1, a tap opens the right page there. Use your Tailscale address: it works only inside your own Tailscale network.
 
 **Choose what reaches the phone.** Under `notify:` in the rules file, `quiet: "22:00-07:00"` (Las Vegas time) holds pushes back and sends one summary when the quiet hours end, and `mute: [on_site]` drops a category: swaps, bookings, schedule, on_site, health. Sign in needed and a swap that failed always come through.
 
@@ -222,6 +226,24 @@ If the name leaks, this is what someone else could do, and what limits it:
 **When the hotel Wi-Fi drops.** The watcher keeps running. It retries with a growing wait, up to 5 minutes between tries, and goes back to its normal pace as soon as a sweep works. A sweep that fails halfway is not saved, so a seat that opened during the outage is still caught afterwards. Each outage goes in the journal. Your reserved seats stay reserved, because they live in your AWS schedule, not on the laptop. While the laptop is offline it cannot book anything and the phone cannot reach it, so use the official app until it is back. If the AWS API is down but the internet is up, push tells you "re:Seat offline since HH:MM" after 10 minutes and "re:Seat back" when it recovers.
 
 **When sign-in expires.** If the token can no longer be refreshed, re:Seat stops booking, keeps watching for the moment it can read again, and tells you once: "sign in needed". Run `reseat login` on the laptop. Booking resumes on the next sweep.
+
+#### Optional: the web app on the phone
+
+**Set it up.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Add a long random `serve_secret` to the rules file, then start it on the laptop:
+
+```bash
+reseat serve --tailscale
+```
+
+re:Seat listens on 127.0.0.1 only and asks Tailscale to forward `http://<your laptop's Tailscale name>:8490` to it, so the page is reachable from your own Tailscale devices and nowhere else. Stopping `reseat serve` removes the forwarding. This also avoids macOS's Local Network rules, which can drop connections from other devices to a program they do not recognise. `--host <Tailscale address>` still works where those rules allow it.
+
+It prints a one-time link. Open it once on each device. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. A sign-in lasts 7 days. To sign every device out, stop and restart `reseat serve`: sign-ins live only in the running process. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. It never listens on every interface: `--host 0.0.0.0` is refused. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Swap now and Dismiss take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
+
+**Reach it from the phone.** With `--tailscale`, open the printed link on the phone. The phone then reaches the laptop from any venue, and the page is not offered on the hotel network.
+
+**If the phone cannot open it.** `reseat serve` checks it can reach its own address when it starts. On macOS, a terminal app without Local Network permission accepts connections and then drops them. Allow the app you run reseat in (Terminal, iTerm or VS Code) under System Settings, Privacy & Security, Local Network, then quit and reopen it. Also check Tailscale is switched on on both devices.
+
+**Put it on the home screen.** On the iPhone, open the web app in Safari, tap Share, then Add to Home Screen. re:Seat then opens full screen with its own icon, on Approve. If it asks you to sign in, open `/login` and enter `serve_secret`.
 
 ### MCP server
 

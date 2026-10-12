@@ -208,6 +208,8 @@ class Pusher:
             if (self.approve and ev.kind in ("proposed", "expiring") and not ev.data.get("auto")
                     and ev.data.get("plan_id")):
                 buttons = actions(self.topic, ev.data["plan_id"])
+                tap = "Long-press for Swap now or Keep, or approve it in the web app."
+                msg = (msg[0], msg[1].replace("Approve it in the web app.", tap))
             if self.approve and ev.kind == "blocks" and ev.data.get("token"):
                 buttons = update_action(self.topic, ev.data["token"])
             try:
