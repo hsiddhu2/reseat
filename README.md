@@ -15,6 +15,16 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
 - **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
+**At a glance.** Each line links to its evidence.
+
+- **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L243), [5xx on a cancel](tests/test_cancel_and_cli.py#L41), [a timeout mid-swap](tests/test_swap.py#L318).
+- **Every write is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
+- **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
+- **698 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
+- **Seen live:** on 8 October the API served an empty catalog. re:Seat refused to act on it, and a check is logged every day since. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33).
+- **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
+
 ## The problem
 
 Planners help you pick sessions. Attendees say the trouble starts after that:
