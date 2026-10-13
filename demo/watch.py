@@ -31,7 +31,7 @@ class Clock:
 
 clock = Clock()
 w = Watcher(d.client, d.store, R.load(cli.config.RULES_PATH), EV, clock=clock, sleep=clock.sleep)
-w.subscribe(cli._print_watch_event)
+w.subscribe(lambda ev: cli._print_watch_event(ev, d.store, EV))
 
 banner("re:Seat: the watcher",
        "Both targets are full. Every sweep checks the whole catalog. Each line below is one sweep.")

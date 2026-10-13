@@ -70,6 +70,16 @@ def test_writes_closed_before_october_8(fake, client):
     assert "S-KEY1" not in fake.schedule.reserved
 
 
+def test_writes_open_reads_400_and_404_as_open_and_raises_on_others(fake, client):
+    from reseat.client import ApiError
+    fake.fail_next("CancelReservation", 400)     # seen live on 12 October 2026
+    assert client.writes_open("reinvent2026", "S-KEY1") is True
+    fake.fail_next("CancelReservation", 503)
+    with pytest.raises(ApiError):
+        client.writes_open("reinvent2026", "S-KEY1")
+    assert fake.schedule.reserved == set()
+
+
 def test_batch_limits():
     from reseat.client import _check_batch
     with pytest.raises(ValueError):
@@ -185,3 +195,16 @@ def test_ids_cannot_escape_their_path_segment(fake):
     c = EventsClient(token_provider=lambda: fake.token, transport=httpx.MockTransport(capture))
     c.delete_personal_time("reinvent2026", "../../schedule")
     assert sent == [b"/v1/events/reinvent2026/personal-time/..%2F..%2Fschedule"]
+
+
+@pytest.mark.parametrize("body", [["a", "list"], "just text", 42])
+def test_an_error_body_that_is_not_an_object_still_raises_api_error(fake, client, body):
+    """Any JSON shape in an error body becomes an ApiError, never an AttributeError."""
+    import httpx
+
+    from reseat.client import ApiError
+    client2 = EventsClient(token_provider=lambda: fake.token, base_url="https://api.awsevents.com",
+                           transport=httpx.MockTransport(lambda req: httpx.Response(400, json=body)))
+    with pytest.raises(ApiError) as e:
+        client2.cancel("reinvent2026", "S-KEY1")
+    assert e.value.status == 400

@@ -33,7 +33,7 @@ Source: operation descriptions in the spec.
 - ListSessions: pages of up to 250, ordered by sessionId, opaque `nextToken`, absent on the last page. `totalCount` is the catalog size. `includeAbstracts=false` omits only the abstract. `locale` is a BCP-47 tag, falls back to en-US, and the response carries `Content-Language`.
 - The API does not search or filter. Pull everything and filter locally.
 - ReserveSessions and AssociateFavorites return 200 with a `result` of `successful` and `failed`. "A 200 does not mean everything was added; always read `failed`." A session already held is reported in `failed`, "so re-sending a request is not a safe retry."
-- CancelReservation on a session not held is 404, "so this is not a safe blind retry." Same for DisassociateFavorite.
+- CancelReservation on a session not held is 404, "so this is not a safe blind retry." Same for DisassociateFavorite. When checked on 12 October 2026 the live API answered 400 for this instead, see below.
 - DeletePersonalTime on an entry already gone succeeds. "A retry is safe." It is the only idempotent write.
 - UpdatePersonalTime is a full replacement. Every field is required and an omitted optional field is cleared.
 - Reserving a session that overlaps a held one fails per session with `scheduleConflict` and `conflictsWith`, the list of the caller's held sessions that overlap. There is no swap or replace operation.
@@ -53,7 +53,7 @@ Source: spec response schemas.
 | 400 | ValidationException. Not retriable. | Fix the request. |
 | 401 | Not signed in, or token expired. | Refresh once, retry once. Second 401 means sign in again. |
 | 403 | Signed in but not registered for this event. | Stop. Tell the attendee. |
-| 404 | Event, session or personal time entry not found. | For cancel and unfavorite this means not held. |
+| 404 | Event, session or personal time entry not found. | For cancel and unfavorite this means not held. The live API answered 400 for a cancel not held on 12 October. |
 | 409 | OperationUnavailableException. "Intentionally disabled. Retrying will not help until it is re-enabled." | Surface it. Do not retry. |
 | 429 | ThrottlingException with `Retry-After` in seconds. | Wait that long once, then retry. |
 | 500 | Internal error. | Surface it. |
@@ -112,6 +112,14 @@ Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). 
 - GetSchedule lists `reserved` and `favorites` as arrays of unique ids. The spec does not define their order.
 - The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, 404 on GetSession, GetSchedule still answering, and the official MCP server returning the same empty list.
 - re:Seat therefore refuses a sweep that comes back empty or loses most of the catalog without bringing back one of about the same size, checks each walk against `totalCount`, records a re-keyed catalog as a new baseline rather than as news, and books nothing while a held session is missing from its local catalog.
+
+## Observed in the live API, 12 October 2026
+
+Observations from read-only checks and one probe, not spec guarantees.
+
+- The catalog is back. ListSessions returned 2,227 sessions on the evening of 12 October. Sessions held before the outage are in it under the same ids.
+- CancelReservation on a session the attendee does not hold answered 400 ValidationException, "The request could not be applied to this session". It was tried on a session that is not reservable and on a reservable session not held. The spec lists 400 and 404 for this operation. The 404 documented for a session not held was not seen. The schedule was unchanged afterwards.
+- The guide says every reserve and cancel answers 409 while writes are closed. A 400 therefore points to writes being open. `reseat probe` reads 400 or 404 as open and any other answer as unclear. A reversible booking is the proof.
 
 ## Schedule fields
 

@@ -4,6 +4,7 @@ API rules this module exists to respect:
 - Reads before writes. GetSession first, so the attendee sees the band before
   giving the seat up. A seat released while the band is unavailable is likely gone.
 - CancelReservation is not idempotent. 404 means not held. Never retried.
+  When checked on 12 October 2026 the live API answered 400 for a session not held. The read-back decides.
 - After the write, read back GetSchedule and journal request, response and read-back.
 - Writes return 409 until 8 October 2026.
 """
@@ -46,8 +47,9 @@ def check(client: EventsClient, event_id: str, session_id: str) -> CancelCheck:
     return CancelCheck(s, session_id in sched.reserved, bool(band and band.open))
 
 
-def cancel(client: EventsClient, store: Store, event_id: str, session_id: str) -> CancelResult:
-    """One DELETE, then a read-back. Never retried."""
+def cancel(client: EventsClient, store: Store, event_id: str, session_id: str, *,
+           was_held: bool) -> CancelResult:
+    """One DELETE, then a read-back. Never retried. `was_held` is what check() saw just before."""
     try:
         client.cancel(event_id, session_id)
     except OperationClosed:
@@ -58,16 +60,19 @@ def cancel(client: EventsClient, store: Store, event_id: str, session_id: str) -
         if e.status == 404:
             store.journal(event_id, OP, session_id, {"status": 404}, "not_held")
             return CancelResult("not_held", "Not held, so nothing was cancelled (404).")
-        err = f"{e.status} {e}"
+        err, refused = f"{e.status} {e}", e.status == 400
     else:
-        err = None
+        err, refused = None, False
     try:
         sched: Schedule | None = client.get_schedule(event_id)
     except ApiError as e:
         sched = None
         err = (err + "; " if err else "") + f"read-back failed: {e.status} {e}"
     gone = sched is not None and session_id not in sched.reserved
-    if err is None and gone:
+    if refused and gone and not was_held:
+        res = CancelResult("not_held", f"Not cancelled: the API answered {err}, and GetSchedule does "
+                            "not list it.", sched)
+    elif err is None and gone:
         res = CancelResult("cancelled", "Cancelled. GetSchedule no longer lists it.", sched)
     elif gone:
         res = CancelResult("cancelled", f"Cancelled despite an error ({err}), per read-back.", sched)

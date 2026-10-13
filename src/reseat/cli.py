@@ -23,9 +23,9 @@ from . import cancel as cancel_engine
 from . import favorites as favorites_engine
 from . import guard as guard_engine
 from . import rules as rules_mod
-from .client import ApiError, EventsClient, NotRegistered, OperationClosed
+from .client import ApiError, AuthRequired, EventsClient, NetworkError, NotRegistered, OperationClosed
+from .router import CODE, WRITES_CLOSED, Execution, Outcome, Plan, Router, run_booking, target_name
 from .router import OP as RESERVE_OP
-from .router import WRITES_CLOSED, Execution, Outcome, Plan, Router, run_booking
 from .store import Store, SweepRefused
 from .swap import Swap, SwapBusy, SwapResult
 from .watcher import Proposal, Watcher, WatchError, WatchEvent
@@ -61,6 +61,21 @@ def _code(st: Store | None, event: str, sid: str, when: bool = False) -> str:
     t = s.session_time
     at = f" ({t.date} {t.time})" if when and t and t.date else ""
     return f"{s.abbreviation or sid}{at}"
+
+
+def _target(st: Store | None, event: str, label: str) -> str:
+    """A target as a person reads it. A target pinned by session id is shown by its code, never the id."""
+    if st is None:
+        return label if CODE.fullmatch(label or "") else "a pinned sitting"
+    return target_name(label, st, event)
+
+
+def _who(st: Store | None, event: str, label: str, sid: str, known: str | None = None) -> str:
+    """Target and sitting, such as 'ARC302 ARC302-R1'. Once when they read the same."""
+    name, code = _target(st, event, label), known or _code(st, event, sid)
+    if code == sid:                                   # not in the local catalog: never print the id
+        return name
+    return code if name == code or name == "a pinned sitting" else f"{name} {code}"
 
 
 def _client() -> EventsClient:
@@ -279,7 +294,7 @@ def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
         for sid in res.successful:
             con.print(f"[green]favorited[/green] {_esc(sid)}")
         for f in res.failed:
-            con.print(f"[yellow]{_esc(f.session_id)}: {_esc(f.code)}[/yellow]")
+            con.print(f"[yellow]{_esc(_code(st, event, f.session_id))}: {_esc(f.code)}[/yellow]")
     if not dry_run:
         back = c.get_schedule(event)
         missing = [i for i in ids if i not in back.favorites]
@@ -299,10 +314,25 @@ def probe(event: str = config.DEFAULT_EVENT,
                   "such as a keynote.[/red]")
         raise typer.Exit(2)
     try:
+        c.get_session(event, session_id)            # a typo answers 404 here, before any write
+    except ApiError as e:
+        con.print(f"[red]Cannot read that session: {e.status} {_esc(e.message)}. Nothing was sent."
+                  "[/red]")
+        raise typer.Exit(2) from None
+    try:
         opened = c.writes_open(event, session_id)
     except OperationClosed:
         opened = False
-    con.print("[green]Writes are open.[/green]" if opened else "[yellow]Writes are closed (409).[/yellow]")
+    except (AuthRequired, NetworkError) as e:
+        con.print(f"[yellow]No answer about writes: {_esc(e)}. Your schedule is unchanged.[/yellow]")
+        raise typer.Exit(1) from None
+    except ApiError as e:
+        con.print(f"[yellow]Unclear: the API answered {e.status} {_esc(e.message)}. That is not the 409 "
+                  "that means closed, nor an answer that shows open. Your schedule is unchanged.[/yellow]")
+        raise typer.Exit(1) from None
+    con.print("[green]Writes look open: the API refused the cancel without a 409. A reversible booking "
+              "confirms it.[/green]" if opened
+              else "[yellow]Writes are closed (409).[/yellow]")
 
 
 
@@ -457,7 +487,7 @@ def favorites_sync(event: str = config.DEFAULT_EVENT,
     for o in res.outcomes:
         color = {"added": "green", "already": "dim", "not_sent": "dim"}.get(o.status, "yellow")
         label = "would add" if dry_run and o.status == "not_sent" else o.status
-        con.print(f"  [{color}]{label}[/{color}] {_esc(o.target)} {_esc(_code(st, event, o.session_id))}"
+        con.print(f"  [{color}]{label}[/{color}] {_esc(_who(st, event, o.target, o.session_id))}"
                   f"{_esc(' ' + o.code if o.code else '')}")
     con.print(f"{len(res.wanted)} sittings: {res.count('added')} added, {res.count('already')} already "
               f"favorited, {res.count('failed')} failed, {res.count('unconfirmed')} unconfirmed.")
@@ -511,16 +541,17 @@ def _print_plan(plan: Plan, store: Store, event: str) -> None:
         s = store.get(event, p.session_id)
         when = f"{s.session_time.date} {s.session_time.time}" if s and s.session_time else ""
         _row(t, str(i), p.code, p.type or "", when, (s.campus_venue if s else "") or "",
-                  p.target, "backup" if p.backup else "sitting")
+                  _target(store, event, p.target), "backup" if p.backup else "sitting")
     con.print(t)
     if plan.deferred:
         con.print(f"Over this minute's quota, next round: {_esc(', '.join(p.code for p in plan.deferred))}")
     if plan.held_targets:
-        con.print(f"Already held: {_esc(', '.join(plan.held_targets))}")
+        con.print(f"Already held: {_esc(', '.join(_target(store, event, h) for h in plan.held_targets))}")
     if plan.exhausted:
-        con.print(f"[yellow]Nothing left to try for: {_esc(', '.join(plan.exhausted))}[/yellow]")
+        gone = ", ".join(_target(store, event, x) for x in plan.exhausted)
+        con.print(f"[yellow]Nothing left to try for: {_esc(gone)}[/yellow]")
     for sk in plan.skipped:
-        con.print(f"  [dim]skip {_esc(sk.target)} {_esc(_code(store, event, sk.session_id))}: "
+        con.print(f"  [dim]skip {_esc(_who(store, event, sk.target, sk.session_id))}: "
                   f"{_esc(sk.reason)}[/dim]")
 
 
@@ -537,8 +568,8 @@ def _print_round(plan: Plan, ex: Execution, st: Store | None = None,
         extra = (f" conflicts with {', '.join(_code(st, event, c) for c in o.conflicts_with)}"
                  if o.conflicts_with else "")
         note = f" ({o.note})" if o.note and o.status != "not_sent" else ""
-        con.print(f"  [{color}]{_esc(o.status)}[/{color}] {_esc(o.target)} "
-                  f"{_esc(_code(st, event, o.session_id))}"
+        con.print(f"  [{color}]{_esc(o.status)}[/{color}] "
+                  f"{_esc(_who(st, event, o.target, o.session_id))}"
                   f"{_esc(' ' + o.code if o.code else '')}{_esc(extra)}{_esc(note)}")
     if ex.error:
         con.print(f"[red]{_esc(ex.error)}[/red]")
@@ -589,7 +620,8 @@ def book(event: str = config.DEFAULT_EVENT,
         raise typer.Exit(4)
 
 
-def _print_watch_event(ev: WatchEvent) -> None:
+def _print_watch_event(ev: WatchEvent, st: Store | None = None,
+                       event: str = config.DEFAULT_EVENT) -> None:
     d = ev.data
     if ev.kind == "sweep":
         when = datetime.fromtimestamp(ev.at).strftime("%H:%M:%S")
@@ -599,11 +631,11 @@ def _print_watch_event(ev: WatchEvent) -> None:
             con.print(f"{_esc(when)} {d['count']} sessions, {d['added']} added, {d['opened']} opened, "
                       f"{d['moved']} moved, {d['booked']} booked, {d['proposed']} proposed")
     elif ev.kind == "booked":
-        con.print(f"  [green]booked[/green] {_esc(d['target'])} {_esc(d['code'] or d['session_id'])} "
+        con.print(f"  [green]booked[/green] {_esc(_who(st, event, d['target'], d['session_id'], d['code']))} "
                   f"{_esc(d['title'] or '')}")
     elif ev.kind == "proposed":
-        con.print(f"  [cyan]swap proposed[/cyan] {_esc(d['target'])}: "
-                  f"{_esc(d['held_id'])} -> {_esc(d['wanted_id'])} "
+        con.print(f"  [cyan]swap proposed[/cyan] {_esc(_target(st, event, d['target']))}: "
+                  f"{_esc(_code(st, event, d['held_id']))} -> {_esc(_code(st, event, d['wanted_id']))} "
                   f"plan {d['plan_id']}{' (auto)' if d['auto'] else ''}")
     elif ev.kind == "swap":
         con.print(f"  [cyan]swap {d['state']}[/cyan] plan {d['plan_id']}")
@@ -641,7 +673,7 @@ def watch(event: str = config.DEFAULT_EVENT,
     except WatchError as e:
         con.print(f"[red]{_esc(e)}[/red]")
         raise typer.Exit(2) from None
-    w.subscribe(_print_watch_event)
+    w.subscribe(lambda ev: _print_watch_event(ev, w.store, w.event_id))
     if once:
         raise typer.Exit(1 if w.tick().error else 0)
     try:
@@ -775,7 +807,7 @@ def serve(event: str = config.DEFAULT_EVENT,
             link = f", and a link to http://{public}:{a.port} for a tap to open" if reachable else ""
             con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
                       "Nothing else.")
-        w.subscribe(_print_watch_event)
+        w.subscribe(lambda ev: _print_watch_event(ev, w.store, w.event_id))
         if a.auth_required:
             con.print("Open this once on each device. It works one time:")
             con.print(f"  {_esc(a.one_time_link(public))}", soft_wrap=True)      # never wrap a link
@@ -895,7 +927,7 @@ def cancel(session_id: str, event: str = config.DEFAULT_EVENT,
             raise typer.Exit(1)
     if not yes and not typer.confirm("Cancel this reservation?"):
         raise typer.Exit(1)
-    res = cancel_engine.cancel(c, st, event, session_id)
+    res = cancel_engine.cancel(c, st, event, session_id, was_held=chk.held)
     color = {"cancelled": "green", "not_held": "yellow", "closed": "yellow"}.get(res.status, "red")
     con.print(f"[{color}]{_esc(res.message)}[/{color}]")
     raise typer.Exit({"cancelled": 0, "not_held": 1, "closed": 3}.get(res.status, 4))

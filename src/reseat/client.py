@@ -307,8 +307,11 @@ class EventsClient:
     # ------------------------------------------------------------------ probes
 
     def writes_open(self, event_id: str, probe_session_id: str) -> bool:
-        """Cancel a session we do not hold. 409 means closed, 404 means open.
+        """Cancel a session we do not hold. 409 means closed. 404 or 400 means open.
 
+        The guide says every reserve and cancel returns 409 while writes are closed, so any other
+        refusal came after that check. The spec documents 404 for a session not held. On
+        12 October 2026 the live API answered 400 "The request could not be applied to this session".
         Never changes the schedule. Pick a probe session the attendee will never hold.
         """
         try:
@@ -316,7 +319,7 @@ class EventsClient:
         except OperationClosed:
             return False
         except ApiError as e:
-            if e.status == 404:
+            if e.status in (400, 404):
                 return True
             raise
         # A 204 would mean we held it. Treat as open but warn upstream.
@@ -341,6 +344,7 @@ def _check_batch(ids: list[str]) -> list[str]:
 
 def _msg(r: httpx.Response) -> str:
     try:
-        return str(r.json().get("message", r.text[:200]))
+        body = r.json()
     except ValueError:
         return r.text[:200]
+    return str(body.get("message", r.text[:200])) if isinstance(body, dict) else r.text[:200]

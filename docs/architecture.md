@@ -29,7 +29,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - **No search.** re:Seat pulls the whole catalog, about 2,000 sessions in 9 pages, and works locally.
 - **Seat bands, not counts.** `available`, `limited`, `veryLimited`, `unavailable`, `walkUp`. A band change is the signal that a seat freed.
 - **Partial success.** Reserve and favorite return 200 with a `failed` list. Unknown failure codes are treated as generic refusals.
-- **No blind retry.** A repeated reserve reports `alreadyScheduled`. Cancel on a seat not held is a 404. Every write is followed by a `GetSchedule` read-back.
+- **No blind retry.** A repeated reserve reports `alreadyScheduled`. Cancel on a seat not held is a 404 in the spec and was a 400 in the live API when checked on 12 October, and the read-back decides. Every write is followed by a `GetSchedule` read-back.
 - **Quota counts sessions.** Ten reserves in one call spend 10 of the 30 per minute.
 - **No swap.** Reserving a session that overlaps a held one is refused. Cancel must come first. That is the risk re:Seat manages.
 - **Two-day gap.** The portal opens reserved seating on 6 October 2026. API writes open on 8 October. re:Seat cannot help with the first rush.
