@@ -1446,3 +1446,79 @@ def test_today_and_approve_render_two_balanced_columns_empty_and_full():
     assert "Booked today" in pages.render_approve(full, True) and "BOOKED" in pages.render_approve(full, True)
     assert "data-leave=" in pages.render_today(full, True) and "data-leave-label" in pages.render_today(full)
     assert "data-leave=" not in pages.render_today(empty, True)
+
+
+@pytest.mark.parametrize("mins,text", [
+    (1, "1 min"), (59, "59 min"), (60, "1 h"), (61, "1 h 1 min"), (320, "5 h 20 min"),
+    (1440, "1 day"), (1500, "1 day 1 h"), (3180, "2 days 5 h"), (10079, "6 days 23 h"),
+    (10080, "7 days"), (69668, "48 days"),
+])
+def test_leave_countdown_reads_in_days_hours_and_minutes(mins, text):
+    """Seen live on 13 October: 'LEAVE IN 69668 min' for a session 48 days away."""
+    assert pages.wait_text(mins) == text
+
+
+def test_the_live_countdown_uses_the_same_rule():
+    js = (pathlib.Path(pages.__file__).parent / "static" / "app.js").read_text()
+    assert "waitText(mins)" in js and 'mins + " min" : "now"' not in js
+
+
+@pytest.mark.parametrize("mins,text", [
+    (1439, "23 h 59 min"), (1441, "1 day"), (1499, "1 day"), (2880, "2 days"),
+    (2940, "2 days 1 h"), (10140, "7 days"), (10199, "7 days"),
+])
+def test_leave_countdown_edges_inside_a_unit(mins, text):
+    """Minutes are dropped from a day count, hours from a week or more. Never 0 h, never '1 days'."""
+    assert pages.wait_text(mins) == text
+
+
+def test_today_hero_shows_the_readable_countdown_and_leave_now():
+    d, _, sc = panel()
+    sc["seat"]()
+    snap = d.app.snapshot()
+    hero = snap["view"]["today"]["hero"]
+    for secs, want in [(69668 * 60, ">48 days<"), (61, ">2 min<"), (60, ">1 min<"),
+                       (5 * 3600 + 20 * 60, ">5 h 20 min<"), (0, ">now<"), (-300, ">now<")]:
+        hero["leave_at"] = snap["now"] + secs
+        html = pages.render_today(snap, True)
+        assert want in html, (secs, want)
+        assert ("LEAVE NOW" in html) == (secs <= 0), secs
+    d.watcher.stop()
+
+
+def test_the_page_and_the_live_countdown_share_every_boundary():
+    """app.js waitText must keep pages.wait_text's breakpoints: 60 min, 1440 min, 7 days, plural at 2."""
+    js = (pathlib.Path(pages.__file__).parent / "static" / "app.js").read_text()
+    body = js[js.index("function waitText"):js.index("function tick")]
+    for piece in ("mins < 60", "mins < 1440", "d < 7 && h", "d > 1", '" days"', '" day"', '" h "', '" min"'):
+        assert piece in body, piece
+
+
+def test_demo_and_blocks_update_buttons_refuse_a_foreign_origin_and_accept_the_page(served):
+    """Every remaining POST route on the demo page: a scenario button and the blocks Update button."""
+    d, http = served
+    page = str(http.base_url).rstrip("/")
+    key = d.app.scenarios[0]["key"]
+    for origin in ("null", "https://attacker.example"):
+        assert http.post(f"/demo/{key}", headers={"Origin": origin, "X-Reseat": "1"}).status_code == 403
+    assert http.post(f"/demo/{key}", headers={"Origin": page, "X-Reseat": "1"}).status_code == 200
+
+
+def test_blocks_update_over_http_from_the_page_origin():
+    d, events, server, token = _stale_offer()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        http = httpx.Client(base_url=f"http://127.0.0.1:{d.app.port}", timeout=60)
+        page = str(http.base_url).rstrip("/")
+        for origin in ("null", "https://attacker.example"):
+            r = http.post(f"/guard/{token}", headers={"Origin": origin, "X-Reseat": "1"})
+            assert r.status_code == 403
+        assert d.app.blocks_state and d.app.blocks_state["token"] == token          # offer kept
+        r = http.post(f"/guard/{token}", headers={"Origin": page, "X-Reseat": "1"})
+        assert r.status_code == 200 and r.json()["ok"], r.json()
+        assert _guard_readbacks(d)
+        assert http.post(f"/guard/{token}", headers={"Origin": page, "X-Reseat": "1"}).status_code == 404
+    finally:
+        d.watcher.stop()
+        server.shutdown()
+        server.server_close()

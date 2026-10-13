@@ -8,13 +8,25 @@
   const now = () => (Date.now() + offset) / 1000;
   let busy = false;
 
+  // Same rule as wait_text in pages.py: 35 min, 5 h 20 min, 2 days 5 h, 48 days.
+  function waitText(mins) {
+    if (mins < 60) return mins + " min";
+    if (mins < 1440) {
+      const h = Math.floor(mins / 60), m = mins % 60;
+      return m ? h + " h " + m + " min" : h + " h";
+    }
+    const hours = Math.floor(mins / 60), d = Math.floor(hours / 24), h = hours % 24;
+    const days = d + (d > 1 ? " days" : " day");
+    return d < 7 && h ? days + " " + h + " h" : days;
+  }
+
   function tick() {
     document.querySelectorAll("[data-until]").forEach((el) => {
       el.textContent = Math.max(0, Math.round(Number(el.dataset.until) - now())) + " s";
     });
     document.querySelectorAll("[data-leave]").forEach((el) => {
       const mins = Math.ceil((Number(el.dataset.leave) - now()) / 60);
-      el.textContent = mins > 0 ? mins + " min" : "now";
+      el.textContent = mins > 0 ? waitText(mins) : "now";
       const label = document.querySelector("[data-leave-label]");
       if (label) label.textContent = mins > 0 ? "LEAVE IN" : "LEAVE NOW";
     });

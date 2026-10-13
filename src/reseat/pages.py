@@ -1110,6 +1110,19 @@ def _side_html(label: str, side: dict[str, Any], cls: str) -> str:
             f'<div>{e(side["when"])}</div><div class="muted">{e(side["venue"])}</div></div>')
 
 
+def wait_text(mins: int) -> str:
+    """A countdown a person reads at a glance: 35 min, 5 h 20 min, 2 days 5 h, 48 days.
+    static/app.js counts down with the same rule."""
+    if mins < 60:
+        return f"{mins} min"
+    if mins < 1440:
+        h, m = divmod(mins, 60)
+        return f"{h} h {m} min" if m else f"{h} h"
+    d, h = divmod(mins // 60, 24)
+    days = f"{d} day" + ("s" if d > 1 else "")
+    return f"{days} {h} h" if d < 7 and h else days
+
+
 def render_today(snap: dict[str, Any], demo: bool = False) -> str:
     v = snap.get("view") or {}
     t, s = v["today"], v["status"]
@@ -1124,7 +1137,7 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
                 if h["walk"] is not None
                 else f"Be at {h['venue']} by the doors. ")
         mins = math.ceil(max(0, h["leave_at"] - snap["now"]) / 60)
-        label, big = ("LEAVE IN", f"{mins} min") if mins > 0 else ("LEAVE NOW", "now")
+        label, big = ("LEAVE IN", wait_text(mins)) if mins > 0 else ("LEAVE NOW", "now")
         out.append(f'<section class="hero"><div class="mono" data-leave-label>{label}</div>'
                    f'<div class="big" data-leave="{h["leave_at"]:.0f}">{big}</div>'
                    f'<div>for <strong>{e(h["code"])}</strong> at {e(h["start"])}, {e(h["venue"])}'

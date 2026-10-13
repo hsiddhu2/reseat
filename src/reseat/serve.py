@@ -509,7 +509,9 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
-            self.send_header("Referrer-Policy", "no-referrer")
+            # same-origin, not no-referrer: under no-referrer a browser sends "Origin: null" on a form
+            # POST such as the login, and the cross-site check below refuses it.
+            self.send_header("Referrer-Policy", "same-origin")
             # Scripts only from /static/app.js. Inline style attributes place the week grid's blocks.
             self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; "
                              "style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self'; "
@@ -573,7 +575,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
                 self._json(413, {"error": "too large"})
                 return
             origin = self.headers.get("Origin")
-            if origin and urlsplit(origin).netloc != (self.headers.get("Host") or ""):
+            if origin and (origin == "null" or urlsplit(origin).netloc != (self.headers.get("Host") or "")):
                 self._json(403, {"error": "cross-site request"})
                 return
             body = self.rfile.read(length) if length else b""

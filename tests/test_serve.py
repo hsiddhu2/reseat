@@ -326,6 +326,27 @@ def test_cross_site_post_is_refused_even_to_login(served):
     assert len(app._failures) == 0               # a cross-site form cannot lock the owner out
 
 
+def test_a_browser_post_from_the_page_itself_is_accepted(served):
+    """Browsers send the real Origin on a same-origin POST only when the page allows a referrer.
+    Under no-referrer they send "Origin: null", and the login and every button were refused."""
+    _, _, app, http = served
+    assert http.get("/login").headers["Referrer-Policy"] == "same-origin"
+    page = {"Origin": str(http.base_url).rstrip("/")}
+    secret = app.rules.serve_secret
+    r = http.post("/login", data={"secret": secret}, headers=page)
+    assert r.status_code == 303 and S.COOKIE in r.cookies
+    http.cookies.set(S.COOKIE, r.cookies[S.COOKIE])
+    plan_id = "x" * 22
+    assert http.post(f"/approve/{plan_id}", headers={**page, "X-Reseat": "1"}).status_code == 404
+
+
+def test_origin_null_is_still_refused(served):
+    _, _, app, http = served
+    signed_in(app, http)
+    assert http.post("/login", data={"secret": "wrong"}, headers={"Origin": "null"}).status_code == 403
+    assert http.post(f"/approve/{'x' * 22}", headers={"Origin": "null", "X-Reseat": "1"}).status_code == 403
+
+
 def test_session_tokens_expire(served):
     _, _, app, http = served
     signed_in(app, http)
@@ -398,3 +419,93 @@ def test_onsite_cap_warning_fires_once_a_day(clock):
     for _ in range(3):
         w.onsite_tick("2026-12-01")
     assert len([e for e in events if e.kind == "error" and "first 40" in e.data["message"]]) == 1
+
+
+# ---------------------------------------------------------------------- Origin on every POST route
+
+BAD_ORIGINS = ["null", "https://attacker.example", "http://127.0.0.1:1"]    # opaque, cross-site, other port
+
+
+def _page_origin(http):
+    return str(http.base_url).rstrip("/")
+
+
+@pytest.mark.parametrize("route", ["approve", "skip"])
+def test_plan_buttons_accept_the_page_origin_and_refuse_any_other(served, route):
+    """Approve and Keep (skip) act only on a plan id, and only from the page's own origin."""
+    fake, w, app, http = served
+    signed_in(app, http)
+    plan_id = w.pending()[0].plan_id
+    for origin in BAD_ORIGINS:
+        r = http.post(f"/{route}/{plan_id}", headers={"Origin": origin, "X-Reseat": "1"})
+        assert r.status_code == 403 and r.json() == {"error": "cross-site request"}, origin
+    assert [p.plan_id for p in w.pending()] == [plan_id]               # nothing taken or run
+    assert fake.counts.get("ReserveSessions", 0) == 0 and fake.counts.get("CancelReservation", 0) == 0
+    r = http.post(f"/{route}/{plan_id}", headers={"Origin": _page_origin(http), "X-Reseat": "1"})
+    assert r.status_code == 200
+    if route == "approve":
+        assert r.json()["state"] == "verified" and fake.schedule.reserved == {"B1-session-id"}
+    else:
+        assert r.json() == {"skipped": True} and w.pending() == []
+
+
+def test_blocks_update_accepts_the_page_origin_and_refuses_any_other(served):
+    """The leave-now blocks Update button posts to /guard/<token>. A refused POST leaves the offer."""
+    _, _, app, http = served
+    signed_in(app, http)
+    token = "t" * 22
+    app.blocks_state = {"token": token}
+    for origin in BAD_ORIGINS:
+        r = http.post(f"/guard/{token}", headers={"Origin": origin, "X-Reseat": "1"})
+        assert r.status_code == 403, origin
+    assert app.blocks_state == {"token": token}                         # the offer is still there
+    r = http.post(f"/guard/{token}", headers={"Origin": _page_origin(http), "X-Reseat": "1"})
+    assert r.status_code == 200 and "ok" in r.json()
+    assert app.blocks_state is None or app.blocks_state.get("token") != token     # spent
+
+
+def test_login_accepts_the_page_origin_and_refuses_any_other_without_counting_a_failure(served):
+    _, _, app, http = served
+    for origin in BAD_ORIGINS:
+        r = http.post("/login", data={"secret": SECRET}, headers={"Origin": origin})
+        assert r.status_code == 403 and S.COOKIE not in r.cookies, origin
+    assert len(app._failures) == 0
+    r = http.post("/login", data={"secret": SECRET}, headers={"Origin": _page_origin(http)})
+    assert r.status_code == 303 and S.COOKIE in r.cookies
+
+
+def test_tailscale_host_with_a_matching_origin_is_accepted(served):
+    """From the phone over Tailscale the Host is the laptop's tailnet name, not loopback.
+    With serve_secret set, a POST whose Origin matches that Host goes through. Any other is refused."""
+    _, w, app, http = served
+    ts = f"laptop.tail1234.ts.net:{app.port}"
+    page = {"Host": ts, "Origin": f"http://{ts}"}
+    r = http.post("/login", data={"secret": SECRET}, headers=page)
+    assert r.status_code == 303 and S.COOKIE in r.cookies
+    http.cookies.set(S.COOKIE, r.cookies[S.COOKIE])
+    assert http.get("/api/state", headers={"Host": ts}).status_code == 200
+    plan_id = w.pending()[0].plan_id
+    for origin in ["null", f"http://127.0.0.1:{app.port}", "http://laptop.tail1234.ts.net:1"]:
+        assert http.post(f"/skip/{plan_id}", headers={"Host": ts, "Origin": origin, "X-Reseat": "1"}
+                         ).status_code == 403, origin
+    r = http.post(f"/skip/{plan_id}", headers={**page, "X-Reseat": "1"})
+    assert r.status_code == 200 and r.json() == {"skipped": True}
+
+
+def test_post_with_page_origin_still_needs_the_cookie_and_the_header(served):
+    """A matching Origin is necessary, not sufficient."""
+    _, w, app, http = served
+    plan_id = w.pending()[0].plan_id
+    page = {"Origin": _page_origin(http)}
+    no_cookie = http.post(f"/approve/{plan_id}", headers={**page, "X-Reseat": "1"})
+    assert no_cookie.status_code == 403
+    signed_in(app, http)
+    assert http.post(f"/approve/{plan_id}", headers=page).status_code == 403      # no X-Reseat
+    assert [p.plan_id for p in w.pending()] == [plan_id]
+
+
+def test_every_response_carries_the_same_origin_referrer_policy(served):
+    _, _, app, http = served
+    signed_in(app, http)
+    for path in ("/login", "/", "/today", "/api/state", "/static/app.js", "/no-such-page"):
+        assert http.get(path).headers["Referrer-Policy"] == "same-origin", path
