@@ -40,6 +40,8 @@ ListEvents                      -> reinvent2026 listed with two other events
 
 The 14 reservations were made in the AWS portal after seating opened on 6 October. Their session ids begin `17842318`. No id in the 1 October catalog begins that way: those begin `1780` and `1790`.
 
+**Correction, 12 October.** The paragraph above is wrong. Five of the 14 ids begin `17842318`, and 42 sessions in the 1 October catalog do. Ids in that catalog also begin `1784`, `1786`, `1787`, `1785` and others, not only `1780` and `1790`. When the catalog returned, ids were kept. See [2026-10-12-catalog-returned.md](2026-10-12-catalog-returned.md).
+
 ## Result
 
 On the evening of 8 October the Events API answered GetSchedule but served no sessions: an empty catalog and 404 for every session tried, including held ones.
@@ -55,7 +57,7 @@ Three re:Seat fixes came from this, each tested against the fake:
 ## What it does not prove
 
 - Why the catalog was empty, or for how long. It may have been a short outage on the API side.
-- Whether session ids changed. A sync once the catalog is back will show that.
+- Whether session ids changed. A sync once the catalog is back will show that. It did on 12 October: they had not.
 - Anything about booking through the API. No write was sent.
 
 ## Daily checks
@@ -72,4 +74,5 @@ One line per check until the catalog returns, as `date time, command, result`. T
 2026-10-10 13:45 PDT  reseat sync --no-abstracts  refused, totalCount 0 also through the official MCP server
 2026-10-10 15:31 PDT  reseat sync  refused: the API returned an empty catalog
 2026-10-11 16:47 PDT  reseat sync  refused: the API returned an empty catalog
+2026-10-12 20:12 PDT  reseat sync  2227 sessions: the catalog returned, see 2026-10-12-catalog-returned.md
 ```

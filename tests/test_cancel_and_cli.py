@@ -316,3 +316,55 @@ def test_probe_without_an_answer_says_so(cli_env, monkeypatch, client, err):
     monkeypatch.setattr(client, "writes_open", boom)
     r = runner.invoke(cli.app, ["probe", "--session-id", "S-KEY1"])
     assert r.exit_code == 1 and "No answer about writes" in r.output and "answered 0" not in r.output
+
+
+# ---------------------------------------------------------------------- a code changed under the same id
+
+
+def test_code_changed_under_the_same_id_pinned_follows_and_named_is_reported(cli_env):
+    """Live API, 12 October 2026: 13 sessions kept their id and changed code, such as SEC330 to SEC501.
+    A target pinned by session_id follows the change. A target named by the old code no longer resolves,
+    and rules check says so."""
+    fake, store, home = cli_env
+    assert runner.invoke(cli.app, ["sync", "--no-abstracts"]).exit_code == 0
+    renamed = fake.sessions["S-SEC1"].model_copy(update={"abbreviation": "SEC501"})
+    fake.sessions["S-SEC1"] = renamed
+    r = runner.invoke(cli.app, ["sync", "--no-abstracts"])
+    assert r.exit_code == 0, r.output
+    assert store.get(EV, "S-SEC1").abbreviation == "SEC501"
+
+    write_rules(home / "rules.yaml", "targets:\n- session_id: S-SEC1\n")
+    r = runner.invoke(cli.app, ["rules", "check"])
+    assert r.exit_code == 0 and "All targets resolve" in r.output, r.output
+    r = runner.invoke(cli.app, ["book", "--dry-run"])
+    assert r.exit_code == 0 and "SEC501" in r.output and "S-SEC1" not in r.output, r.output
+
+    write_rules(home / "rules.yaml", "targets:\n- code: SEC201\n- session_id: S-SEC1\n")
+    r = runner.invoke(cli.app, ["rules", "check"])
+    assert r.exit_code == 1 and "unresolved" in r.output and "code SEC201 not in catalog" in r.output
+    assert "session_id S-SEC1" not in r.output
+    assert fake.counts["ReserveSessions"] == 0
+
+
+def test_watch_and_serve_events_print_pinned_targets_by_code(store, capsys):
+    """watch and serve share _print_watch_event. A pinned target and its sittings print by code."""
+    from reseat.watcher import WatchEvent
+    store.apply_sweep(EV, sample_sessions(), with_abstracts=False)
+    cli._print_watch_event(WatchEvent("booked", 0.0, {"target": "S-SEC1", "session_id": "S-SEC1",
+                                                      "code": None, "title": "Security basics"}), store, EV)
+    cli._print_watch_event(WatchEvent("proposed", 0.0, {"target": "S-ARC2", "held_id": "S-ARC1",
+                                                        "wanted_id": "S-ARC2", "plan_id": "p1",
+                                                        "auto": False}), store, EV)
+    out = capsys.readouterr().out
+    assert "SEC201" in out and "ARC301-R1 -> ARC301-R2" in out
+    assert "S-SEC1" not in out and "S-ARC1" not in out and "S-ARC2" not in out
+
+
+def test_favorite_failure_is_printed_by_code_not_id(cli_env):
+    fake, store, _ = cli_env
+    store.apply_sweep(EV, sample_sessions(), with_abstracts=False)
+    fake.sessions.pop("S-SEC1")                       # the API refuses it, the local catalog knows it
+    r = runner.invoke(cli.app, ["favorite", "S-SVS1", "S-SEC1"])
+    assert "favorited SVS401" in r.output and "SEC201: other" in r.output
+    assert "Read-back does not list as favorites: SEC201" in r.output       # read back after the write
+    assert "S-SVS1" not in r.output and "S-SEC1" not in r.output

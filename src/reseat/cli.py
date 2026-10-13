@@ -292,7 +292,7 @@ def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
         outcome = "partial" if res.failed else "success"
         st.journal(event, "AssociateFavorites", batch, res.model_dump(), outcome)
         for sid in res.successful:
-            con.print(f"[green]favorited[/green] {_esc(sid)}")
+            con.print(f"[green]favorited[/green] {_esc(_code(st, event, sid))}")
         for f in res.failed:
             con.print(f"[yellow]{_esc(_code(st, event, f.session_id))}: {_esc(f.code)}[/yellow]")
     if not dry_run:
@@ -301,7 +301,8 @@ def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
         st.journal(event, "GetSchedule", ids, back.model_dump(by_alias=True),
                    "readback-missing" if missing else "readback-ok")
         if missing:
-            con.print(f"[red]Read-back does not list as favorites: {_esc(', '.join(missing))}[/red]")
+            gone = ", ".join(_code(st, event, i) for i in missing)
+            con.print(f"[red]Read-back does not list as favorites: {_esc(gone)}[/red]")
 
 
 @app.command()

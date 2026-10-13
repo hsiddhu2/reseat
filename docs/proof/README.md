@@ -31,8 +31,9 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 | Check | File | Status |
 |---|---|---|
 | Phone page over Tailscale from home | `2026-10-DD-tailscale.md`, on the day it is run | to do |
-| Seat bands after reserved seating opens, 6 October | `2026-10-06-bands.md` | to do |
+| Seat bands after reserved seating opens | in [`2026-10-12-catalog-returned.md`](2026-10-12-catalog-returned.md) | done |
 | Live booking when API writes open, 8 October | `2026-10-08-live-booking.md` | to do |
 | One reversible round trip: reserve, read back, cancel, read back | `2026-10-08-round-trip.md` | to do |
 | The catalog came back empty on 8 October | [`2026-10-08-catalog-empty.md`](2026-10-08-catalog-empty.md) | done |
 | The catalog re-checked through re:Seat, plain HTTPS and the official MCP server, 9 October | [`2026-10-09-catalog-check.md`](2026-10-09-catalog-check.md) | done |
+| The catalog came back, ids kept, read-only checks and the probe, 12 October | [`2026-10-12-catalog-returned.md`](2026-10-12-catalog-returned.md) | done |
