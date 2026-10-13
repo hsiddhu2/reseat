@@ -873,7 +873,9 @@ def test_a_clock_jump_mentions_an_expired_swap_only_when_one_was_waiting():
     assert "expired" not in sc["down"]()
     sc["up"]()
     sc["seat"]()
-    assert "The waiting swap expired with the jump." in sc["leave"]()
+    said = [sc["leave"]() for _ in range(3)]       # jumps forward until the offer's 10 minutes pass
+    assert any("The waiting swap expired with the jump." in s for s in said)
+    assert sum("expired" in s for s in said) == 1
 
 
 # ---- the clearer dashboard: scenario headings, the result banner, session details

@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Any
 
-from . import guard
+from . import decisions, guard
 from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, overlaps, room_label, walk_minutes
 from .changes import GHOSTS
 from .client import QUOTAS
@@ -482,7 +482,8 @@ def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[
             ("Type", s.type_key or "Not set"), ("Seats now", s.seat_availability or "Not shown")]
     if leave:
         at = datetime.fromisoformat(leave.start).replace(tzinfo=UTC).astimezone(VEGAS)
-        walk = (f", about {leave.walk} min walk from {leave.origin} (estimate)" if leave.walk is not None
+        walk = (f", about {leave.walk} min walk from {leave.origin}, {leave.allow} allowed (estimate)"
+                if leave.walk is not None
                 else "")
         rows.append(("Leave", f"{at:%H:%M}{walk}. Doors close {CUTOFF_MINUTES} min before the start."))
     if blk.get("moved"):
@@ -602,7 +603,7 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
         leave_at = datetime.fromisoformat(b.start).replace(tzinfo=UTC).timestamp()
         if a.timestamp() > now:                  # held until it starts: a missed leave time shows as now
             hero = {"code": s.abbreviation, "start": f"{a:%H:%M}", "venue": s.campus_venue or "",
-                    "room": s.room_label or "", "origin": b.origin or "", "walk": b.walk,
+                    "room": s.room_label or "", "origin": b.origin or "", "walk": b.walk, "allow": b.allow,
                     "leave_at": leave_at, "doors": (a - timedelta(minutes=CUTOFF_MINUTES)).strftime("%H:%M")}
             break
     nxt: list[tuple[datetime, dict[str, Any]]] = []
@@ -632,7 +633,7 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
                          "open": bool(s.band and s.band.open),
                          "text": f"{s.type_key or 'Session'} at {s.campus_venue or 'a venue not set'}. "
                                  f"{VERDICT.get(adv.verdict, '')} Basis: {adv.basis}",
-                         "clash": _clash(s, today)})
+                         "clash": _clash(s, today, app.rules.arrive_confidence)})
     on_site = day in EVENT_DAYS.values() and local(now).date().isoformat() == day
     if on_site:
         wanted_today = [x for _t, sittings in wanted for x in sittings
@@ -647,7 +648,7 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
             "wanted": want, "cover": cover}
 
 
-def _clash(s: Session, held_today: list[Session]) -> str | None:
+def _clash(s: Session, held_today: list[Session], confidence: float) -> str | None:
     """Whether attending `s` collides with a held session's walk, in plain minutes."""
     win = _window(s)
     if not win:
@@ -668,7 +669,8 @@ def _clash(s: Session, held_today: list[Session]) -> str | None:
     if after:
         h = min(after, key=lambda x: _window(x)[0])  # type: ignore[index]
         walk = walk_minutes(s.campus_venue, h.campus_venue)
-        leave = _window(h)[0] - timedelta(minutes=CUTOFF_MINUTES + (walk or 0))  # type: ignore[index]
+        allow = decisions.walk_allowance(walk, confidence) if walk is not None else 0
+        leave = _window(h)[0] - timedelta(minutes=CUTOFF_MINUTES + allow)  # type: ignore[index]  # as the block
         early = (win[1] - leave).total_seconds() // 60
         if walk is not None and early > 0:
             return f"To reach {h.abbreviation} you would leave {int(early)} min early."
@@ -1118,7 +1120,7 @@ def render_today(snap: dict[str, Any], demo: bool = False) -> str:
            '</p><div class="two"><div class="col">']
     h = t["hero"]
     if h:
-        walk = (f"Walk {h['origin']} → {h['venue']}, about {h['walk']} min (estimate). "
+        walk = (f"Walk {h['origin']} → {h['venue']}, about {h['walk']} min, {h['allow']} allowed (estimate). "
                 if h["walk"] is not None
                 else f"Be at {h['venue']} by the doors. ")
         mins = math.ceil(max(0, h["leave_at"] - snap["now"]) / 60)

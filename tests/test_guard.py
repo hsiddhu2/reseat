@@ -47,7 +47,9 @@ def blocks_by_code(fake):
 
 
 def test_leave_times_walk_cutoff_and_buffer(held, store):
-    blocks, warnings = G.leave_blocks(G.held_sessions(store, EV, ["G3", "G2", "G1"]), rules())
+    # At 50 percent confidence the allowance is the typical walk, so these are the table minutes.
+    blocks, warnings = G.leave_blocks(G.held_sessions(store, EV, ["G3", "G2", "G1"]),
+                                      rules(RULES + "arrive_confidence: 0.5\n"))
     got = {b.code: (b.start, b.end, b.location) for b in blocks}
     # G1 Tue 10:00 PST = 18:00Z. Home Venetian to MGM 50 min. 10:00 - 11 - 50 = 08:59 PST.
     assert got["SEC201"] == ("2026-12-01T16:59:00", "2026-12-01T17:04:00", "MGM Grand")
@@ -70,7 +72,7 @@ def test_blocks_are_utc_seconds_zero_five_minutes_and_tagged(held, client, store
         assert (b - a).total_seconds() == 300
         assert p["description"].endswith(G.TAG) and len(p["description"]) <= 250
     assert blocks_by_code(held)["ARC301"]["description"] == (
-        "re:Seat leave-now. Walk MGM Grand to The Venetian, about 50 min (estimate). [reseat]")
+        "re:Seat leave-now. Walk MGM Grand to The Venetian, about 50 min, 59 allowed (estimate). [reseat]")
 
 
 def test_sync_is_idempotent(held, client, store):
@@ -90,7 +92,8 @@ def test_update_on_move_keeps_the_entry(held, client, store):
     store.apply_sweep(EV, list(held.sessions.values()), with_abstracts=False)
     res = G.sync(client, store, EV, rules())
     assert [b.code for _, b in res.plan.update] == ["DOP302"] and not res.plan.create
-    assert blocks_by_code(held)["DOP302"]["startDateTime"] == "2026-12-02T22:29:00"
+    # 15:00 - 11 - 24 allowed for the typical 20 min walk = 14:25 PST.
+    assert blocks_by_code(held)["DOP302"]["startDateTime"] == "2026-12-02T22:25:00"
     assert blocks_by_code(held)["DOP302"]["personalTimeId"] == ids["DOP302"]
 
 
@@ -161,16 +164,30 @@ def test_home_venue_must_be_on_campus():
 ])
 def test_queue_or_go_type_rules(typ, verdict):
     a = G.queue_or_go(mk("Q", "Q1", "2026-12-01", "10:00", "Wynn", typ=typ), [])
-    assert a.verdict == verdict and a.basis.startswith("Session type rule.")
+    assert a.verdict == verdict
+    if verdict == "unknown":
+        assert a.basis == "No rule for this session type."
+    else:
+        assert a.basis.startswith("Walk-up about ") and "Session type rule." in a.basis
 
 
-def test_queue_or_go_history_overrides_type_after_three_changes():
+def test_queue_or_go_history_moves_the_odds_gradually():
+    """A Beta-binomial: one freed seat moves a workshop's odds up a little, several move it to likely,
+    and fills that never free a seat move it down. No hard cutover."""
     s = mk("Q", "Q1", "2026-12-01", "10:00", "Wynn", typ="Workshop")
-    freed = [(1.0, None, "available"), (2.0, "available", "unavailable"), (3.0, "unavailable", "limited")]
-    assert G.queue_or_go(s, freed).verdict == "likely"
-    stuck = [(1.0, None, "available"), (2.0, "available", "limited"), (3.0, "limited", "unavailable")]
-    assert G.queue_or_go(s, stuck).verdict == "unlikely"
-    assert G.queue_or_go(s, stuck[:2]).basis.startswith("Session type rule.")
+    prior = G.queue_or_go(s, [])
+    once = [(1.0, None, "available"), (2.0, "available", "unavailable"), (3.0, "unavailable", "limited")]
+    one = G.queue_or_go(s, once)
+    assert prior.odds.p < one.odds.p and one.verdict == "unlikely"
+    many = [(0.0, None, "limited")] + [
+        (float(i), "limited" if i % 2 else "unavailable", "unavailable" if i % 2 else "limited")
+        for i in range(1, 13)]
+    assert G.queue_or_go(s, many).verdict == "likely"
+    stuck = [(1.0, None, "available"), (2.0, "available", "unavailable")]
+    low = G.queue_or_go(s, stuck)
+    assert low.odds.p < prior.odds.p and "fill 1 time and free a seat 0 times" in low.basis
+    for a in (prior, one, low):
+        assert 0 <= a.odds.lo <= a.odds.p <= a.odds.hi <= 1
 
 
 def test_cli_guard_sync(held, client, store, tmp_path, monkeypatch):
@@ -235,3 +252,83 @@ def test_old_wording_is_updated_in_place_once(held, client, store):
     res = G.sync(client, store, EV, rules())
     assert len(res.plan.update) == 3 and not res.plan.create and not res.plan.delete
     assert G.sync(client, store, EV, rules()).plan.empty
+
+
+# ---- QA: arrive_confidence, the default leave time, and the queue-or-go text on every surface
+
+
+def test_arrive_confidence_is_bounded_and_defaults_to_80_percent():
+    assert R.parse("targets: []\n").arrive_confidence == 0.8
+    for bad in ("0.49", "0.995", "1", "0", "-0.5"):
+        with pytest.raises(R.RulesError):
+            R.parse(f"arrive_confidence: {bad}\n")
+    assert R.parse("arrive_confidence: 0.5\n").arrive_confidence == 0.5
+    assert R.parse("arrive_confidence: 0.99\n").arrive_confidence == 0.99
+
+
+def test_half_confidence_allows_exactly_the_table_minutes(held, store):
+    blocks, _ = G.leave_blocks(G.held_sessions(store, EV, ["G1"]), rules(RULES + "arrive_confidence: 0.5\n"))
+    assert (blocks[0].walk, blocks[0].allow) == (50, 50)
+
+
+def test_default_leave_time_for_a_tight_change_takes_the_allowance_and_the_buffer(held, store):
+    blocks, warnings = G.leave_blocks(G.held_sessions(store, EV, ["G1", "G2"]), rules())
+    got = {b.code: b for b in blocks}
+    # G1: 10:00 - 11 - 59 allowed for the 50 min walk = 08:50 PST = 16:50Z.
+    assert got["SEC201"].start == "2026-12-01T16:50:00" and got["SEC201"].allow == 59
+    # G2: 11:15 - 11 - 59 = 10:05, before G1 ends at 11:00, so tight: minus 30 = 09:35 PST = 17:35Z.
+    assert got["ARC301"].start == "2026-12-01T17:35:00" and got["ARC301"].allow == 59
+    assert len(warnings) == 1
+
+
+def test_longest_walk_at_the_highest_confidence_keeps_the_whole_description(store):
+    far = [mk("F1", "LNG101", "2026-12-01", "10:00", "MGM Grand"),
+           mk("F2", "LNG102", "2026-12-01", "11:00", "Encore")]
+    store.apply_sweep(EV, far, with_abstracts=False)
+    body = "home_venue: Encore\nbuffer_minutes: 30\narrive_confidence: 0.99\ntargets: []\n"
+    blocks, _ = G.leave_blocks(G.held_sessions(store, EV, ["F1", "F2"]), rules(body))
+    for b in blocks:
+        assert b.walk == 60 and b.allow == 94
+        assert len(b.description) <= 250 and b.description.endswith(G.TAG)
+        assert "about 60 min, 94 allowed (estimate)." in b.description
+
+
+def test_queue_or_go_push_text_shows_the_odds_and_basis():
+    from reseat import push
+    from reseat.watcher import WatchEvent
+    s = mk("Q", "Q1", "2026-12-01", "10:00", "Wynn", typ="Chalk talk")
+    a = G.queue_or_go(s, [(0.0, None, "limited"), (1.0, "limited", "unavailable"),
+                          (2.0, "unavailable", "available"), (3.0, "available", "unavailable")])
+    ev = WatchEvent("wanted_soon", 0, {"code": "Q1", "title": "T", "at": "10:00", "venue": "Wynn",
+                                       "verdict": a.verdict, "basis": a.basis})
+    _, body = push.message(ev, str)
+    assert "Go early. Walk-up about 47% (" in body and "Session type rule." in body
+    assert "fill 2 times and free a seat 1 time." in body
+
+
+def test_queue_or_go_text_is_escaped_on_the_today_page():
+    from reseat import demo, pages
+    d = demo.Demo(port=0)
+    d.watcher.tick()
+    d.app.refresh()
+    snap = d.app.snapshot()
+    text = "Session at Wynn. Go early. Basis: Walk-up about 47% (23 to 71%). <script>x</script>"
+    snap["view"]["today"]["wanted"] = [{"code": "<b>X</b>", "time": "10:00", "band": "available",
+                                        "open": True, "clash": "", "text": text}]
+    html = pages.render_today(snap)
+    assert "<script>x" not in html and "<b>X</b>" not in html
+    assert "Basis: Walk-up about 47% (23 to 71%)." in html
+
+
+def test_mcp_queue_or_go_gives_odds_per_sitting(fake, client, store, clock):
+    from reseat import mcp_server as M
+    from reseat.fakeapi import sample_sessions
+    store.apply_sweep(EV, sample_sessions(), with_abstracts=False)
+    tools = M.Tools(client, store, R.parse("targets: []\n"), EV, clock=clock)
+    out = tools.queue_or_go("ARC301").splitlines()
+    assert len(out) == 2
+    for line in out:
+        assert line.startswith(("ARC301-R1 ", "ARC301-R2 "))
+        assert re.search(r": (likely|early)\. Walk-up about \d+% \(\d+ to \d+%\)\. Session type rule\.", line)
+        assert "S-ARC" not in line
+    assert re.search(r"SVS401 .*: \w+\. Walk-up about \d+% \(", tools.queue_or_go("SVS401"))

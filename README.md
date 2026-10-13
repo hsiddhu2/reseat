@@ -15,7 +15,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
 - **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
-**At a glance.** Each line links to its evidence.
+**At a glance.** Each line links to its evidence. The research each decision rests on is in [The models behind re:Seat](docs/models.md).
 
 - **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L243), [5xx on a cancel](tests/test_cancel_and_cli.py#L41), [a timeout mid-swap](tests/test_swap.py#L318).
 - **Every write is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
@@ -130,7 +130,7 @@ re:Seat's sync read the empty answer as every session removed and emptied its lo
 ## Limits
 
 - It manages seats you already chose. It does not recommend sessions or solve your schedule.
-- Queue-or-go advice is a rule by session type, improved by seat band history once there is some. It is a heuristic, never a prediction.
+- Queue-or-go advice is odds with a range: the rule for the session type, updated each time re:Seat sees the session fill and free a seat. It is a heuristic, never a prediction, and the range is wide until there is data. See [the models](docs/models.md).
 - Walking times between venues are conservative estimates, not official figures, and every screen, push and leave-now block says so: "about 60 min (estimate)". AWS publishes no walking or shuttle times, so re:Seat adds none of its own. Wynn and Encore come from the API as one venue and are split by room name.
 - The web app is plain HTTP. Use it over Tailscale, not open hotel Wi-Fi. It is access control, not a security product.
 - It cannot help with the first rush when reserved seating opens in the portal, two days before the API opens.
@@ -190,6 +190,7 @@ targets:
 meals:
   - {day: Tuesday, start: "12:00", end: "13:00"}
 max_per_day: 5
+arrive_confidence: 0.8      # leave early enough to finish the estimated walk in time this often (0.5 to 0.99)
 watch_cap: 25
 home_venue: Venetian      # where the first walk of each day starts
 serve_secret: <long random string>   # needed for the web app off this laptop

@@ -136,6 +136,7 @@ class Rules(BaseModel):
     targets: list[Target] = Field(default_factory=list)
     meals: list[Meal] = Field(default_factory=list)
     buffer_minutes: int = Field(default=30, ge=0, le=180)
+    arrive_confidence: float = Field(default=0.8, ge=0.5, le=0.99)   # walk done in time this often
     max_per_day: int = Field(default=5, ge=1, le=20)
     watch_cap: int = Field(default=25, ge=1, le=100)
     home_venue: str | None = None   # where the first walk of each day starts, e.g. your hotel
@@ -317,6 +318,7 @@ meals:
   - {day: Tuesday, start: "12:00", end: "13:00"}   # Las Vegas local time
 
 buffer_minutes: 30   # extra time before a session after a venue change
+arrive_confidence: 0.8   # leave early enough to finish the walk in time this often (0.5 to 0.99)
 max_per_day: 5       # reserved sessions per day, at most
 watch_cap: 25        # targets, at most
 home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue

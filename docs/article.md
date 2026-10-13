@@ -62,7 +62,7 @@ A full sweep is about 9 calls. re:Seat sweeps once a minute, without abstracts, 
 
 ### When to leave
 
-When you ask it to, re:Seat writes a short personal-time block for each held session into your official schedule: leave at this time, walk from here to there. The leave time is the session start minus 11 minutes, which is when door staff stop admitting, minus a conservative walking estimate between the six 2026 venues, and minus a buffer you set when the change is tight. The Today page counts it down. When your holds change, the blocks are offered for update. They are never changed behind your back.
+When you ask it to, re:Seat writes a short personal-time block for each held session into your official schedule: leave at this time, walk from here to there. The leave time is the session start minus 11 minutes, which is when door staff stop admitting, minus enough time for the walk between the six 2026 venues to be done in time 80 percent of the time, and minus a buffer you set when the change is tight. The walk is an estimate, and walking speeds vary by about 19 percent from person to person, so a typical 40-minute walk gets 47 minutes. The Today page counts it down. When your holds change, the blocks are offered for update. They are never changed behind your back.
 
 ![The Today page at phone width: the leave-in countdown, what is next, and queue-or-go advice for a wanted talk without a seat](screenshots/today.png)
 
@@ -116,7 +116,7 @@ Every write path runs against an in-process fake that produces each failure the 
 
 I want to be honest about which parts are rules and which are guesses.
 
-- **Queue or go.** A rule by session type: breakouts usually admit walk-ups, chalk talks need you early, workshops and builders' sessions admit almost none. It switches to the session's own band history once there are three changes. It is never a prediction, and the page always shows its basis.
+- **Queue or go.** Odds with a range, not a yes or no. The rule for the session type is the starting point: breakouts usually admit walk-ups, chalk talks need you early, workshops and builders' sessions admit almost none. Each time re:Seat sees the session fill and free a seat again, the odds move, so the page reads "walk-up about 47% (23 to 71%)". The range is wide until there is data. It is never a prediction, and the page always shows its basis.
 - **Walking times.** Conservative estimates between the six 2026 venues, not official figures. Every screen, push and leave-now block says "estimate". AWS publishes no walking or shuttle times, so re:Seat adds none of its own.
 - **Wynn and Encore** arrive from the API as one venue, `Wynn/Encore`. re:Seat splits them by room name.
 - **Booking order.** Formats that are not recorded fill first, so they are sent first: workshops, labs and bootcamps, then builders' sessions, chalk talks, code talks, breakouts.
@@ -138,6 +138,7 @@ re:Seat does three things, all week, within rules you wrote: it books the seats 
 - On AWS Builder Center: [re:Seat: the seats you missed, booked while you sleep](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep)
 - Install: [pypi.org/project/reseat](https://pypi.org/project/reseat/)
 - How it works: [docs/architecture.md](architecture.md)
+- The models behind it, with sources: [docs/models.md](models.md)
 - API facts it relies on: [docs/api-facts.md](api-facts.md)
 - Live proof: [docs/proof](proof/)
 - Demos: [demo](../demo/)

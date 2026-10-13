@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from . import decisions
 from .campus import CUTOFF_MINUTES, session_start_utc, to_personal_time, walk_minutes
 from .client import ApiError, EventsClient, OperationClosed
 from .models import PersonalTime, PersonalTimeInput, Session
@@ -47,7 +48,8 @@ class Block:
     description: str
     location: str | None
     origin: str | None = None     # where the walk starts: the previous held venue, or home_venue
-    walk: int | None = None       # walking minutes from origin, None when unknown
+    walk: int | None = None       # typical walking minutes from origin, None when unknown
+    allow: int | None = None      # minutes allowed for the walk at rules.arrive_confidence
 
     def body(self) -> PersonalTimeInput:
         return PersonalTimeInput(startDateTime=self.start, endDateTime=self.end, title=self.title,
@@ -99,9 +101,11 @@ def held_sessions(store: Store, event_id: str, held: list[str]) -> list[Session]
 def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], list[str]]:
     """One block per held session, plus venue-switch warnings. No I/O.
 
-    Leave at: start - 11 min cutoff - walk from the previous held session's venue
-    (or home_venue for the first session of the day). If the previous session
-    ends after that moment, the change is tight, so buffer_minutes come off too.
+    Leave at: start - 11 min cutoff - the walk allowance from the previous held session's
+    venue (or home_venue for the first session of the day). The allowance is the walk's
+    arrive_confidence quantile (decisions.walk_allowance), so the attendee is in time that
+    often. If the previous session ends after that moment, the change is tight, so
+    buffer_minutes come off too.
     """
     blocks: list[Block] = []
     warnings: list[str] = []
@@ -113,10 +117,13 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
         origin = prev.campus_venue if same_day and prev else rules.home_venue
         dest = s.campus_venue
         walk = walk_minutes(origin, dest) if origin and dest else None
-        leave = start - timedelta(minutes=CUTOFF_MINUTES + (walk or 0))
+        allow = decisions.walk_allowance(walk, rules.arrive_confidence) if walk is not None else None
+        leave = start - timedelta(minutes=CUTOFF_MINUTES + (allow or 0))
         if same_day and prev:
             prev_end = _window(prev)[1]  # type: ignore[index]
-            if prev_end > leave:
+            # Tight by the typical walk, as before the allowance, so the buffer and the allowance
+            # do not stack on a change that only the allowance makes tight.
+            if prev_end > start - timedelta(minutes=CUTOFF_MINUTES + (walk or 0)):
                 leave -= timedelta(minutes=rules.buffer_minutes)
                 gap = int((start - prev_end).total_seconds() // 60)
                 if walk is not None and walk > gap:
@@ -128,13 +135,13 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
         if walk is None:
             how = f"Be at {dest or 'the venue'} by {_local(start - timedelta(minutes=CUTOFF_MINUTES))}."
         else:
-            how = f"Walk {origin} to {dest}, about {walk} min (estimate)."   # never an official figure
+            how = f"Walk {origin} to {dest}, about {walk} min, {allow} allowed (estimate)."   # never official
         blocks.append(Block(
             code=code, session_id=s.session_id,
             start=to_personal_time(leave), end=to_personal_time(leave + timedelta(minutes=BLOCK_MINUTES)),
             title=f"Leave for {code}"[:128],
             description=f"{PREFIX} {how[:250 - len(PREFIX) - len(TAG) - 2]} {TAG}",
-            location=(dest or None) and dest[:255], origin=origin, walk=walk))
+            location=(dest or None) and dest[:255], origin=origin, walk=walk, allow=allow))
         prev = s
     return blocks, warnings
 
@@ -238,6 +245,7 @@ def _read_back(client: EventsClient, store: Store, event_id: str, rules: Rules, 
 class Advice:
     verdict: str        # likely | early | unlikely | unknown
     basis: str
+    odds: decisions.Odds | None = None
 
 
 _TYPE_RULES = {
@@ -250,19 +258,21 @@ _TYPE_RULES = {
     "Lab": ("unlikely", "Labs seat few walk-ups."),
     "Bootcamp": ("unlikely", "Bootcamps seat few walk-ups."),
 }
-HISTORY_MIN = 3
 _OPEN = {"available", "limited", "veryLimited"}
 
 
 def queue_or_go(s: Session, history: list[tuple[float, str | None, str | None]]) -> Advice:
-    """A rule by session type, overridden by this session's band history once it has 3 changes.
-
-    A heuristic, never a prediction. The basis is always returned.
+    """Walk-up odds: the session type's rule as a prior, updated by each time this session filled and
+    whether a seat freed again (decisions.walk_up_odds, a Beta-binomial). Always with an 80% interval
+    and its basis. A heuristic, never a prediction.
     """
-    if len(history) >= HISTORY_MIN:
-        reopened = sum(1 for _, old, new in history if old == "unavailable" and new in _OPEN)
-        if reopened:
-            return Advice("likely", f"Band history: seats freed {reopened} times in {len(history)} changes.")
-        return Advice("unlikely", f"Band history: {len(history)} changes, seats never freed after filling.")
-    verdict, basis = _TYPE_RULES.get(s.type_key or "", ("unknown", "No rule for this session type."))
-    return Advice(verdict, f"Session type rule. {basis}")
+    rule = _TYPE_RULES.get(s.type_key or "")
+    prior = decisions.PRIOR_ODDS.get(rule[0]) if rule else None
+    odds = decisions.walk_up_odds(prior, history)
+    verdict = decisions.verdict(odds, known=rule is not None)
+    seen = (f" re:Seat saw it fill {odds.fills} time{'s' if odds.fills != 1 else ''} and free a seat "
+            f"{odds.freed} time{'s' if odds.freed != 1 else ''}." if odds.fills else "")
+    basis = f"Session type rule. {rule[1]}{seen}" if rule else f"No rule for this session type.{seen}"
+    if verdict == "unknown":
+        return Advice(verdict, basis, odds)
+    return Advice(verdict, f"Walk-up {decisions.percent(odds)}. {basis}", odds)

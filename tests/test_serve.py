@@ -304,14 +304,15 @@ def test_leave_now_is_announced_once(clock):
     w.tick()
     leaves = []
     w.subscribe(lambda ev: ev.kind == "leave" and leaves.append(ev))
-    # H1 is 10:00 Tue at MGM Grand. Wynn to MGM is 55 min, plus 11: leave at 08:54 PST = 16:54Z.
+    # H1 is 10:00 Tue at MGM Grand. Wynn to MGM is 55 min typical, 65 allowed at 80 percent, plus 11:
+    # leave at 08:44 PST = 16:44Z.
     from datetime import UTC, datetime
-    at = datetime(2026, 12, 1, 16, 55, tzinfo=UTC).timestamp()
+    at = datetime(2026, 12, 1, 16, 45, tzinfo=UTC).timestamp()
     app.clock = lambda: at
     app.refresh()
     app.refresh()
     assert len(leaves) == 1 and leaves[0].data["code"] == "SEC201-R"
-    assert app.snapshot()["next_leave"]["leave_local"] == "08:54"
+    assert app.snapshot()["next_leave"]["leave_local"] == "08:44"
 
 
 def test_cross_site_post_is_refused_even_to_login(served):

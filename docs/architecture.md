@@ -114,6 +114,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Watcher | built | Sweep loop. Books freed and new sittings through the router. Proposes swaps. Typed events to subscribers. |
 | Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
+| Decisions | built | `decisions.py`: walk-up odds as a Beta-binomial with an 80 percent range, and the walking allowance as a lognormal quantile at `arrive_confidence`. Sources and formulas in [The models behind re:Seat](models.md). |
 | Favorites sync | built | Mirror target sittings into favorites, read back. |
 | Web app | built | Local HTTP server: Week, Day, Approve, Today, Activity, Targets and Status views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
 | Reminders | built | `reminders.py`: morning briefing, leave in 10 minutes, leave now, a wanted talk soon, a swap offer about to lapse, a walk you cannot make, an exact sitting full while another has seats. Each once, from the local store. |
