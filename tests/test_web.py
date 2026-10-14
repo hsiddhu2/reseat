@@ -7,6 +7,7 @@ touches the keychain, the network or ~/.reseat.
 
 import json
 import pathlib
+import re
 import threading
 import time
 from datetime import datetime
@@ -21,7 +22,7 @@ from reseat import demo as D
 from reseat import serve as S
 from reseat.campus import VEGAS
 from reseat.fakeapi import FakeEventsApi
-from reseat.models import Session
+from reseat.models import OBSERVED_TYPES, Session
 from reseat.store import Store
 from reseat.swap import Swap
 
@@ -1443,7 +1444,8 @@ def test_today_and_approve_render_two_balanced_columns_empty_and_full():
             assert html.index("</header>") < two < html.index("</main>")
             assert 'class="ptop"' not in html and 'class="phone"' not in html
     assert "Nothing booked in the last day." in pages.render_approve(empty, True)
-    assert "Booked today" in pages.render_approve(full, True) and "BOOKED" in pages.render_approve(full, True)
+    approve = pages.render_approve(full, True)
+    assert "Booked in the last day" in approve and "BOOKED" in approve
     assert "data-leave=" in pages.render_today(full, True) and "data-leave-label" in pages.render_today(full)
     assert "data-leave=" not in pages.render_today(empty, True)
 
@@ -1522,3 +1524,176 @@ def test_blocks_update_over_http_from_the_page_origin():
         d.watcher.stop()
         server.shutdown()
         server.server_close()
+
+
+def test_booked_list_shows_the_day_and_drops_a_seat_cancelled_since():
+    """Seen live on 13 October: a test seat booked and cancelled the evening before still read
+    'BOOKED 22:40' under 'Booked today', as if booked that day and still held."""
+    from types import SimpleNamespace
+
+    from reseat.fakeapi import sample_sessions
+    t = [datetime(2026, 10, 12, 22, 40, tzinfo=VEGAS).timestamp()]
+    store = Store(":memory:", clock=lambda: t[0])
+    store.apply_sweep("ev", sample_sessions(), with_abstracts=False)
+    for sid in ("S-SVS1", "S-SEC1"):
+        store.journal("ev", "ReserveSessions", [sid], {"readBack": {"reserved": ["S-SVS1", "S-SEC1"]}},
+                      "success")
+    app = SimpleNamespace(store=store, event_id="ev")
+    now = t[0] + 3600 * 23
+    shown = pages._bookings(app, now, held={"S-SVS1"})                  # S-SEC1 was cancelled since
+    assert [b["code"] for b in shown] == ["SVS401"] and shown[0]["at"] == "Mon 12 Oct 22:40 PT"
+    assert pages._bookings(app, t[0] + 86401, held={"S-SVS1"}) == []     # older than a day
+
+
+def test_stamp_gives_day_date_time_and_zone():
+    """Seen live on 13 October: Activity times had no date and no zone, so they read 3 hours off
+    an Eastern clock and could not be placed."""
+    ts = datetime(2026, 10, 12, 22, 40, 6, tzinfo=VEGAS).timestamp()
+    assert pages.stamp(ts) == "Mon 12 Oct 22:40 PT"
+    assert pages.stamp(ts, seconds=True) == "Mon 12 Oct 22:40:06 PT"
+    assert pages.stamp(datetime(2026, 12, 2, 8, 5, tzinfo=VEGAS).timestamp()) == "Wed 2 Dec 08:05 PT"
+
+
+@pytest.mark.parametrize("type_key,cls", [
+    ("Lab", "lab"), ("Workshop", "workshop"), ("Code talk", "code"), ("Builders' session", "builders"),
+    ("Keynote", "keynote"), ("Chalk talk", "chalk"), (None, "other"), ("A type added next year", "other"),
+])
+def test_held_blocks_take_a_colour_by_session_type(type_key, cls):
+    assert pages.type_class(type_key) == cls
+
+
+def test_every_type_class_has_a_colour_in_both_themes():
+    css = (pathlib.Path(pages.__file__).parent / "static" / "app.css").read_text()
+    for cls in [*pages.TYPE_CLASS.values(), "other"]:
+        assert css.count(f"--ty-{cls}:") == 2, cls                       # light and dark
+        assert f".b-held.ty-{cls}" in css and f".lg-held.ty-{cls} i" in css
+
+
+def test_week_grid_marks_held_blocks_by_type_and_lists_only_types_present(demo):
+    snap = demo.app.snapshot()
+    html = pages.render_dashboard(snap, demo=True)
+    blocks = snap["view"]["week"]["blocks"]
+    held = {b["type"] for b in blocks if b["kind"] == "held"}
+    assert held
+    for t in held:
+        assert f"ty-{pages.type_class(t)}" in html
+    assert not re.search(r'class="blk b-(wanted|proposed|fallback|ghost) ty-', html)   # status colours stay
+    legend = html[html.index('class="legend"'):html.index('class="scroll"')]
+    shown = set(re.findall(r'lg-held ty-([a-z]+)', legend))
+    assert shown == {pages.type_class(t) for t in held}                  # only types in the week
+
+
+def test_a_booking_cancelled_through_the_real_path_leaves_the_booked_list():
+    """End to end on the demo stack: the seat booked at once shows with its stamp, then a cancel
+    with its GetSchedule read-back drops it from the list while the journal keeps both writes."""
+    from reseat import cancel as C
+    d = scripted()
+    approve = pages.render_approve(d.app.snapshot(), True)
+    [b] = d.app.snapshot()["view"]["bookings"]
+    assert b["code"] == "AIM310-R1"
+    assert re.fullmatch(r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d\d:\d\d PT", b["at"])
+    assert b["at"] in approve and "AIM310-R1" in approve
+    res = C.cancel(d.client, d.store, D.EVENT, D.NEW_SITTING_ID, was_held=True)
+    assert D.NEW_SITTING_ID not in d.client.get_schedule(D.EVENT).reserved, res
+    d.watcher.tick()
+    d.app.refresh()
+    snap = d.app.snapshot()
+    assert snap["view"]["bookings"] == []
+    assert "Nothing booked in the last day." in pages.render_approve(snap, True)
+    ops = [j["op"] for j in snap["view"]["log"]]
+    assert "ReserveSessions" in ops and len(ops) >= 2
+
+
+def test_a_booking_older_than_a_day_leaves_the_list_on_the_demo_clock():
+    d = scripted()
+    assert d.app.snapshot()["view"]["bookings"]
+    d.offset += 86400 + 60
+    d.app.refresh()
+    assert d.app.snapshot()["view"]["bookings"] == []
+
+
+@pytest.mark.parametrize("utc,want", [
+    ("2026-11-01T08:30:00+00:00", "Sun 1 Nov 01:30 PT"),     # 01:30 PDT, before the change
+    ("2026-11-01T09:30:00+00:00", "Sun 1 Nov 01:30 PT"),     # 01:30 PST, the repeated hour
+    ("2026-11-01T10:00:00+00:00", "Sun 1 Nov 02:00 PT"),     # PST
+    ("2026-10-31T19:00:00+00:00", "Sat 31 Oct 12:00 PT"),    # PDT, UTC-7
+    ("2026-11-02T20:00:00+00:00", "Mon 2 Nov 12:00 PT"),     # PST, UTC-8
+    ("2026-12-01T07:59:59+00:00", "Mon 30 Nov 23:59 PT"),    # the date rolls on the local clock
+])
+def test_stamp_follows_las_vegas_across_the_dst_change(utc, want):
+    ts = datetime.fromisoformat(utc).timestamp()
+    assert pages.stamp(ts) == want
+
+
+@pytest.mark.parametrize("type_key", OBSERVED_TYPES)
+def test_every_observed_catalog_type_has_its_own_colour(type_key):
+    assert pages.type_class(type_key) in pages.TYPE_CLASS.values() and pages.type_class(type_key) != "other"
+
+
+def test_type_class_covers_the_table_and_the_curly_apostrophe_via_type_key():
+    assert set(map(pages.type_class, pages.TYPE_CLASS)) == set(pages.TYPE_CLASS.values())
+    assert len(set(pages.TYPE_CLASS.values())) == len(pages.TYPE_CLASS)        # no two types share
+    s = Session.model_validate({"sessionId": "x", "title": "t", "type": "Builders\u2019  session"})
+    assert pages.type_class(s.type_key) == "builders"
+    assert pages.type_class("") == "other" and pages.type_class("lab") == "other"   # case is not folded
+
+
+def test_ty_class_appears_only_on_held_blocks_in_the_demo_week(demo):
+    html = pages.render_dashboard(demo.app.snapshot(), demo=True)
+    blks = re.findall(r'<a class="blk ([^"]*)"', html)
+    assert blks
+    for cls in blks:
+        parts = cls.split()
+        has_ty = any(p.startswith("ty-") for p in parts)
+        assert has_ty == ("b-held" in parts), cls
+        assert sum(p.startswith("ty-") for p in parts) <= 1, cls
+    legend = html[html.index('class="legend"'):html.index('class="scroll"')]
+    assert "Held, by type:" in legend and 'lg-held"' not in legend               # no plain held swatch
+
+
+def test_activity_page_uses_the_full_stamp_in_all_three_lists(demo):
+    snap = demo.app.snapshot()
+    v = snap["view"]
+    assert v["week_log"] and v["changes"] and v["log"]
+    html = pages.render_activity(snap, demo=True)
+    minute = r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d\d:\d\d PT"
+    second = r"[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d\d:\d\d:\d\d PT"
+    for c in v["week_log"]:
+        assert re.fullmatch(minute, c["at"]) and f'<span class="t mono">{c["at"]}</span>' in html
+    for x in v["changes"]:
+        assert re.fullmatch(minute, x["at"]) and f'<li>{x["at"]} ' in html
+    for j in v["log"]:
+        assert re.fullmatch(second, j["at"]) and f'<span class="t">{j["at"]}</span> {j["op"]}' in html
+    week = html[html.index("Changes on your week"):html.index("Catalog changes")]
+    cat = html[html.index("Catalog changes"):html.index("<h2>Journal")]
+    jour = html[html.index("<h2>Journal"):]
+    for part, pat in ((week, minute), (cat, minute), (jour, second)):
+        assert re.search(pat, part)
+    assert not re.search(r"<li>\d\d:\d\d ", cat)                                  # no bare clock left
+
+
+def test_booked_list_shows_a_rebooked_seat_once_and_caps_at_three():
+    from types import SimpleNamespace
+
+    from reseat.fakeapi import sample_sessions
+    t = [datetime(2026, 10, 12, 20, 0, tzinfo=VEGAS).timestamp()]
+    store = Store(":memory:", clock=lambda: t[0])
+    store.apply_sweep("ev", sample_sessions(), with_abstracts=False)
+    ids = ["S-SVS1", "S-SEC1", "S-ARC2", "S-WRK1"]
+    for sid in ["S-SVS1", *ids]:                   # S-SVS1 booked, cancelled, booked again
+        t[0] += 60
+        store.journal("ev", "ReserveSessions", [sid], {"readBack": {"reserved": [sid]}}, "success")
+    app = SimpleNamespace(store=store, event_id="ev")
+    shown = pages._bookings(app, t[0] + 60, held=set(ids))
+    codes = [b["code"] for b in shown]
+    assert len(codes) == 3 and len(set(codes)) == 3 and "SVS401" not in codes   # newest three, no repeat
+    shown = pages._bookings(app, t[0] + 60, held={"S-SVS1"})
+    assert [b["code"] for b in shown] == ["SVS401"]
+    assert shown[0]["at"] == pages.stamp(t[0] - 3 * 60)                          # the newer booking
+
+
+def test_keynote_and_unknown_types_on_the_legend():
+    blocks = [{"kind": "held", "type": "Keynote"}, {"kind": "held", "type": "Something new"},
+              {"kind": "held", "type": None}, {"kind": "wanted", "type": "Lab"}]
+    html = pages._type_legend(blocks)
+    assert "ty-keynote" in html and html.count("ty-other") == 1 and "ty-lab" not in html

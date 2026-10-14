@@ -46,12 +46,27 @@ VERDICT = {"likely": "Walk-up likely.", "early": "Go early.", "unlikely": "Walk-
            "unknown": "No call."}
 
 
+# Held blocks on the week grid are coloured by session type, in this order on the legend.
+TYPE_CLASS = {"Lab": "lab", "Workshop": "workshop", "Bootcamp": "bootcamp", "Builders' session": "builders",
+              "Code talk": "code", "Chalk talk": "chalk", "Breakout session": "breakout",
+              "Lightning talk": "lightning", "Keynote": "keynote", "Gamified learning": "gamified",
+              "Exam prep": "exam"}
+
+
 def local(ts: float) -> datetime:
     return datetime.fromtimestamp(ts, VEGAS)
 
 
 def hm(ts: float) -> str:
     return local(ts).strftime("%H:%M")
+
+
+def stamp(ts: float, seconds: bool = False) -> str:
+    """A logged time a person can place: day, date, time and the zone, such as Mon 12 Oct 22:40:06 PT.
+    re:Seat keeps Las Vegas time for the whole event, and the viewer's own clock may differ."""
+    d = local(ts)
+    clock = d.strftime("%H:%M:%S" if seconds else "%H:%M")
+    return f"{d:%a} {d.day} {d:%b} {clock} PT"
 
 
 def _start(s: Session) -> datetime | None:
@@ -101,7 +116,7 @@ def build(app: App, now: float) -> dict[str, Any]:
         "log": _journal(app),
         "week": _week(app, held, wanted, pending, now),
         "today": _today(app, held, wanted, now),
-        "bookings": _bookings(app, now),
+        "bookings": _bookings(app, now, set(held_ids)),
         "kept": _kept(app),
         "scenarios": list(app.scenarios),
         "last": dict(app.last_scenario) if app.last_scenario else None,
@@ -156,10 +171,10 @@ def _health(app: App, now: float, last_sweep: float | None) -> dict[str, Any]:
     w, r = app.watcher, app.rules
     rows = [
         ("Watcher", "Reading only until you sign in again" if w.read_only else "Watching"),
-        ("Events API", f"Unreachable since {hm(w.down_since)}" if w.down_since else "Reachable"),
+        ("Events API", f"Unreachable since {stamp(w.down_since)}" if w.down_since else "Reachable"),
         ("Bookings", f"Closed (409). Next try {hm(w.writes_closed_until)}" if w.writes_closed_until
          else "Open"),
-        ("Last sweep", f"{local(last_sweep):%a %H:%M:%S}" if last_sweep else "None yet"),
+        ("Last sweep", stamp(last_sweep, seconds=True) if last_sweep else "None yet"),
         ("Leave-now blocks", f"{sum(1 for p in w.personal_time if guard.is_mine(p))} in your schedule"
          + (", out of date" if app.blocks_state else "")),
         ("Push", ("On" + (", Swap now and Keep in the notification" if r.ntfy_approve else ""))
@@ -172,7 +187,7 @@ def _health(app: App, now: float, last_sweep: float | None) -> dict[str, Any]:
 
 
 def _change(c: Any) -> dict[str, str]:
-    return {"kind": c.kind, "label": c.label, "text": c.text(), "at": f"{local(c.at):%a %H:%M}"}
+    return {"kind": c.kind, "label": c.label, "text": c.text(), "at": stamp(c.at)}
 
 
 def _status(app: App, now: float, last_sweep: float | None, sweeps: list[tuple[float, int]],
@@ -181,7 +196,7 @@ def _status(app: App, now: float, last_sweep: float | None, sweeps: list[tuple[f
     if w.read_only:
         state, text = "signin", "Sign in needed. Reading only"
     elif w.down_since is not None:
-        state, text = "offline", f"API unreachable since {hm(w.down_since)}"
+        state, text = "offline", f"API unreachable since {stamp(w.down_since)}"
     elif w.writes_closed_until:
         state, text = "paused", f"Writes closed (409). Next try {hm(w.writes_closed_until)}"
     else:
@@ -249,7 +264,7 @@ def _card(app: App, p: Any, held_ids: list[str], last_sweep: float | None) -> di
     base = b.base_code if b else sb["code"]
     return {
         "plan_id": p.plan_id, "target": target_name(p.target, app.store, app.event_id),
-        "kind": "New sitting" if added else "Seat opened", "at": hm(p.created),
+        "kind": "New sitting" if added else "Seat opened", "at": stamp(p.created),
         "title": f"Move {base} to {sb['day']}" if same else f"Replace {sa['code']} with {sb['code']}",
         "question": (f"Move {base} from {sa['day']} to {sb['day']}?" if same
                      else f"Replace {sa['code']} with {sb['code']}?"),
@@ -287,7 +302,7 @@ def _changes(app: App) -> list[dict[str, Any]]:
             a, b = _code(app, req.get("held", "")), _code(app, req.get("wanted", ""))
             rows.append((r["ts"], f"Swap {a} → {b} {r['op'].removeprefix('swap.').replace('_', ' ')}"))
     rows.sort(key=lambda x: -x[0])
-    return [{"at": hm(ts), "text": text} for ts, text in rows[:CHANGES]]
+    return [{"at": stamp(ts), "text": text} for ts, text in rows[:CHANGES]]
 
 
 def _moved_text(detail: str | None) -> str:
@@ -319,7 +334,7 @@ def _journal(app: App) -> list[dict[str, Any]]:
     out = []
     for r in app.store.journal_entries(app.event_id, JOURNAL):
         resp, req = _json(r["response"]), _json(r["request"])
-        out.append({"at": local(r["ts"]).strftime("%a %H:%M:%S"), "op": r["op"], "status": _status_of(resp),
+        out.append({"at": stamp(r["ts"], seconds=True), "op": r["op"], "status": _status_of(resp),
                     "outcome": (r["outcome"] or "").removeprefix("state:"), "what": _what(app, req)})
     return out
 
@@ -365,13 +380,19 @@ def _kept(app: App) -> dict[str, Any]:
     return {"booked": booked, "swapped": swapped, "restored": restored, "since": since}
 
 
-def _bookings(app: App, now: float) -> list[dict[str, Any]]:
-    out = []
-    for r in app.store.journal_entries(app.event_id, 200):
+def _bookings(app: App, now: float, held: set[str]) -> list[dict[str, Any]]:
+    """Seats booked in the last 24 hours that are still held. A seat cancelled since is left out,
+    and the day is shown, because 24 hours spans two dates."""
+    out, seen = [], set()
+    for r in app.store.journal_entries(app.event_id, 200):        # newest first
         if r["op"] == "ReserveSessions" and r["ts"] > now - 86400:
             for sid in _booked(r):
+                if sid not in held or sid in seen:
+                    continue
+                seen.add(sid)
                 s = app.store.get(app.event_id, sid)
-                out.append({"at": hm(r["ts"]), "code": _code(app, sid), "when": _when(s) if s else "",
+                out.append({"at": stamp(r["ts"]), "code": _code(app, sid),
+                            "when": _when(s) if s else "",
                             "venue": (s.campus_venue or "") if s else ""})
     return out[:3]
 
@@ -433,7 +454,8 @@ def _week(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]]
                        "sub": sub, "pending": kind == "held" and s.session_id in swapping,
                        "top": _pct(max(top, DAY_START)),
                        "height": _pct(min(bottom, DAY_END)) - _pct(max(top, DAY_START)),
-                       "start": a, "end": b, "venue": s.campus_venue, "badge": None})
+                       "start": a, "end": b, "venue": s.campus_venue, "badge": None,
+                       "type": s.type_key})
     _ghosts(app, blocks, days, now)
     _lanes(blocks)
     _badges(blocks)
@@ -494,7 +516,7 @@ def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[
     if s.session_id not in held:
         adv = guard.queue_or_go(s, bands)
         rows.append(("Queue or go", f"{VERDICT.get(adv.verdict, '')} {adv.basis}".strip()))
-    history = [f"{hm(ts)} {old or 'none'} → {new or 'none'}" for ts, old, new in bands[-5:]
+    history = [f"{stamp(ts)} {old or 'none'} → {new or 'none'}" for ts, old, new in bands[-5:]
                if old is not None]
     sittings = [{"code": x.abbreviation, "when": _when(x), "venue": x.campus_venue or "",
                  "band": x.seat_availability or "none", "held": x.session_id in held}
@@ -1012,10 +1034,27 @@ def _kept_html(k: dict[str, Any] | None) -> str:
             "</section>")
 
 
+def type_class(type_key: str | None) -> str:
+    """The colour class of a held block. A type the catalog adds later gets the plain held colour."""
+    return TYPE_CLASS.get(type_key or "", "other")
+
+
+def _type_legend(blocks: list[dict[str, Any]]) -> str:
+    """One legend entry per session type held this week, in TYPE_CLASS order. Types re:Seat does
+    not know share one Other entry, as they share one colour."""
+    held = {type_class(b.get("type")) for b in blocks if b["kind"] == "held"}
+    names = {cls: name for name, cls in TYPE_CLASS.items()} | {"other": "Other"}
+    order = [*TYPE_CLASS.values(), "other"]
+    types = "".join(f'<span class="lg lg-held ty-{c}"><i></i>{e(names[c])}</span>'
+                    for c in order if c in held)
+    return f'<span class="lg-group">Held, by type: {types}</span>' if types else ""
+
+
 def _week_html(w: dict[str, Any]) -> str:
-    legend = "".join(f'<span class="lg lg-{k}"><i></i>{label}</span>' for k, label in (
-        ("held", "Held"), ("wanted", "Wanted"), ("proposed", "Proposed"), ("leave", "Leave now"),
-        ("fallback", "Fallback"), ("ghost", "Released or removed")))
+    legend = _type_legend(w["blocks"]) + "".join(
+        f'<span class="lg lg-{k}"><i></i>{label}</span>' for k, label in (
+            ("wanted", "Wanted"), ("proposed", "Proposed"), ("leave", "Leave now"),
+            ("fallback", "Fallback"), ("ghost", "Released or removed")))
     hours = "".join(f'<div class="hr" style="top:{h["top"]}%"><span>{e(h["label"])}</span></div>'
                     for h in w["hours"])
     cols = []
@@ -1029,7 +1068,9 @@ def _week_html(w: dict[str, Any]) -> str:
             mk = (f'<em class="mk mk-{e(b["mark"]["kind"])}">{e(b["mark"]["label"])}</em>'
                   if b.get("mark") else "")
             narrow = " narrow" if b["lanes"] > 1 else ""
-            inner.append(f'<a class="blk b-{e(b["kind"])}{" pending" if b["pending"] else ""}{hl}{narrow}" '
+            ty = f' ty-{type_class(b.get("type"))}' if b["kind"] == "held" else ""
+            pend = " pending" if b["pending"] else ""
+            inner.append(f'<a class="blk b-{e(b["kind"])}{ty}{pend}{hl}{narrow}" '
                          f'href="#s-{b["i"]}" title="{e(b["title"])}" style="top:{b["top"]}%;'
                          f'height:{b["height"]}%;left:{b["lane"] * width:.2f}%;width:{width:.2f}%">'
                          f'{badge}{mk}<b>{e(b["code"])}</b>'
@@ -1093,7 +1134,7 @@ def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False)
                        f'{e(c["wanted"]["venue"])}</div><div class="mono muted">next</div></article>')
     if not cards:
         out.append('<p class="empty">Nothing waits for your approval.</p>')
-    out.append('</div><div class="col"><h2>Booked today</h2>')
+    out.append('</div><div class="col"><h2>Booked in the last day</h2>')
     if not v.get("bookings"):
         out.append('<p class="muted">Nothing booked in the last day.</p>')
     for b in v.get("bookings", []):

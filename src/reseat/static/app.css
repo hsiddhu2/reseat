@@ -4,6 +4,11 @@
   --surface: #ffffff; --accent: #b8461a; --accent-soft: #fbe9df; --accent-ink: #8a3a12;
   --wanted: #2458a8; --leave: #e0a100; --good: #2e7d32; --warn: #8a6d00; --bad: #8a1c1c;
   --bar: #1b1b1f; --bar-ink: #f4f3ee; --bar-muted: #cfcdc4; --held: #1b1b1f; --badge: #8a1c1c; --on-leave: #1b1b1f;
+  /* Held blocks by session type. Dark enough for white text, and clear of the accent (proposed),
+     the wanted blue and the leave yellow. */
+  --ty-lab: #1f7a6d; --ty-workshop: #3b4fa3; --ty-bootcamp: #2f6b3a; --ty-builders: #6d6416;
+  --ty-code: #7a3f8f; --ty-chalk: #44637d; --ty-breakout: #4a4540; --ty-lightning: #6b4a3a;
+  --ty-keynote: #55606e; --ty-gamified: #8a3d62; --ty-exam: #5b5b5b; --ty-other: var(--held);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -14,6 +19,9 @@
     --surface: #1d1e23; --accent: #b9551f; --accent-soft: #3a2418; --accent-ink: #f0a982;
     --wanted: #7fa8ea; --leave: #e3ac1c; --good: #6fc173; --warn: #e2c25a; --bad: #ef7d7d;
     --bar: #0d0e11; --bar-ink: #ecebe6; --bar-muted: #a9a79f; --held: #3b3d46; --badge: #a8322f; --on-leave: #15161a;
+    --ty-lab: #237f72; --ty-workshop: #4a5eb5; --ty-bootcamp: #3a7a46; --ty-builders: #7f7520;
+    --ty-code: #8a4ca0; --ty-chalk: #52728d; --ty-breakout: #57524d; --ty-lightning: #7a5645;
+    --ty-keynote: #626e7d; --ty-gamified: #9a4870; --ty-exam: #676767; --ty-other: var(--held);
   }
 }
 * { box-sizing: border-box; }
@@ -196,6 +204,20 @@ a.dh:hover { text-decoration: underline; color: var(--accent); }
 .detail dt { color: var(--muted); }
 .detail dd { margin: 0; }
 .b-held { background: var(--held); color: #fff; }
+.b-held.ty-lab, .lg-held.ty-lab i { background: var(--ty-lab); }
+.b-held.ty-workshop, .lg-held.ty-workshop i { background: var(--ty-workshop); }
+.b-held.ty-bootcamp, .lg-held.ty-bootcamp i { background: var(--ty-bootcamp); }
+.b-held.ty-builders, .lg-held.ty-builders i { background: var(--ty-builders); }
+.b-held.ty-code, .lg-held.ty-code i { background: var(--ty-code); }
+.b-held.ty-chalk, .lg-held.ty-chalk i { background: var(--ty-chalk); }
+.b-held.ty-breakout, .lg-held.ty-breakout i { background: var(--ty-breakout); }
+.b-held.ty-lightning, .lg-held.ty-lightning i { background: var(--ty-lightning); }
+.b-held.ty-keynote, .lg-held.ty-keynote i { background: var(--ty-keynote); }
+.b-held.ty-gamified, .lg-held.ty-gamified i { background: var(--ty-gamified); }
+.b-held.ty-exam, .lg-held.ty-exam i { background: var(--ty-exam); }
+.b-held.ty-other, .lg-held.ty-other i { background: var(--ty-other); }
+.lg-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.b-held .tm, .b-held span { opacity: 1; }   /* faded white falls under AA contrast on the type colours */
 .b-held.pending { border-color: var(--accent); }
 .b-wanted { border: 2px dashed var(--wanted); color: var(--wanted); background: var(--surface); }
 .b-proposed { background: var(--accent); color: #fff; }
