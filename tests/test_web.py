@@ -86,7 +86,9 @@ def test_week_grid_marks_held_wanted_proposed_fallback_leave_moved_and_walks(dem
     by = {b["code"]: b for b in w["blocks"]}
     assert by["CMP409-R"]["pending"] and "swap pending" in by["CMP409-R"]["sub"]
     assert "moved to Level 3 | Premier 319" in by["CMP303"]["sub"]
-    assert by["CMP409-R"]["lanes"] == 2 and {by["CMP409-R"]["lane"], by["SVS306-R"]["lane"]} == {0, 1}
+    # A held seat keeps its own lanes. The proposal over it goes in the strip on the right.
+    assert (by["CMP409-R"]["lanes"], by["CMP409-R"]["lane"], by["CMP409-R"]["strip"]) == (1, 0, False)
+    assert by["SVS306-R"]["strip"] and by["ANT335"]["strip"]
     # after COP335 at Wynn, to Caesars Palace
     assert by["ANT335"]["badge"] == "walk about 35 m (estimate), gap 30 m"
     assert w["days"] == ["Mon 30", "Tue 1", "Wed 2", "Thu 3", "Fri 4"] and len(w["leaves"]) >= 10
@@ -1697,3 +1699,139 @@ def test_keynote_and_unknown_types_on_the_legend():
               {"kind": "held", "type": None}, {"kind": "wanted", "type": "Lab"}]
     html = pages._type_legend(blocks)
     assert "ty-keynote" in html and html.count("ty-other") == 1 and "ty-lab" not in html
+
+
+def test_week_held_seats_are_never_narrowed_by_wanted_talks_and_leave_is_a_tag(demo):
+    """Seen live on 14 October: wanted talks halved held seats to 'MAM...' and yellow leave bars
+    crossed the blocks."""
+    snap = demo.app.snapshot()
+    w = snap["view"]["week"]
+    for b in w["blocks"]:
+        if b["kind"] == "held":
+            assert not b["strip"]
+            others = [o for o in w["blocks"] if o["day"] == b["day"] and o["kind"] == "held" and o is not b
+                      and o["top"] < b["top"] + b["height"] and b["top"] < o["top"] + o["height"]]
+            assert b["lanes"] == 1 or others                     # split only by another held seat
+    html = pages.render_dashboard(snap, demo=True)
+    assert 'class="leave"' not in html                           # no bars across the grid
+    tagged = [b for b in w["blocks"] if b.get("leave")]
+    assert tagged and all(b["kind"] == "held" for b in tagged)
+    assert f'leave {tagged[0]["leave"]}</small>' in html
+    day = pages.render_day(snap, tagged[0]["day"], True)
+    assert "Leave " in day                                       # the Day view keeps its leave lines
+    assert 'href="/day?d=0" title="Open' in html and '<span aria-hidden="true">›</span></a>' in html
+
+
+# ---- the week layout: held seats lane only among themselves, the rest go in a strip
+
+
+def _blk(kind, start, end, day=0, **kw):
+    a = datetime(2026, 11, 30, *start, tzinfo=VEGAS)
+    b = datetime(2026, 11, 30, *end, tzinfo=VEGAS)
+    return {"day": day, "kind": kind, "start": a, "end": b, **kw}
+
+
+def _cell(i, kind, lane, lanes, strip, **kw):
+    return {"i": i, "day": 0, "kind": kind, "lane": lane, "lanes": lanes, "strip": strip, "badge": None,
+            "type": "Breakout session", "pending": False, "title": f"T{i}", "top": 10.0, "height": 10.0,
+            "code": f"C{i}", "time": "09:00–10:00", "name": f"N{i}", "sub": "",
+            "detail": {"title": f"N{i}", "code": f"C{i}", "status": "", "rows": [],
+                       "history": [], "sittings": []},
+            **kw}
+
+
+def _style(html, code):
+    m = re.search(r'style="top:[^;]*;height:[^;]*;left:([\d.]+)%;width:([\d.]+)%">[^"]*?<b>' + code + "</b>",
+                  html)
+    assert m, code
+    return float(m.group(1)), float(m.group(2))
+
+
+def test_lanes_two_overlapping_held_seats_split_between_themselves():
+    a, b = _blk("held", (9, 0), (10, 0)), _blk("held", (9, 30), (10, 30))
+    pages._lanes([a, b])
+    assert (a["lanes"], b["lanes"]) == (2, 2) and {a["lane"], b["lane"]} == {0, 1}
+    assert not a["strip"] and not b["strip"]
+
+
+def test_lanes_a_wanted_talk_over_a_held_seat_leaves_it_whole():
+    h, w = _blk("held", (9, 0), (10, 0)), _blk("wanted", (9, 0), (10, 0))
+    pages._lanes([h, w])
+    assert (h["lane"], h["lanes"], h["strip"]) == (0, 1, False)
+    assert (w["lane"], w["lanes"], w["strip"]) == (0, 1, True)
+
+
+def test_lanes_two_overlapping_wanted_talks_split_the_strip_only():
+    h = _blk("held", (9, 0), (10, 0))
+    w1, w2 = _blk("wanted", (9, 0), (10, 0)), _blk("proposed", (9, 30), (10, 30))
+    f = _blk("fallback", (9, 45), (10, 15), day=1)          # another day: its own group
+    pages._lanes([h, w1, w2, f])
+    assert h["lanes"] == 1 and (w1["lanes"], w2["lanes"]) == (2, 2) and {w1["lane"], w2["lane"]} == {0, 1}
+    assert (f["lane"], f["lanes"], f["strip"]) == (0, 1, True)
+
+
+def test_week_html_held_takes_the_whole_day_when_nothing_is_in_the_strip():
+    week = {"title": "Week", "days": ["Mon 30", "Tue 1"], "hours": [], "leaves": [], "now": None,
+            "blocks": [_cell(0, "held", 0, 1, False, leave="07:41"),
+                       _cell(1, "held", 0, 2, False, day=1), _cell(2, "held", 1, 2, False, day=1)]}
+    week["blocks"][1]["day"] = week["blocks"][2]["day"] = 1
+    html = pages._week_html(week)
+    assert _style(html, "C0") == (0.0, 100.0)
+    assert _style(html, "C1") == (0.0, 50.0) and _style(html, "C2") == (50.0, 50.0)
+    assert 'leave 07:41</small>' in html and "in-strip" not in html
+    assert ('href="/day?d=1" title="Open Tue 1 as a list">Tue 1 '
+            '<span aria-hidden="true">›</span></a>') in html
+
+
+def test_week_html_a_day_with_a_strip_gives_held_its_share_and_the_strip_the_rest():
+    held_area = pages.WEEK_HELD_AREA
+    week = {"title": "Week", "days": ["Mon 30"], "hours": [], "leaves": [], "now": None,
+            "blocks": [_cell(0, "held", 0, 1, False), _cell(1, "wanted", 0, 2, True),
+                       _cell(2, "proposed", 1, 2, True)]}
+    html = pages._week_html(week)
+    assert _style(html, "C0") == (0.0, held_area)
+    strip = 100.0 - held_area - 1
+    left1, width1 = _style(html, "C1")
+    left2, width2 = _style(html, "C2")
+    assert left1 == pytest.approx(held_area + 1, abs=0.01) and width1 == pytest.approx(strip / 2, abs=0.01)
+    assert left2 == pytest.approx(held_area + 1 + strip / 2, abs=0.01)
+    assert left2 + width2 <= 100.01                         # the strip never runs past the column
+    assert html.count("in-strip") == 2 and 'class="leave"' not in html
+
+
+def test_a_held_seat_left_for_before_eight_still_shows_its_leave_tag():
+    """The first talk of a day at 08:00 with a walk from the hotel: leave falls before the grid starts."""
+    d = D.Demo(port=0)
+    sid = d._codes["SEC351"]                               # Fri, Wynn, the only held seat that morning
+    s = d.fake.sessions[sid]
+    d.fake.sessions[sid] = s.model_copy(update={"session_time": s.session_time.model_copy(
+        update={"time": "08:00"})})
+    d.watcher.tick()
+    d.app.refresh()
+    snap = d.app.snapshot()
+    w = snap["view"]["week"]
+    [b] = [b for b in w["blocks"] if b["code"] == "SEC351"]
+    assert b["kind"] == "held" and b.get("leave") and b["leave"] < "08:00", b.get("leave")
+    assert b["lanes"] == 1
+    html = pages.render_dashboard(snap, demo=True)
+    assert f'leave {b["leave"]}</small>' in html
+    day = pages.render_day(snap, b["day"], True)
+    assert f"<dd>{b['leave']}, about" in day               # the Day view gives it in the session's facts
+    assert f'<p class="leave-row">Leave {b["leave"]} for SEC351' in day     # its line, before 08:00 too
+    mon = pages.render_day(snap, 0, True)                  # an ordinary day keeps its leave lines
+    assert mon.count('<p class="leave-row">Leave ') == len([lv for lv in w["leaves"] if lv["day"] == 0]) > 0
+
+
+def test_week_renders_after_every_scenario():
+    d, _, sc = panel()
+    for key, fn in sc.items():
+        fn()
+        d.app.refresh()
+        snap = d.app.snapshot()
+        html = pages.render_dashboard(snap, demo=True)
+        for b in snap["view"]["week"]["blocks"]:
+            assert b["strip"] == (b["kind"] != "held"), key
+            assert 0 <= b["lane"] < b["lanes"], key
+        assert 'class="leave"' not in html, key
+        for i in range(5):
+            assert pages.render_day(snap, i, True), key

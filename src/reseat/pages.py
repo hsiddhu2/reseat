@@ -46,6 +46,9 @@ VERDICT = {"likely": "Walk-up likely.", "early": "Go early.", "unlikely": "Walk-
            "unknown": "No call."}
 
 
+# Share of a day's column for held seats when the day also has wanted or proposed sessions.
+WEEK_HELD_AREA = 64.0
+
 # Held blocks on the week grid are coloured by session type, in this order on the legend.
 TYPE_CLASS = {"Lab": "lab", "Workshop": "workshop", "Bootcamp": "bootcamp", "Builders' session": "builders",
               "Code talk": "code", "Chalk talk": "chalk", "Breakout session": "breakout",
@@ -463,7 +466,10 @@ def _week(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]]
     blocks_now, _ = guard.leave_blocks(guard.held_sessions(st, ev, [s.session_id for s in held]), app.rules)
     for blk in blocks_now:
         at = datetime.fromisoformat(blk.start).replace(tzinfo=UTC).astimezone(VEGAS)
-        if at.date().isoformat() in days and DAY_START <= _minutes(at) < DAY_END:
+        for b in blocks:
+            if b["kind"] == "held" and b["session"].session_id == blk.session_id:
+                b["leave"] = f"{at:%H:%M}"
+        if at.date().isoformat() in days and _minutes(at) < DAY_END:      # 07:31 for an 08:00 start too
             leaves.append({"day": days.index(at.date().isoformat()), "top": _pct(_minutes(at)),
                            "title": f"Leave {at:%H:%M} for {blk.code}"})
     labels = [f"{datetime.fromisoformat(d):%a} {datetime.fromisoformat(d).day}" for d in days]
@@ -565,26 +571,34 @@ def _ghosts(app: App, blocks: list[dict[str, Any]], days: list[str], now: float)
 
 
 def _lanes(blocks: list[dict[str, Any]]) -> None:
-    """Side by side when blocks overlap in one day."""
+    """Side by side when blocks overlap in one day. Held seats share lanes only with each other, so a
+    wanted talk never narrows a seat you hold. The rest go in a strip on the right of the day."""
+    for b in blocks:
+        b["strip"] = b["kind"] != "held"
     for day in {b["day"] for b in blocks}:
-        mine = sorted((b for b in blocks if b["day"] == day), key=lambda b: (b["start"], b["kind"] != "held"))
-        groups: list[list[dict[str, Any]]] = []
-        for b in mine:
-            if groups and any(overlaps((b["start"], b["end"]), (o["start"], o["end"])) for o in groups[-1]):
-                groups[-1].append(b)
+        for strip in (False, True):
+            _lane_group([b for b in blocks if b["day"] == day and b["strip"] == strip])
+
+
+def _lane_group(blocks: list[dict[str, Any]]) -> None:
+    """Lanes for blocks that may overlap: each takes the first lane free at its start."""
+    groups: list[list[dict[str, Any]]] = []
+    for b in sorted(blocks, key=lambda b: b["start"]):
+        if groups and any(overlaps((b["start"], b["end"]), (o["start"], o["end"])) for o in groups[-1]):
+            groups[-1].append(b)
+        else:
+            groups.append([b])
+    for g in groups:
+        ends: list[datetime] = []
+        for b in g:
+            lane = next((i for i, end in enumerate(ends) if end <= b["start"]), len(ends))
+            if lane < len(ends):
+                ends[lane] = b["end"]
             else:
-                groups.append([b])
-        for g in groups:
-            ends: list[datetime] = []
-            for b in g:
-                lane = next((i for i, end in enumerate(ends) if end <= b["start"]), len(ends))
-                if lane < len(ends):
-                    ends[lane] = b["end"]
-                else:
-                    ends.append(b["end"])
-                b["lane"] = lane
-            for b in g:
-                b["lanes"] = max(len(ends), 1)
+                ends.append(b["end"])
+            b["lane"] = lane
+        for b in g:
+            b["lanes"] = max(len(ends), 1)
 
 
 def _badges(blocks: list[dict[str, Any]]) -> None:
@@ -1045,44 +1059,48 @@ def _type_legend(blocks: list[dict[str, Any]]) -> str:
     held = {type_class(b.get("type")) for b in blocks if b["kind"] == "held"}
     names = {cls: name for name, cls in TYPE_CLASS.items()} | {"other": "Other"}
     order = [*TYPE_CLASS.values(), "other"]
-    types = "".join(f'<span class="lg lg-held ty-{c}"><i></i>{e(names[c])}</span>'
+    types = "".join(f'<span class="lg lg-held ty-{c}"><i aria-hidden="true"></i>{e(names[c])}</span>'
                     for c in order if c in held)
     return f'<span class="lg-group">Held, by type: {types}</span>' if types else ""
 
 
 def _week_html(w: dict[str, Any]) -> str:
     legend = _type_legend(w["blocks"]) + "".join(
-        f'<span class="lg lg-{k}"><i></i>{label}</span>' for k, label in (
-            ("wanted", "Wanted"), ("proposed", "Proposed"), ("leave", "Leave now"),
+        f'<span class="lg lg-{k}"><i aria-hidden="true"></i>{label}</span>' for k, label in (
+            ("wanted", "Wanted"), ("proposed", "Proposed"), ("leave", "Leave by, for the walk there"),
             ("fallback", "Fallback"), ("ghost", "Released or removed")))
     hours = "".join(f'<div class="hr" style="top:{h["top"]}%"><span>{e(h["label"])}</span></div>'
                     for h in w["hours"])
     cols = []
     for i, label in enumerate(w["days"]):
         inner = []
-        for b in (x for x in w["blocks"] if x["day"] == i):
-            width = 100 / b["lanes"]
+        mine = [x for x in w["blocks"] if x["day"] == i]
+        held_area = WEEK_HELD_AREA if any(x["strip"] for x in mine) else 100.0
+        for b in mine:
+            area, left0 = (100.0 - held_area - 1, held_area + 1) if b["strip"] else (held_area, 0.0)
+            width = area / b["lanes"]
             badge = (f'<em class="badge" title="{e(b["badge"])}" aria-label="Tight walk: {e(b["badge"])}">'
                      '!</em>' if b["badge"] else "")
             hl = " hl" if b.get("mark") else ""
             mk = (f'<em class="mk mk-{e(b["mark"]["kind"])}">{e(b["mark"]["label"])}</em>'
                   if b.get("mark") else "")
-            narrow = " narrow" if b["lanes"] > 1 else ""
+            narrow = (" narrow" if b["lanes"] > 1 else "") + (" in-strip" if b["strip"] else "")
+            short = b["lanes"] > 1 or b["strip"]             # start time only where space is tight
             ty = f' ty-{type_class(b.get("type"))}' if b["kind"] == "held" else ""
             pend = " pending" if b["pending"] else ""
+            lv = (f'<small class="lv" title="Leave by {e(b["leave"])} for the walk there">'
+                  f'leave {e(b["leave"])}</small>' if b.get("leave") else "")
             inner.append(f'<a class="blk b-{e(b["kind"])}{ty}{pend}{hl}{narrow}" '
                          f'href="#s-{b["i"]}" title="{e(b["title"])}" style="top:{b["top"]}%;'
-                         f'height:{b["height"]}%;left:{b["lane"] * width:.2f}%;width:{width:.2f}%">'
-                         f'{badge}{mk}<b>{e(b["code"])}</b>'
-                         f'<small class="tm">{e(b["time"].split("–")[0] if narrow else b["time"])}</small>'
+                         f'height:{b["height"]}%;left:{left0 + b["lane"] * width:.2f}%;width:{width:.2f}%">'
+                         f'{badge}{mk}<b>{e(b["code"])}</b>{lv}'
+                         f'<small class="tm">{e(b["time"].split("–")[0] if short else b["time"])}</small>'
                          f'<span class="nm">{e(b["name"])}</span><span>{e(b["sub"])}</span></a>')
-        for lv in (x for x in w["leaves"] if x["day"] == i):
-            inner.append(f'<div class="leave" style="top:{lv["top"]}%" title="{e(lv["title"])}">'
-                         f'<span class="sr">{e(lv["title"])}</span></div>')
         if w.get("now") and w["now"]["day"] == i:
             inner.append(f'<div class="now" style="top:{w["now"]["top"]}%"><span>now {e(w["now"]["label"])}'
                          '</span></div>')
-        cols.append(f'<div class="col"><a class="dh" href="/day?d={i}">{e(label)}</a>'
+        cols.append(f'<div class="col"><a class="dh" href="/day?d={i}" title="Open {e(label)} as a list">'
+                    f'{e(label)} <span aria-hidden="true">›</span></a>'
                     f'<div class="slots">{"".join(inner)}'
                     f'</div></div>')
     return (f'<div class="weekhead"><h1>{e(w["title"])}</h1><div class="legend">{legend}</div></div>'
