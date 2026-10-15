@@ -29,7 +29,7 @@ Tests: [every read comes before the cancel](../tests/test_swap.py#L71), [B full 
 
 **In re:Seat.** Reserve and cancel are not idempotent, so a retry after a lost reply can book twice or cancel a seat booked a moment ago. re:Seat never retries a write. After a timeout, a server error or an unreadable answer it reads the schedule back, and the schedule decides.
 
-Tests: [5xx on a booking is read back, not retried](../tests/test_router.py#L243), [the same for a cancel](../tests/test_cancel_and_cli.py#L41), [a timeout on a reserve that landed is verified, not undone](../tests/test_swap.py#L318).
+Tests: [5xx on a booking is read back, not retried](../tests/test_router.py#L262), [the same for a cancel](../tests/test_cancel_and_cli.py#L58), [a timeout on a reserve that landed is verified, not undone](../tests/test_swap.py#L318).
 
 ## 3. Booking order under a quota
 

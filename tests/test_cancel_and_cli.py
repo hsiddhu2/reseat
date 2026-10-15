@@ -368,3 +368,20 @@ def test_favorite_failure_is_printed_by_code_not_id(cli_env):
     assert "favorited SVS401" in r.output and "SEC201: other" in r.output
     assert "Read-back does not list as favorites: SEC201" in r.output       # read back after the write
     assert "S-SVS1" not in r.output and "S-SEC1" not in r.output
+
+
+def test_code_changed_under_the_same_id_pinned_target_books_and_reads_back(cli_env):
+    """Live API, 12 October 2026: a session kept its id and changed code. A target pinned by
+    session_id still books that session, the write is read back, and output names the new code."""
+    fake, store, home = cli_env
+    assert runner.invoke(cli.app, ["sync", "--no-abstracts"]).exit_code == 0
+    fake.sessions["S-SEC1"] = fake.sessions["S-SEC1"].model_copy(update={"abbreviation": "SEC501"})
+    assert runner.invoke(cli.app, ["sync", "--no-abstracts"]).exit_code == 0
+    write_rules(home / "rules.yaml", "targets:\n- session_id: S-SEC1\n")
+    r = runner.invoke(cli.app, ["book", "--yes"])
+    assert r.exit_code == 0, r.output
+    assert fake.schedule.reserved == {"S-SEC1"} and fake.counts["ReserveSessions"] == 1
+    assert fake.counts["GetSchedule"] >= 1 and "SEC501" in r.output and "SEC201" not in r.output
+    assert "S-SEC1" not in r.output
+    entry = store.journal_entries(EV)[-1]
+    assert entry["outcome"] == "success" and "readBack" in entry["response"]

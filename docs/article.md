@@ -90,7 +90,7 @@ The first question people ask is why there is no hosted version. The Events API 
 
 ![How re:Seat fits together: the CLI, web app and MCP server on your laptop share one engine and one local store. Only the API client talks to the AWS Events API, only Auth talks to Builder ID sign-in, and the phone reaches the laptop through ntfy.sh](architecture.png)
 
-## Seen live: an empty catalog
+## Seen live
 
 On the evening of 8 October, the day API writes were scheduled to open, I ran the band inspection I had planned for after seating opened. The API served no catalog.
 
@@ -106,11 +106,24 @@ re:Seat's first sync that evening read the empty answer as "every session remove
 
 The record is in [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md), with one line for each daily check since.
 
-As of 11 October, the Events API still served no catalog, so re:Seat has never sent a write to AWS on my behalf. The live booking check, one reversible reserve and cancel with the schedule read back, runs the day the catalog returns, and I will update this article with the output and the date.
+The catalog stayed empty through 11 October. On 12 October it came back with 2,227 sessions and their seat bands. Six days after reserved seating opened, 1,115 of the 1,460 sessions that take reservations were already full. That one number is why re:Seat exists. Session ids survived the outage, and 13 sessions changed their code under the same id, so a target pinned by id followed them. On 8 October I wrote that the id ranges suggested the catalog had been re-keyed. It had not, and the proof file carries a dated correction of the id facts behind that guess.
+
+The first live write check turned up a difference from the spec. A cancel on a session you do not hold is documented as 404. The live API answered 400 "The request could not be applied to this session". re:Seat's probe stopped with an error on it. It now reads 400 or 404 as writes open, with a test for each.
+
+Then the real check: reserve a repeat sitting I did not want, read the schedule back, cancel it, read it back. Twice.
+
+```
+22:32:57 PDT  ReserveSessions    AMZ202-R1  success    read back: 15 reserved, AMZ202-R1 held
+22:33:19 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
+22:40:06 PDT  ReserveSessions    AMZ202-R1  success    read back: 15 reserved, AMZ202-R1 held
+22:47:16 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
+```
+
+The second time I kept the seat long enough to see it in the AWS portal before cancelling. Nothing else in my schedule changed. Writes are open, and each booking and cancel was read back. The records are in [proof/2026-10-12-catalog-returned.md](proof/2026-10-12-catalog-returned.md) and [proof/2026-10-12-round-trip.md](proof/2026-10-12-round-trip.md). A swap, a booking caught by the watcher, and a full or clashing session have not happened live yet. They are tested against the fake.
 
 ## How it was tested
 
-Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 698 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
+Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 845 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
 
 ## What is a heuristic
 
@@ -119,7 +132,7 @@ I want to be honest about which parts are rules and which are guesses.
 - **Queue or go.** Odds with a range, not a yes or no. The rule for the session type is the starting point: breakouts usually admit walk-ups, chalk talks need you early, workshops and builders' sessions admit almost none. Each time re:Seat sees the session fill and free a seat again, the odds move, so the page reads "walk-up about 47% (23 to 71%)". The range is wide until there is data. It is never a prediction, and the page always shows its basis.
 - **Walking times.** Conservative estimates between the six 2026 venues, not official figures. Every screen, push and leave-now block says "estimate". AWS publishes no walking or shuttle times, so re:Seat adds none of its own.
 - **Wynn and Encore** arrive from the API as one venue, `Wynn/Encore`. re:Seat splits them by room name.
-- **Booking order.** Formats that are not recorded fill first, so they are sent first: workshops, labs and bootcamps, then builders' sessions, chalk talks, code talks, breakouts.
+- **Booking order.** Formats that are not recorded fill first, so they are sent first: workshops, labs and bootcamps, then builders' sessions, chalk talks, code talks, breakouts. I also tried the textbook alternative, value times fill speed, on the fault storm. Over ten seeds it made no real difference, so I kept the simpler rule. The details are in [the models page](models.md).
 
 ## Limits
 
