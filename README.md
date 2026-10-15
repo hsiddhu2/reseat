@@ -20,7 +20,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L262), [5xx on a cancel](tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](tests/test_swap.py#L318).
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
 - **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
-- **845 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **853 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
 - **Seen live:** from 8 to 11 October the API served an empty catalog, and re:Seat refused to act on it. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33). On 12 October the catalog came back with its session ids kept. [The record](docs/proof/2026-10-12-catalog-returned.md). Two reversible bookings, each read back and cancelled, confirmed that writes are open. [The round trips](docs/proof/2026-10-12-round-trip.md).
 - **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
@@ -140,6 +140,16 @@ The same evening, two reversible round trips on a repeat sitting the attendee di
 
 The rest of the schedule was the same before and after. The commands and output are in [docs/proof/2026-10-12-round-trip.md](docs/proof/2026-10-12-round-trip.md). A swap, a booking caught by the watcher, and a full or clashing session have not yet been seen live. They are tested against the fake.
 
+### On the real catalog
+
+Since 13 October the watcher has run against the live API on the attendee's own schedule, on the attendee's laptop. In these screenshots the session codes, titles and rooms of the attendee's sessions are covered. Times and everything re:Seat adds are not.
+
+![The Week page on the live catalog: held sessions coloured by type, a leave time on each, wanted talks in a strip beside them, and the watcher's last sweep of 2,240 sessions in the top bar. Session codes, titles and rooms are covered](docs/screenshots/live-week.png)
+
+![The Today page at phone width: leave in 46 days for the first session, the walk from the start venue as an estimate, and walk-up odds with a range for a talk wanted but not held. Codes, titles and rooms are covered](docs/screenshots/live-today.png)
+
+![The Activity page: seat-band changes seen in the live catalog, three network outages on 14 October that the watcher recovered from on its own, and both round trips](docs/screenshots/live-activity.png)
+
 ## Limits
 
 - It manages seats you already chose. It does not recommend sessions or solve your schedule.
@@ -151,7 +161,7 @@ The rest of the schedule was the same before and after. The commands and output 
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 845 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 853 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 

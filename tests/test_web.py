@@ -1835,3 +1835,141 @@ def test_week_renders_after_every_scenario():
         assert 'class="leave"' not in html, key
         for i in range(5):
             assert pages.render_day(snap, i, True), key
+
+
+# ---- what the live screenshots show, each proved on the fake
+
+
+def test_week_gives_every_held_seat_a_leave_tag_and_wanted_talks_go_in_the_strip(demo):
+    snap = demo.app.snapshot()
+    blocks = snap["view"]["week"]["blocks"]
+    held = [b for b in blocks if b["kind"] == "held"]
+    assert held and all(b.get("leave") for b in held)            # a leave time on each held seat
+    assert any(b["kind"] == "wanted" for b in blocks)
+    assert all(b["strip"] for b in blocks if b["kind"] == "wanted")
+    html = pages.render_dashboard(snap, demo=True)
+    for b in held:
+        assert f'leave {b["leave"]}</small>' in html, b["code"]
+    assert "in-strip" in html
+
+
+def test_today_wanted_row_gives_walk_up_odds_with_a_range():
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    d.app.refresh()
+    snap = d.app.snapshot()
+    [w] = snap["view"]["today"]["wanted"]
+    assert re.search(r"Walk-up about \d+% \(\d+ to \d+%\)\. Session type rule\.", w["text"]), w["text"]
+    html = pages.render_today(snap, demo=True)
+    assert re.search(r"Walk-up about \d+% \(\d+ to \d+%\)", html)
+
+
+def test_top_bar_shows_the_last_sweep_and_the_session_count(demo):
+    snap = demo.app.snapshot()
+    s = snap["view"]["status"]
+    html = pages.render_dashboard(snap, demo=True)
+    assert f"<span>· last sweep {s['last_sweep']}</span><span>· {s['sessions']} sessions</span>" in html
+    assert re.fullmatch(r"\d\d:\d\d:\d\d", s["last_sweep"])
+    big = dict(s, sessions=2240)
+    assert "· 2,240 sessions</span>" in pages._status_bar(big)    # thousands separated, as on the live bar
+    assert "no sweep yet" in pages._status_bar(dict(s, last_sweep=None, next_at=None))
+
+
+def test_activity_journals_an_outage_start_and_end_and_the_watcher_recovers_alone():
+    d = D.Demo(port=0)
+    d.watcher.tick()                                             # baseline
+    d.fake.fail_next("ListSessions", 503, times=2)
+    assert d.watcher.tick().failure == "outage"
+    assert d.watcher.tick().failure == "outage"
+    d.app.refresh()
+    assert d.app.snapshot()["view"]["status"]["state"] == "offline"
+    assert d.watcher.tick().failure is None                      # no restart, no command: it came back
+    d.app.refresh()
+    snap = d.app.snapshot()
+    assert snap["view"]["status"]["state"] == "watching"
+    rows = [j for j in snap["view"]["log"] if j["op"] == "watcher.outage"]
+    assert [j["outcome"] for j in rows] == ["end", "start"]      # one outage, newest first
+    html = pages.render_activity(snap, demo=True)
+    assert html.count("watcher.outage") == 2
+    assert '<span class="o o-start">start</span>' in html and '<span class="o o-end">end</span>' in html
+
+
+def test_activity_lists_a_reserve_and_cancel_round_trip_with_their_read_backs():
+    from reseat import cancel as C
+    from reseat.router import Plan, Planned, execute
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    ev = d.app.event_id
+    sid = next(s.session_id for s in d.fake.sessions.values() if s.abbreviation == "CMP409-R1")
+    code = "CMP409-R1"
+    ex = execute(Plan(batch=[Planned(sid, code, "t", None, code, 0, False, 0)]), d.client, d.store, ev)
+    assert ex.schedule is not None and sid in ex.schedule.reserved      # read back: held
+    chk = C.check(d.client, ev, sid)
+    assert chk.held
+    res = C.cancel(d.client, d.store, ev, sid, was_held=chk.held)
+    assert res.status == "cancelled" and sid not in res.schedule.reserved  # read back: gone
+    d.app.refresh()
+    snap = d.app.snapshot()
+    rows = [j for j in snap["view"]["log"] if j["op"] in ("ReserveSessions", "CancelReservation")]
+    assert [(j["op"], j["outcome"]) for j in rows] == [("CancelReservation", "cancelled"),
+                                                        ("ReserveSessions", "success")]
+    assert rows[1]["what"] == code
+    for r in d.store.journal_entries(ev):
+        if r["op"] in ("ReserveSessions", "CancelReservation"):
+            assert json.loads(r["response"])["readBack"] is not None, r["op"]
+    html = pages.render_activity(snap, demo=True)
+    assert f"{code} booked, read back ok" in html
+    assert "CancelReservation" in html and "ReserveSessions" in html
+
+
+def test_activity_names_the_session_on_a_cancel_row():
+    from reseat import cancel as C
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    ev = d.app.event_id
+    sid = next(iter(d.fake.schedule.reserved))
+    C.cancel(d.client, d.store, ev, sid, was_held=True)
+    d.app.refresh()
+    [row] = [j for j in d.app.snapshot()["view"]["log"] if j["op"] == "CancelReservation"]
+    assert row["what"] == d.store.get(ev, sid).abbreviation
+
+
+def test_activity_never_shows_the_id_of_a_cancel_outside_the_local_catalog():
+    from reseat import cancel as C
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    ev = d.app.event_id
+    sid = "sess-not-in-catalog-7f3a"
+    assert d.store.get(ev, sid) is None
+    res = C.cancel(d.client, d.store, ev, sid, was_held=False)
+    assert res.status == "not_held"                                    # the fake answers 404
+    d.app.refresh()
+    snap = d.app.snapshot()
+    [row] = [j for j in snap["view"]["log"] if j["op"] == "CancelReservation"]
+    assert row["what"] == "a session not in the local catalog"
+    assert sid not in pages.render_activity(snap, demo=True)           # code, never the id
+
+
+def test_activity_names_no_session_for_a_string_request_that_is_not_a_session_id():
+    import copy
+
+    from reseat import guard
+    d = D.Demo(port=0)
+    d.watcher.tick()
+    ev = d.app.event_id
+    guard.sync(d.client, d.store, ev, d.rules)                         # creates the tagged blocks
+    pt = d.fake.schedule.personal_time
+    first = next(k for k in pt if k != "demo-dinner")
+    pt["pt-extra"] = dict(copy.deepcopy(pt[first]), personalTimeId="pt-extra")
+    res = guard.sync(d.client, d.store, ev, d.rules)                   # deletes the duplicate
+    assert any(x.startswith("deleted") for x in res.done), res.done
+    d.watcher.tick()
+    d.app.refresh()
+    snap = d.app.snapshot()
+    log = snap["view"]["log"]
+    rows = {j["op"]: j for j in log if j["op"] in ("DeletePersonalTime", "GetSchedule")}
+    assert set(rows) == {"DeletePersonalTime", "GetSchedule"}         # a block id, "guard read-back"
+    assert all(j["what"] == "" for j in rows.values())
+    assert all(j["what"] == "" for j in log if j["op"].startswith("watcher."))
+    html = pages.render_activity(snap, demo=True)
+    assert "not in the local catalog" not in html and "pt-extra" not in html

@@ -121,9 +121,17 @@ Then the real check: reserve a repeat sitting I did not want, read the schedule 
 
 The second time I kept the seat long enough to see it in the AWS portal before cancelling. Nothing else in my schedule changed. Writes are open, and each booking and cancel was read back. The records are in [proof/2026-10-12-catalog-returned.md](proof/2026-10-12-catalog-returned.md) and [proof/2026-10-12-round-trip.md](proof/2026-10-12-round-trip.md). A swap, a booking caught by the watcher, and a full or clashing session have not happened live yet. They are tested against the fake.
 
+Since 13 October the watcher has run on my own schedule, on my laptop. Here is my week as it sees it, with my sessions' codes, titles and rooms covered:
+
+![My week on the live catalog: held sessions coloured by type, a leave time on each, and the talks I want but do not hold in a strip beside them. Codes, titles and rooms are covered](screenshots/live-week.png)
+
+The Activity page keeps what it saw and did. On 14 October the connection dropped three times. The watcher logged each outage and picked up again on its own:
+
+![The Activity page: seat bands moving in the live catalog, three outages on 14 October with their ends, and both round trips](screenshots/live-activity.png)
+
 ## How it was tested
 
-Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 845 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
+Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 853 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
 
 ## What is a heuristic
 

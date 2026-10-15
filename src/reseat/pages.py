@@ -338,7 +338,7 @@ def _journal(app: App) -> list[dict[str, Any]]:
     for r in app.store.journal_entries(app.event_id, JOURNAL):
         resp, req = _json(r["response"]), _json(r["request"])
         out.append({"at": stamp(r["ts"], seconds=True), "op": r["op"], "status": _status_of(resp),
-                    "outcome": (r["outcome"] or "").removeprefix("state:"), "what": _what(app, req)})
+                    "outcome": (r["outcome"] or "").removeprefix("state:"), "what": _what(app, req, r["op"])})
     return out
 
 
@@ -354,11 +354,13 @@ def _status_of(resp: Any) -> str:
     return "" if st is None else str(st)
 
 
-def _what(app: App, req: Any) -> str:
+def _what(app: App, req: Any, op: str = "") -> str:
     if isinstance(req, dict) and "held" in req:
         return f"{_code(app, req['held'])} → {_code(app, req['wanted'])}"
     if isinstance(req, list):
         return ", ".join(_code(app, s) for s in req[:4] if isinstance(s, str))
+    if op == "CancelReservation" and isinstance(req, str):   # a cancel journals its one session id
+        return _code(app, req)
     return ""
 
 
