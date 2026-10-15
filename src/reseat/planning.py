@@ -14,6 +14,7 @@ Rules this module exists to respect:
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from datetime import datetime, timedelta
 from . import decisions
 from .campus import CUTOFF_MINUTES, VEGAS, VENUES, event_date, normalize_venue, session_window, walk_minutes
 from .client import ApiError, EventsClient
-from .models import Session, normalize_type
+from .models import SeatBand, Session, normalize_type
 from .rules import Rules
 from .store import Store
 
@@ -344,3 +345,205 @@ def open_slots(client: EventsClient, store: Store, event_id: str, rules: Rules, 
         if len(fits) > PER_GAP:
             out.append(f"  {len(fits) - PER_GAP} more in this gap. Narrow with type, text, topic or service.")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------------- check_plan
+
+MAX_CODES = 25
+
+
+@dataclass
+class _Item:
+    """One sitting in the day being checked: held, or proposed in the plan."""
+    session: Session
+    window: tuple[datetime, datetime]
+    held: bool
+
+
+def _walk_problem(a: _Item, b: _Item, rules: Rules) -> str | None:
+    """Why b cannot be reached from a in time, or None. Same allowance and door rule as leave-now."""
+    door = timedelta(minutes=CUTOFF_MINUTES)
+    walk = walk_minutes(a.session.campus_venue, b.session.campus_venue)
+    allow = decisions.walk_allowance(walk, rules.arrive_confidence) if walk is not None else 0
+    if a.window[1] + timedelta(minutes=allow) <= b.window[0] - door:
+        return None
+    what = (f"the walk from {_code(a)} at {a.session.campus_venue} is about {walk} min (estimate), "
+            f"{allow} allowed" if walk is not None else f"{_code(a)} ends at {_clock(a.window[1])}")
+    return f"cannot be reached in time: {what}, and doors close at {_clock(b.window[0] - door)}"
+
+
+def _code(i: _Item | Session) -> str:
+    s = i.session if isinstance(i, _Item) else i
+    return clean(s.abbreviation, 20) or "a session without a code"
+
+
+def _problems(s: Session, w: tuple[datetime, datetime], items: list[_Item], held_bases: set[str],
+              rules: Rules) -> list[str]:
+    """Facts that stop `s` fitting the week of `items`. Empty when it fits."""
+    out = []
+    if s.is_reservable is False or s.band == SeatBand.WALK_UP:
+        out.append("takes no reservations (walk-up only)")
+    elif s.band is not None and not s.band.open:
+        out.append(f"full ({clean(s.seat_availability, 20)})")
+    if s.base_code in held_bases:
+        out.append("another sitting of this talk is held")
+    if any(not i.held and i.session.base_code == s.base_code and i.session.session_id != s.session_id
+           for i in items):
+        out.append("another sitting of this talk is also in the plan")
+    for i in items:
+        if i.session.session_id != s.session_id and i.window[0] < w[1] and w[0] < i.window[1]:
+            out.append(f"clashes with {'held ' if i.held else ''}{_code(i)} "
+                       f"{_clock(i.window[0])} to {_clock(i.window[1])}")
+    for m in rules.meals:
+        a, b = m.window()
+        if a < w[1] and w[0] < b:
+            out.append(f"overlaps the meal on {m.day} {m.start} to {m.end}")
+    me = _Item(s, w, False)
+    day = w[0].astimezone(VEGAS).date()
+    same_day = sorted([i for i in items if i.window[0].astimezone(VEGAS).date() == day
+                       and i.session.session_id != s.session_id and not _overlap(i.window, w)],
+                      key=lambda i: i.window[0])
+    before = [i for i in same_day if i.window[1] <= w[0]]
+    after = [i for i in same_day if i.window[0] >= w[1]]
+    # The walk in starts from whatever ends last before it, the walk out goes to whatever starts first.
+    if before and (p := _walk_problem(max(before, key=lambda i: i.window[1]), me, rules)):
+        out.append(p)
+    if after and (p := _walk_problem(me, min(after, key=lambda i: i.window[0]), rules)):
+        nxt = min(after, key=lambda i: i.window[0])
+        out.append(f"leaves no time for {_code(nxt)}: {p.split(': ', 1)[1]}")
+    return out
+
+
+def _overlap(a: tuple[datetime, datetime], b: tuple[datetime, datetime]) -> bool:
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def _resolve(store: Store, event_id: str, code: str) -> tuple[list[Session], bool]:
+    """(sittings, exact). An exact sitting code gives that one sitting. A base code gives every
+    sitting of the talk, in start-time order."""
+    want = code.strip().upper()
+    base = re.sub(r"-R\d*$", "", want)
+    talk = sorted(store.by_base_code(event_id, base), key=_order)
+    exact = [s for s in talk if (s.abbreviation or "").upper() == want]
+    # A code without -R names the talk. It is one sitting only when the talk has one.
+    if exact and (want != base or len(talk) == 1):
+        return exact[:1], True
+    return (talk, False) if want == base else ([], False)
+
+
+def check_plan(client: EventsClient, store: Store, event_id: str, rules: Rules, codes: list[str]) -> str:
+    """Facts about each code against what is held and against the rest of the list: in the catalog,
+    reservable, band, clashes, two sittings of one talk, walks with the door rule, meals, the daily
+    cap and the watch cap. One GetSchedule read. Facts only, no pass mark."""
+    if len(codes) > MAX_CODES * 2:          # before any work: a long list costs nothing to refuse
+        return f"{len(codes)} codes given, at most {MAX_CODES} at a time. Nothing checked."
+    codes = list(dict.fromkeys(c.upper() for c in (clean(str(c)[:100], 24) for c in codes) if c))
+    if not codes:
+        return "No codes given. Nothing checked."
+    if len(codes) > MAX_CODES:
+        return f"{len(codes)} codes given, at most {MAX_CODES} at a time. Nothing checked."
+    try:
+        reserved = client.get_schedule(event_id).reserved
+    except ApiError as e:
+        return f"Could not read your schedule: {clean(e, 160)}. Nothing checked."
+    held = [s for s in (store.get(event_id, i) for i in dict.fromkeys(reserved)) if s]
+    if len([s for s in held if _window(s)]) < len(set(reserved)):
+        return ("Some held sessions are not in the local catalog or have no time, so clashes cannot be "
+                "checked. Run reseat sync, then ask again.")
+    items = [_Item(s, _window(s), True) for s in held]          # type: ignore[arg-type]
+    held_bases = {s.base_code for s in held if s.base_code}
+    resolved = {c: _resolve(store, event_id, c) for c in codes}
+    for sittings, exact in resolved.values():
+        listed = {i.session.session_id for i in items}
+        if exact and sittings[0].session_id not in listed and (w := _window(sittings[0])):
+            items.append(_Item(sittings[0], w, False))
+    lines = [f"{_synced(store, event_id)} Checked {len(codes)} code(s) against {len(held)} held session(s) "
+             "and against each other. Facts only, in the order given.", DATA_NOTE]
+    for c in codes:
+        lines += _check_one(c, *resolved[c], items, held_bases, reserved, store, event_id, rules)
+    targets = {s.session_id for t in rules.targets for s in _target_sittings(store, event_id, t)}
+    new = {sittings[0].base_code or sittings[0].session_id for sittings, _ in resolved.values()
+           if sittings and not any(x.session_id in reserved or x.session_id in targets for x in sittings)}
+    lines += _caps(items, rules, len(new))        # one target per talk, as the rules file allows
+    return "\n".join(lines)
+
+
+def _check_one(code: str, sittings: list[Session], exact: bool, items: list[_Item], held_bases: set[str],
+               reserved: list[str], store: Store, event_id: str, rules: Rules) -> list[str]:
+    if not sittings:
+        return [f"- {code}: not in the local catalog. Check the code, or run reseat sync."]
+    if exact:
+        s = sittings[0]
+        if s.session_id in reserved:
+            return [f"- {code}: already held."]
+        w = _window(s)
+        if not w:
+            return [f"- {code}: time not set in the catalog, so it cannot be checked."]
+        probs = _problems(s, w, items, held_bases, rules)
+        head = f"- {code}  {when(s)}  {_venue(s)}  {_band(s)}"
+        if not probs:
+            return [head, "  fits."]
+        out = [head] + [f"  {p}." for p in probs]
+        if any(p.startswith("full") for p in probs):
+            out.append(_others(s, items, held_bases, store, event_id, rules))
+        return out
+    return _check_talk(code, sittings, items, held_bases, reserved, rules)
+
+
+def _check_talk(code: str, sittings: list[Session], items: list[_Item], held_bases: set[str],
+                reserved: list[str], rules: Rules) -> list[str]:
+    if any(s.session_id in reserved for s in sittings):
+        held = next(s for s in sittings if s.session_id in reserved)
+        return [f"- {code}: already held as {_code(held)}."]
+    out = [f"- {code}: {len(sittings)} sitting(s), in start-time order."]
+    for s in sittings:
+        w = _window(s)
+        probs = _problems(s, w, items, held_bases, rules) if w else ["time not set"]
+        out.append(f"  {_code(s)}  {when(s)}  {_venue(s)}  {_band(s)}: "
+                   + ("fits." if not probs else "; ".join(probs).replace("; ", ". ") + "."))
+    return out
+
+
+def _others(s: Session, items: list[_Item], held_bases: set[str], store: Store, event_id: str,
+            rules: Rules) -> str:
+    """The other sittings of a full talk that are open, and whether each fits."""
+    held = {i.session.session_id for i in items if i.held}
+    others = [o for o in sorted(store.by_base_code(event_id, s.base_code or ""), key=_order)
+              if o.session_id != s.session_id and o.session_id not in held and o.band is not None
+              and o.band.open]
+    if not others:
+        return "  No other sitting of this talk is open."
+    parts = []
+    for o in others:
+        w = _window(o)
+        rest = [i for i in items if i.session.session_id != s.session_id]
+        probs = _problems(o, w, rest, held_bases, rules) if w else ["time not set"]
+        parts.append(f"{_code(o)} {when(o)} ({'fits' if not probs else probs[0]})")
+    return "  Other sittings open: " + ", ".join(parts) + "."
+
+
+def _target_sittings(store: Store, event_id: str, t: object) -> list[Session]:
+    sid, code = getattr(t, "session_id", None), getattr(t, "code", None)
+    if sid:
+        s = store.get(event_id, sid)
+        return [s] if s else []
+    return store.by_base_code(event_id, code) if code else []
+
+
+def _caps(items: list[_Item], rules: Rules, n_codes: int) -> list[str]:
+    out = []
+    per_day: dict[str, int] = {}
+    planned: set[str] = set()
+    for i in items:
+        d = i.window[0].astimezone(VEGAS)
+        key = f"{d:%A} {d.day} {d:%b}"
+        per_day[key] = per_day.get(key, 0) + 1
+        if not i.held:
+            planned.add(key)
+    for day, n in per_day.items():
+        if day in planned and n > rules.max_per_day:
+            out.append(f"{day} would have {n} sessions, max_per_day is {rules.max_per_day}.")
+    if len(rules.targets) + n_codes > rules.watch_cap:
+        out.append(f"{len(rules.targets)} targets now plus {n_codes} new would pass "
+                   f"watch_cap {rules.watch_cap}.")
+    return out

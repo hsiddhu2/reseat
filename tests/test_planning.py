@@ -504,3 +504,379 @@ def test_an_internal_error_reaches_the_ai_as_a_fixed_sentence(world, monkeypatch
     monkeypatch.setattr(P, "open_slots", boom)
     for out in (world[2].search_sessions(), world[2].open_slots("Tuesday")):
         assert out == "Could not answer: re:Seat hit an internal error. Nothing was sent or changed."
+
+
+# ---------------------------------------------------------------- check_plan
+
+
+def _block(out, code):
+    """The lines of one code's answer."""
+    part = out.split(f"\n- {code}", 1)[1]
+    return re.split(r"\n- ", part, maxsplit=1)[0]
+
+
+def test_check_plan_reads_the_schedule_once_and_keeps_the_order_given(world):
+    fake, _, tools = world
+    out = tools.check_plan(["STG201", "AIM310", "NOPE999"])
+    assert api_calls(fake) == ["GetSchedule"]
+    assert "in the order given" in out.splitlines()[0]
+    assert [ln.split()[1].rstrip(":") for ln in out.splitlines() if ln.startswith("- ")] == \
+        ["STG201", "AIM310", "NOPE999"]
+
+
+def test_check_plan_states_facts_per_code(world):
+    # One call per code, so the codes do not meet each other. The next test lets them.
+    def one(code):
+        return world[2].check_plan([code])
+    assert _block(one("AIM310"), "AIM310").strip().endswith("fits.")
+    out = "\n".join(one(c) for c in ("SEC401", "CMP320", "NET330", "DEV101", "ARC301", "NOPE999"))
+    assert "clashes with held ARC301 09:00 to 10:00" in _block(out, "SEC401")
+    assert "full (unavailable)" in _block(out, "CMP320") and "No other sitting of this talk is open" in out
+    net = _block(out, "NET330")
+    assert "leaves no time for DOP302" in net and "55 min (estimate)" in net
+    assert "takes no reservations" in _block(out, "DEV101")
+    assert _block(out, "ARC301").startswith(": already held.")
+    assert "not in the local catalog" in _block(out, "NOPE999")
+
+
+def test_check_plan_on_a_base_code_lists_every_sitting(world):
+    out = world[2].check_plan(["AIM311"])
+    block = _block(out, "AIM311")
+    assert "2 sitting(s), in start-time order" in block
+    lines = [ln.strip() for ln in block.splitlines()[1:]]
+    assert lines[0].startswith("AIM311-R ") and lines[0].endswith("fits.")
+    assert lines[1].startswith("AIM311-R1 ") and lines[1].endswith("fits.")
+
+
+def test_two_sittings_of_one_talk_in_the_plan_are_named(world):
+    out = world[2].check_plan(["AIM311-R", "AIM311-R1"])
+    assert "another sitting of this talk is also in the plan" in _block(out, "AIM311-R ")
+    assert "another sitting of this talk is also in the plan" in _block(out, "AIM311-R1")
+
+
+def test_a_sitting_of_a_held_talk_is_named(clock):
+    cat = [_s("H", "AAA101-R", TUE, "09:00"), _s("O", "AAA101-R1", "2026-12-03", "10:00")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["AAA101-R1"])
+    assert "another sitting of this talk is held" in out
+
+
+def test_a_full_sitting_lists_the_other_open_sittings_and_whether_they_fit(clock):
+    cat = [_s("H", "HHH100", "2026-12-03", "10:00"),
+           _s("F", "BBB200-R", TUE, "10:00", band="unavailable"),
+           _s("O1", "BBB200-R1", "2026-12-03", "10:30"),                 # clashes with HHH100
+           _s("O2", "BBB200-R2", "2026-12-04", "10:00", band="limited")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["BBB200-R"])
+    others = [ln for ln in out.splitlines() if "Other sittings open" in ln][0]
+    assert "BBB200-R1" in others and "clashes with held HHH100" in others
+    assert "BBB200-R2" in others and "(fits)" in others
+
+
+def test_meals_and_the_daily_cap_and_the_watch_cap(clock):
+    rules = ('targets:\n- code: ZZZ001\nwatch_cap: 2\nmax_per_day: 2\n'
+             'meals:\n  - {day: Tuesday, start: "10:30", end: "11:30"}\n')
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "HELD2"}, rules)
+    out = P.check_plan(client, store, EV, r, ["AIM310", "STG201"])
+    assert "overlaps the meal on Tuesday 10:30 to 11:30" in _block(out, "AIM310")
+    assert "Tuesday 1 Dec would have 4 sessions, max_per_day is 2." in out
+    assert "1 targets now plus 2 new would pass watch_cap 2." in out
+
+
+def test_a_day_already_at_the_cap_is_not_reported_without_a_planned_session(clock):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "HELD2"}, "targets: []\nmax_per_day: 1\n")
+    out = P.check_plan(client, store, EV, r, ["KEY001"])
+    assert "max_per_day" not in out
+
+
+def test_check_plan_refuses_too_many_or_no_codes_and_sends_nothing(world):
+    fake, _, tools = world
+    assert "at most 25" in tools.check_plan([f"C{i}" for i in range(26)])
+    assert "No codes given" in tools.check_plan(["", "  "])
+    assert api_calls(fake) == []
+
+
+def test_check_plan_schedule_failure_checks_nothing(world):
+    fake, _, tools = world
+    fake.fail_next("GetSchedule", 503, times=5)
+    out = tools.check_plan(["AIM310"])
+    assert out.startswith("Could not read your schedule") and "Nothing checked" in out
+
+
+def test_check_plan_stops_when_a_held_session_is_unknown(clock):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "GHOST"}, "targets: []\n")
+    assert "Run reseat sync" in P.check_plan(client, store, EV, r, ["AIM310"])
+
+
+def test_check_plan_names_no_session_id_and_cleans_codes(world):
+    out = world[2].check_plan(["AIM310‮", "SEC401"])
+    assert not any(sid in out for sid in ("HELD1", "HELD2", "FIT1", "CLASH"))
+    assert "‮" not in out
+
+
+def test_codes_in_one_plan_are_checked_against_each_other(world):
+    out = world[2].check_plan(["SEC401", "AIM310"])
+    assert "clashes with held ARC301" in _block(out, "SEC401")
+    assert "cannot be reached in time: the walk from SEC401 at The Venetian" in _block(out, "AIM310")
+
+
+async def test_check_plan_through_the_mcp_server(world):
+    fake, _, tools = world
+    server = M.build_server(tools)
+    res = await server.call_tool("check_plan", {"codes": ["AIM310", "KEY001"]})
+    text = res.content[0].text
+    assert "fits." in text and "takes no reservations" in text
+
+
+def test_the_walk_in_starts_from_what_ends_last_not_what_starts_last(clock):
+    # Real case, 15 October: a long held session and a shorter planned one start together. The walk
+    # to the next session must start from the long one, which ends later, at another venue.
+    cat = [_s("H", "TNC337", MON, "08:30", mins=240, room="Caesars Palace | Level 1 | Room 1"),
+           _s("P", "IND415", MON, "08:30", mins=120, room="Caesars Forum | Level 1 | Room 2"),
+           _s("N", "AMZ202-R1", MON, "12:30", mins=120, room="Caesars Forum | Level 1 | Room 3")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["IND415", "AMZ202-R1"])
+    assert "cannot be reached in time: the walk from TNC337 at Caesars Palace" in _block(out, "AMZ202-R1")
+
+
+def test_the_watch_cap_counts_only_new_targets(clock):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1"}, "targets:\n- code: CMP320\nwatch_cap: 2\n")
+    out = P.check_plan(client, store, EV, r, ["ARC301", "CMP320", "NOPE1", "AIM310"])
+    assert "watch_cap" not in out           # held, already a target, unknown: one new, 1 + 1 = 2
+
+
+# ---------------------------------------------------------------- check_plan: QA failure paths and edges
+
+
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_check_plan_schedule_errors_check_nothing_and_leak_no_token(world, status):
+    fake, _, tools = world
+    fake.fail_next("GetSchedule", status)
+    out = tools.check_plan(["AIM310"])
+    assert out.startswith("Could not read your schedule") and str(status) in out and "Nothing checked" in out
+    assert "AIM310" not in out and fake.token not in out and api_calls(fake) == ["GetSchedule"]
+
+
+def test_check_plan_429_waits_retry_after_once_then_checks(world, clock):
+    fake, _, tools = world
+    fake.throttle_next("GetSchedule", retry_after=7)
+    t0 = clock.t
+    out = tools.check_plan(["AIM310"])
+    assert api_calls(fake) == ["GetSchedule", "GetSchedule"] and clock.t - t0 == 7
+    assert _block(out, "AIM310").strip().endswith("fits.")
+
+
+def test_check_plan_429_twice_fails_after_one_wait(world):
+    fake, _, tools = world
+    fake.fail_next("GetSchedule", 429, times=2)
+    out = tools.check_plan(["AIM310"])
+    assert api_calls(fake) == ["GetSchedule", "GetSchedule"]
+    assert out.startswith("Could not read your schedule") and "429" in out and "Nothing checked" in out
+
+
+def test_check_plan_network_error_checks_nothing(clock):
+    import httpx
+
+    def boom(req):
+        raise httpx.ConnectError("no route")
+    fake, client, store, r = _world(clock, CATALOG, transport=httpx.MockTransport(boom))
+    out = P.check_plan(client, store, EV, r, ["AIM310"])
+    assert out.startswith("Could not read your schedule") and "Nothing checked" in out
+
+
+def test_check_plan_auth_required_before_sending_checks_nothing(clock):
+    from reseat.client import AuthRequired
+
+    def no_token():
+        raise AuthRequired(401, "Sign in again.", "auth")
+    fake = FakeEventsApi(sessions=CATALOG)
+    client = EventsClient(token_provider=no_token, quota=QuotaTracker(clock=clock), sleep=clock.sleep,
+                          transport=fake.transport())
+    store = Store(":memory:")
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    out = P.check_plan(client, store, EV, R.parse("targets: []\n"), ["AIM310"])
+    assert out.startswith("Could not read your schedule") and "Sign in again" in out and fake.calls == []
+
+
+def test_check_plan_stops_when_a_held_session_has_no_time(clock):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "NOTIME"}, "targets: []\n")
+    assert "Run reseat sync" in P.check_plan(client, store, EV, r, ["AIM310"])
+
+
+def test_a_code_with_no_time_in_the_catalog_is_named(world):
+    assert "time not set in the catalog" in _block(world[2].check_plan(["XYZ999"]), "XYZ999")
+
+
+def test_a_code_given_twice_is_answered_once_and_counted_once(clock):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "HELD2"},
+                                    "targets: []\nmax_per_day: 3\nwatch_cap: 1\n")
+    out = P.check_plan(client, store, EV, r, ["AIM310", "AIM310"])
+    assert len([ln for ln in out.splitlines() if ln.startswith("- AIM310")]) == 1
+    assert "clashes with AIM310" not in out and "also in the plan" not in out
+    assert "max_per_day" not in out and "watch_cap" not in out
+
+
+def test_one_code_in_two_spellings_is_counted_once(clock):
+    # Found in QA, 15 October: "AIM310" and "aim310 " resolved twice and were counted twice.
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "HELD2"},
+                                    "targets: []\nmax_per_day: 3\nwatch_cap: 1\n")
+    out = P.check_plan(client, store, EV, r, ["AIM310", "aim310 "])
+    assert "max_per_day" not in out and "watch_cap" not in out
+
+
+@pytest.mark.parametrize("code", ["aim310", "  AIM310  ", "Aim310", "aim311-r1"])
+def test_lower_case_and_spaces_resolve(world, code):
+    out = world[2].check_plan([code])
+    # The answer is headed by the code as given. The sitting found is shown by its time.
+    assert "not in the local catalog" not in out
+    assert ("Thu 3 Dec 11:00 PT" if "311" in code else "Tue 1 Dec 10:30 PT") in out and "fits." in out
+
+
+def test_a_code_with_an_inner_space_is_not_guessed(world):
+    assert "not in the local catalog" in world[2].check_plan(["AIM 310"])
+
+
+def test_a_base_code_where_every_sitting_is_full(clock):
+    cat = [_s("F1", "FUL100-R", TUE, "10:00", band="unavailable"),
+           _s("F2", "FUL100-R1", "2026-12-03", "10:00", band="unavailable")]
+    fake, client, store, r = _world(clock, cat, (), "targets: []\n")
+    block = _block(P.check_plan(client, store, EV, r, ["FUL100"]), "FUL100")
+    rows = [ln.strip() for ln in block.splitlines()[1:]]
+    assert len(rows) == 2 and all("full (unavailable)" in ln for ln in rows)
+    assert "fits" not in block
+
+
+def test_a_base_code_with_one_sitting_held_says_which(world):
+    fake, _, tools = world
+    fake.schedule.reserved.add("FIT2B")
+    assert _block(tools.check_plan(["AIM311"]), "AIM311").startswith(": already held as AIM311-R1.")
+
+
+def test_a_full_exact_code_with_no_other_sitting(clock):
+    cat = [_s("F", "SOLO100", TUE, "10:00", band="unavailable")]
+    fake, client, store, r = _world(clock, cat, (), "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["SOLO100"])
+    assert "full (unavailable)" in out and "No other sitting of this talk is open." in out
+
+
+def test_an_unknown_walk_in_still_needs_the_11_minutes(clock):
+    cat = [_s("H", "AAA101", TUE, "09:00"), _s("NV", "NOV100", TUE, "10:05", room=None),
+           _s("NV2", "NOV200", TUE, "10:11", room=None)]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    near = P.check_plan(client, store, EV, r, ["NOV100"])
+    assert "cannot be reached in time: AAA101 ends at 10:00, and doors close at 09:54" in near
+    assert _block(P.check_plan(client, store, EV, r, ["NOV200"]), "NOV200").strip().endswith("fits.")
+
+
+def test_an_unknown_walk_out_still_needs_the_11_minutes(clock):
+    cat = [_s("H", "AAA101", TUE, "11:00"), _s("NV", "NOV100", TUE, "09:55", room=None),
+           _s("NV2", "NOV200", TUE, "09:49", room=None)]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    assert "leaves no time for AAA101" in P.check_plan(client, store, EV, r, ["NOV100"])
+    assert _block(P.check_plan(client, store, EV, r, ["NOV200"]), "NOV200").strip().endswith("fits.")
+
+
+@pytest.mark.parametrize("start,fits", [("10:23", True), ("10:22", False)])
+def test_check_plan_walk_in_boundary(clock, start, fits):
+    # Same venue walk 10 min, 12 allowed at 0.8. Held ends 10:00, so doors close by 10:12 at the latest.
+    cat = [_s("H", "AAA101", TUE, "09:00"), _s("X", "EDG300", TUE, start)]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = _block(P.check_plan(client, store, EV, r, ["EDG300"]), "EDG300")
+    assert out.strip().endswith("fits.") is fits
+
+
+def test_a_code_on_a_day_with_nothing_held_fits(world):
+    out = world[2].check_plan(["AIM311-R1"])
+    assert _block(out, "AIM311-R1").strip().endswith("fits.") and "max_per_day" not in out
+
+
+@pytest.mark.parametrize("cap,reported", [(3, False), (2, True)])
+def test_max_per_day_at_the_cap_is_not_reported_and_over_it_is(clock, cap, reported):
+    fake, client, store, r = _world(clock, CATALOG, {"HELD1", "HELD2"}, f"targets: []\nmax_per_day: {cap}\n")
+    out = P.check_plan(client, store, EV, r, ["AIM310"])
+    assert ("Tuesday 1 Dec would have 3 sessions" in out) is reported
+
+
+@pytest.mark.parametrize("cap,reported", [(3, False), (2, True)])
+def test_watch_cap_at_the_cap_is_not_reported_and_over_it_is(clock, cap, reported):
+    fake, client, store, r = _world(clock, CATALOG, (), f"targets:\n- code: CMP320\nwatch_cap: {cap}\n")
+    out = P.check_plan(client, store, EV, r, ["AIM310", "STG201"])
+    assert ("1 targets now plus 2 new would pass" in out) is reported
+
+
+def test_a_base_code_counts_once_toward_the_watch_cap(clock):
+    fake, client, store, r = _world(clock, CATALOG, (), "targets:\n- code: CMP320\nwatch_cap: 2\n")
+    assert "watch_cap" not in P.check_plan(client, store, EV, r, ["AIM311"])
+
+
+def test_a_meal_on_another_day_does_not_overlap(clock):
+    rules = 'targets: []\nmeals:\n  - {day: Thursday, start: "10:30", end: "11:30"}\n'
+    fake, client, store, r = _world(clock, CATALOG, (), rules)
+    out = P.check_plan(client, store, EV, r, ["AIM310", "AIM311-R1"])
+    assert "overlaps the meal" not in _block(out, "AIM310")
+    assert "overlaps the meal on Thursday 10:30 to 11:30" in _block(out, "AIM311-R1")
+
+
+def test_check_plan_writes_nothing_whatever_it_finds(world):
+    fake, _, tools = world
+    tools.check_plan(["SEC401", "CMP320", "NET330", "AIM311", "AIM311-R", "AIM311-R1", "NOPE1"])
+    assert api_calls(fake) == ["GetSchedule"]
+    assert fake.schedule.reserved == {"HELD1", "HELD2"}
+
+
+async def test_no_ranking_words_in_check_plan_output_or_tool_description(world, clock):
+    fake, _, tools = world
+    server = M.build_server(tools)
+    texts = {t.name: t.description or "" for t in await server.list_tools() if t.name == "check_plan"}
+    assert texts["check_plan"]
+    outs = [tools.check_plan(["AIM310", "SEC401", "CMP320", "NET330", "DEV101", "ARC301", "NOPE999",
+                              "AIM311", "AIM311-R", "AIM311-R1", "XYZ999", "KEY001"]),
+            tools.check_plan([]), tools.check_plan([f"C{i}" for i in range(26)])]
+    fake.fail_next("GetSchedule", 503)
+    outs.append(tools.check_plan(["AIM310"]))
+    cat = [_s("H", "HHH100", "2026-12-03", "10:00"), _s("F", "BBB200-R", TUE, "10:00", band="unavailable"),
+           _s("O1", "BBB200-R1", "2026-12-03", "10:30"), _s("O2", "BBB200-R2", "2026-12-04", "10:00")]
+    _, client, store, r = _world(clock, cat, {"H"}, 'targets: []\nmax_per_day: 1\nwatch_cap: 1\n'
+                                 'meals:\n  - {day: Tuesday, start: "10:00", end: "11:00"}\n')
+    outs.append(P.check_plan(client, store, EV, r, ["BBB200-R", "BBB200-R1", "BBB200"]))
+    for i, out in enumerate(outs):
+        texts[f"output {i}"] = out
+    hits = {k: BANNED.findall(v) for k, v in texts.items() if BANNED.search(v)}
+    assert not hits, hits
+
+
+# ---------------------------------------------------------------- check_plan: Engineer review fixes
+
+
+def test_a_code_without_r_names_the_whole_talk_when_it_has_more_sittings(clock):
+    cat = [_s("A", "AIM341", TUE, "10:00"), _s("B", "AIM341-R1", "2026-12-03", "10:00")]
+    fake, client, store, r = _world(clock, cat, (), "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["AIM341"])
+    assert "2 sitting(s)" in out and "AIM341-R1" in out
+
+
+def test_a_code_without_r_and_one_sitting_is_that_sitting(clock):
+    cat = [_s("A", "SOLO100", TUE, "10:00")]
+    fake, client, store, r = _world(clock, cat, (), "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["SOLO100"])
+    assert "sitting(s)" not in out and "fits." in out
+
+
+@pytest.mark.parametrize("codes", [["AIM311-R", "AIM311"], ["AIM311-R", "AIM311-R1"]])
+def test_one_talk_counts_once_for_the_watch_cap(clock, codes):
+    fake, client, store, r = _world(clock, CATALOG, (), "targets: []\nwatch_cap: 1\n")
+    assert "watch_cap" not in P.check_plan(client, store, EV, r, codes)
+
+
+def test_a_held_sitting_is_not_offered_as_an_open_alternative(clock):
+    cat = [_s("F", "BBB200-R", TUE, "10:00", band="unavailable"), _s("H", "BBB200-R1", "2026-12-03", "10:00")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["BBB200-R"])
+    assert "Other sittings open" not in out and "No other sitting of this talk is open" in out
+
+
+def test_a_walk_up_band_is_no_reservation_not_full(clock):
+    cat = [_s("W", "WLK100", TUE, "10:00", band="walkUp", reservable=None)]
+    fake, client, store, r = _world(clock, cat, (), "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["WLK100"])
+    assert "takes no reservations" in out and "full" not in out

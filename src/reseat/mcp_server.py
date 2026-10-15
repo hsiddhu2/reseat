@@ -136,6 +136,10 @@ class Tools:
         return _guarded(lambda: planning.open_slots(self.client, self.store, self.event_id, self.rules,
                                                     day, f))
 
+    def check_plan(self, codes: list[str]) -> str:
+        return _guarded(lambda: planning.check_plan(self.client, self.store, self.event_id, self.rules,
+                                                    list(codes)))
+
     def _target_ids(self) -> set[str]:
         return {s.session_id for t in self.rules.targets for s, _ in self.router.tree(t)}
 
@@ -351,6 +355,15 @@ def build_server(tools: Tools) -> Any:
         schedule once. Writes nothing."""
         with tools.serial:
             return tools.open_slots(day, type, text, band, level, topic, service, venue)
+
+    @server.tool()
+    def check_plan(codes: list[str]) -> str:
+        """Facts about up to 25 session codes against what is held and against each other: in the
+        catalog, seat band, clashes, two sittings of one talk, walks with the 11-minute door rule,
+        meals, max_per_day and watch_cap. A base code such as AIM341 checks every sitting. An exact
+        code such as AIM341-R1 checks that sitting. Reads the schedule once. Writes nothing."""
+        with tools.serial:
+            return tools.check_plan(codes)
 
     @server.tool()
     def queue_or_go(code: str) -> str:
