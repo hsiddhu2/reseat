@@ -13,7 +13,8 @@ Approving the swap runs swap.py against the fake, so the journal shows real stat
 transitions. The clock reads Monday 30 November 2026, 10:15 in Las Vegas.
 
 Rules this module exists to respect:
-- Never reads the keychain, never touches ~/.reseat or the rules file. The store is
+- Never reads the keychain, never touches ~/.reseat or the rules file. `reseat mcp --demo` gives
+  draft_rules a throwaway rules file in a temporary folder, removed on exit. The store is
   in memory and the rules come from this file. Nothing reaches the network.
 - Every page says "Demo data".
 - Push is off unless a topic is given (`--push`). Then the same pusher as the real
@@ -22,13 +23,17 @@ Rules this module exists to respect:
 
 from __future__ import annotations
 
+import atexit
 import re
 import secrets
+import shutil
+import tempfile
 import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from importlib import resources
+from pathlib import Path
 from typing import Any
 
 from . import guard, push
@@ -718,6 +723,16 @@ def _net(before: dict[str, Any], final: dict[str, Any], changes: list[Any]) -> l
     t = Tracker()
     t.removed = {sid for sid, p in before.items() if p.code in gone}
     return t._diff(changes[-1].at if changes else 0.0, before, final)
+
+
+def mcp_rules_file() -> Path:
+    """For `reseat mcp --demo`: a rules file draft_rules can edit, in a temporary folder that is removed
+    on exit. The demo never writes to ~/.reseat."""
+    folder = Path(tempfile.mkdtemp(prefix="reseat-mcp-demo-"))
+    atexit.register(shutil.rmtree, folder, ignore_errors=True)
+    path = folder / "rules.yaml"
+    R.write_new(path, "# reseat mcp --demo: a throwaway copy of the demo rules\n" + rules_text(None))
+    return path
 
 
 def mcp_parts() -> tuple[EventsClient, Store, R.Rules, str, Callable[[], float]]:

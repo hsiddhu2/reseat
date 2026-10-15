@@ -14,17 +14,20 @@ Rules this module exists to respect:
 
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from . import decisions
+from . import rules as R
 from .campus import CUTOFF_MINUTES, VEGAS, VENUES, event_date, normalize_venue, session_window, walk_minutes
 from .client import ApiError, EventsClient
 from .models import SeatBand, Session, normalize_type
-from .rules import Rules
+from .rules import Rules, Target
 from .store import Store
 
 MAX_ROWS = 50
@@ -431,21 +434,33 @@ def _resolve(store: Store, event_id: str, code: str) -> tuple[list[Session], boo
     return (talk, False) if want == base else ([], False)
 
 
+def _codes(codes: list[str]) -> list[str] | str:
+    """Cut, cleaned, upper-cased and de-duplicated codes, or why there are none to use."""
+    if len(codes) > MAX_CODES * 2:          # before any work: a long list costs nothing to refuse
+        return f"{len(codes)} codes given, at most {MAX_CODES} at a time."
+    out = list(dict.fromkeys(c.upper() for c in (clean(str(c)[:100], 24) for c in codes) if c))
+    if len(out) > MAX_CODES:
+        return f"{len(out)} codes given, at most {MAX_CODES} at a time."
+    return out
+
+
 def check_plan(client: EventsClient, store: Store, event_id: str, rules: Rules, codes: list[str]) -> str:
     """Facts about each code against what is held and against the rest of the list: in the catalog,
     reservable, band, clashes, two sittings of one talk, walks with the door rule, meals, the daily
     cap and the watch cap. One GetSchedule read. Facts only, no pass mark."""
-    if len(codes) > MAX_CODES * 2:          # before any work: a long list costs nothing to refuse
-        return f"{len(codes)} codes given, at most {MAX_CODES} at a time. Nothing checked."
-    codes = list(dict.fromkeys(c.upper() for c in (clean(str(c)[:100], 24) for c in codes) if c))
-    if not codes:
+    got = _codes(codes)
+    if isinstance(got, str):
+        return got + " Nothing checked."
+    if not got:
         return "No codes given. Nothing checked."
-    if len(codes) > MAX_CODES:
-        return f"{len(codes)} codes given, at most {MAX_CODES} at a time. Nothing checked."
     try:
         reserved = client.get_schedule(event_id).reserved
     except ApiError as e:
         return f"Could not read your schedule: {clean(e, 160)}. Nothing checked."
+    return _check(store, event_id, rules, got, reserved)
+
+
+def _check(store: Store, event_id: str, rules: Rules, codes: list[str], reserved: list[str]) -> str:
     held = [s for s in (store.get(event_id, i) for i in dict.fromkeys(reserved)) if s]
     if len([s for s in held if _window(s)]) < len(set(reserved)):
         return ("Some held sessions are not in the local catalog or have no time, so clashes cannot be "
@@ -547,3 +562,174 @@ def _caps(items: list[_Item], rules: Rules, n_codes: int) -> list[str]:
         out.append(f"{len(rules.targets)} targets now plus {n_codes} new would pass "
                    f"watch_cap {rules.watch_cap}.")
     return out
+
+
+# ---------------------------------------------------------------------- draft_rules
+
+_SAFE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")      # what may be written into the YAML, fullmatch
+
+
+@dataclass
+class Draft:
+    """A rules file not yet written. `base_sha` is the file it was drafted from."""
+    text: str
+    base_sha: str
+    summary: str
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _target_line(sittings: list[Session], exact: bool) -> str | None:
+    s = sittings[0]
+    if exact:
+        if not _SAFE.fullmatch(s.session_id) or not _SAFE.fullmatch(s.abbreviation or "x"):
+            return None
+        return (f'{{session_id: "{s.session_id}", repeats: false, auto_swap: false}}'
+                f"   # {s.abbreviation}, added by draft_rules")
+    base = s.base_code or ""
+    return f'{{code: "{base}", auto_swap: false}}   # added by draft_rules' if _SAFE.fullmatch(base) else None
+
+
+def _matches(t: Target, code: str, store: Store, event_id: str) -> bool:
+    """Whether target `t` is the talk or sitting `code` names."""
+    want, base = code.upper(), re.sub(r"-R\d*$", "", code.upper())
+    if t.code:
+        return t.code.upper() == base
+    s = store.get(event_id, t.session_id or "")
+    return bool(s and ((s.abbreviation or "").upper() == want or (want == base and s.base_code == base)))
+
+
+def _shown(t: Target, store: Store, event_id: str) -> str:
+    """A target as the attendee reads it: by code, with how re:Seat books it. Never a session id."""
+    if t.session_id:
+        s = store.get(event_id, t.session_id)
+        name = clean(s.abbreviation, 20) if s and s.abbreviation else "a session not in the local catalog"
+        return f"{name}, this sitting only" if not t.repeats else f"{name}, or another sitting"
+    order = "latest sitting first" if t.prefer == "latest" else "earliest sitting first"
+    return f"{t.code}, any sitting, {order}"
+
+
+def _additions(resolved: dict[str, tuple[list[Session], bool]], old: Rules, store: Store,
+               event_id: str) -> tuple[list[str], list[str], list[str]] | str:
+    """(lines to write, codes added, notes), or why nothing can be drafted."""
+    unknown = [c for c, (sittings, _) in resolved.items() if not sittings]
+    if unknown:
+        return f"Not in the local catalog: {', '.join(unknown)}. Check the codes or run reseat sync."
+    lines, codes, notes = [], [], []
+    talks = {_talk(t, store, event_id) for t in old.targets}
+    for c, (sittings, _) in resolved.items():
+        # A draft pins a sitting only for an -R code. A code without -R is the talk: any sitting, so the
+        # watcher can still book a repeat AWS adds later.
+        exact = c.upper() != re.sub(r"-R\d*$", "", c.upper())
+        if sittings[0].base_code in talks:
+            notes.append(f"{c} is already a target, as {sittings[0].base_code}. Not added again.")
+            continue
+        talks.add(sittings[0].base_code)
+        line = _target_line(sittings, exact)
+        if line is None:
+            return f"{c} has a code re:Seat will not write into the rules file."
+        lines.append(line)
+        codes.append(c)
+    return lines, codes, notes
+
+
+def _talk(t: Target, store: Store, event_id: str) -> str | None:
+    """The talk a target is for: its code, or the base code of the sitting it pins."""
+    if t.code:
+        return t.code
+    s = store.get(event_id, t.session_id or "")
+    return s.base_code if s else None
+
+
+def _removals(drops: list[str], old: Rules, store: Store, event_id: str,
+              reserved: list[str]) -> tuple[list[int], list[str]]:
+    """(target positions to drop, notes). A held target removed is named: watching stops, the seat stays."""
+    idx, notes = [], []
+    for c in drops:
+        hit = [i for i, t in enumerate(old.targets) if _matches(t, c, store, event_id)]
+        if not hit:
+            notes.append(f"{c} is not a target. Nothing to remove.")
+            continue
+        idx += hit
+        whole = [old.targets[i].code for i in hit if old.targets[i].code and old.targets[i].code != c]
+        if whole:
+            notes.append(f"{c} is a sitting of the target {whole[0]}, any sitting. "
+                         "The whole target is removed.")
+        held = [s for i in hit for s in _target_sittings(store, event_id, old.targets[i])
+                if s.session_id in reserved]
+        if held:
+            notes.append(f"Removing {c}: re:Seat stops watching it, and never cancels. "
+                         f"You still hold {', '.join(_code(s) for s in held)}.")
+    return sorted(set(idx)), notes
+
+
+def _same_but_targets(old: Rules, new: Rules, drop_idx: list[int], add_lines: list[str]) -> bool:
+    """The edit changed only the targets list, and exactly as intended: every kept target is the same
+    in every field (auto_swap, backups, sittings), in the same order, and then the added ones."""
+    kept = [t for i, t in enumerate(old.targets) if i not in drop_idx]
+    added = R.parse("targets:\n" + "".join(f"  - {a}\n" for a in add_lines)).targets if add_lines else []
+    return (new.model_dump(exclude={"targets"}) == old.model_dump(exclude={"targets"})
+            and new.targets == kept + added)
+
+
+def _plain(e: Exception, path: Path) -> str:
+    """An error for the AI's context: cleaned, and with the local path named as the rules file."""
+    return clean(str(e).replace(str(path), "the rules file"), 300)
+
+
+def _target_order(new: Rules, kept: int, store: Store, event_id: str, reserved: list[str]) -> list[str]:
+    """Every target, numbered in the order the router tries them."""
+    out = []
+    for i, t in enumerate(new.targets, 1):
+        held = any(s.session_id in reserved for s in _target_sittings(store, event_id, t))
+        marks = (" · new" if i > kept else "") + (" · held" if held else "")
+        out.append(f"{i}. {_shown(t, store, event_id)}{marks}")
+    return out
+
+
+def draft_rules(client: EventsClient, store: Store, event_id: str, path: Path, add: list[str],
+                remove: list[str]) -> Draft | str:
+    """A new rules file with `add` appended to the targets in the order given and `remove` dropped.
+    Nothing is written. Reads the rules file and GetSchedule once. Removing a target only stops
+    re:Seat watching it: no seat is ever cancelled. Every other line of the file is kept."""
+    adds, drops = _codes(add), _codes(remove)
+    if isinstance(adds, str) or isinstance(drops, str):
+        return f"{adds if isinstance(adds, str) else drops} Nothing drafted."
+    if not adds and not drops:
+        return "No codes to add or remove. Nothing drafted."
+    both = sorted(set(adds) & set(drops))
+    if both:
+        return f"{', '.join(both)} is both to add and to remove. Nothing drafted."
+    try:
+        text = R.read_nofollow(path)
+        old = R.parse(text, "the rules file")
+    except (R.RulesError, UnicodeDecodeError) as e:
+        return f"{_plain(e, path)} Nothing drafted."
+    try:
+        reserved = client.get_schedule(event_id).reserved
+    except ApiError as e:
+        return f"Could not read your schedule: {clean(e, 160)}. Nothing drafted."
+    got = _additions({c: _resolve(store, event_id, c) for c in adds}, old, store, event_id)
+    if isinstance(got, str):
+        return got + " Nothing drafted."
+    new_lines, new_codes, notes = got
+    drop_idx, drop_notes = _removals(drops, old, store, event_id, reserved)
+    notes += drop_notes
+    if not new_lines and not drop_idx:
+        return "\n".join(notes + ["Nothing changes. Nothing drafted."])
+    try:
+        new_text = R.edit_targets(text, new_lines, drop_idx)
+        new = R.parse(new_text, "the drafted rules file")
+    except R.RulesError as e:
+        return f"{_plain(e, path)} Nothing drafted."
+    kept = [t.label for i, t in enumerate(old.targets) if i not in drop_idx]
+    if not _same_but_targets(old, new, drop_idx, new_lines):
+        return "re:Seat could not edit the rules file safely. Nothing drafted."
+    lines = [f"Draft, not written. The rules file would list {len(new.targets)} targets. re:Seat tries "
+             "targets in this order: an earlier target wins a clashing time slot and the daily cap.",
+             *_target_order(new, len(kept), store, event_id, reserved), *notes]
+    if new_codes:
+        lines += ["Facts about what is added:", _check(store, event_id, new, new_codes, reserved)]
+    return Draft(new_text, _sha(text), "\n".join(lines))

@@ -171,6 +171,68 @@ class Rules(BaseModel):
         return self
 
 
+# ---------------------------------------------------------------------- editing targets as text
+
+_TARGETS_LINE = re.compile(r"^targets:[ \t]*(\[[ \t]*\])?[ \t]*(#.*)?$")
+_ITEM = re.compile(r"^([ \t]*)- ")
+
+
+def _item_spans(lines: list[str], start: int) -> tuple[list[tuple[int, int]], int, str]:
+    """The targets list under the `targets:` line at `start`: each item's line span, the line after
+    the last item, and the item indent. An item runs from its "- " line through the lines indented
+    deeper than its dash. Comments and blank lines between items stay where they are."""
+    spans, indent, end = [], None, start + 1
+    i = start + 1
+    while i < len(lines):
+        line = lines[i]
+        if line.strip() and not line[0].isspace() and not line.startswith(("-", "#")):
+            break                                           # the next top-level key
+        m = _ITEM.match(line)
+        if m and (indent is None or m.group(1) == indent):
+            indent = m.group(1)
+            j = last = i + 1
+            # The item owns every line indented deeper than its dash, even past a comment or a blank
+            # line inside it. It ends at the next item, the next key, or anything not deeper.
+            while j < len(lines):
+                ln = lines[j]
+                if not ln.strip() or ln.lstrip().startswith("#"):
+                    j += 1
+                    continue
+                if len(ln) - len(ln.lstrip()) <= len(indent):   # deeper lines, nested lists too, are ours
+                    break
+                j += 1
+                last = j
+            spans.append((i, last))
+            end = last
+            i = last
+            continue
+        i += 1
+    return spans, end, indent if indent is not None else "  "
+
+
+def edit_targets(text: str, add: list[str], remove: list[int]) -> str:
+    """The rules file text with targets removed (by position, 0-based) and `add` lines appended to
+    the targets list. Every other line, comments and secrets included, is kept as it was. The caller
+    parses the result and compares it with what it expects before writing anything."""
+    lines = text.splitlines()
+    at = next((i for i, ln in enumerate(lines) if _TARGETS_LINE.match(ln)), None)
+    if at is None:
+        raise RulesError("the rules file has no top-level targets: line re:Seat can edit")
+    if lines[at].split("#")[0].rstrip().endswith("]"):
+        lines[at] = "targets:"
+    spans, end, indent = _item_spans(lines, at)
+    if remove and max(remove) >= len(spans):
+        raise RulesError("a target to remove was not found in the file")
+    new = [f"{indent}- {a}" for a in add]
+    out = lines[:end] + new + lines[end:]
+    for i in sorted(remove, reverse=True):
+        a, b = spans[i]
+        del out[a:b]
+    if not new and len(remove) == len(spans):
+        out[at] = "targets: []"                     # a bare "targets:" would read as null
+    return "\n".join(out) + "\n"
+
+
 # ---------------------------------------------------------------------- load and save
 
 

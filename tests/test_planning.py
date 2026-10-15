@@ -436,7 +436,9 @@ def _outputs(clock, world):
 
 async def test_no_ranking_words_in_code_docs_instructions_or_output(world, clock):
     import inspect
-    texts = {"planning.py": inspect.getsource(P)}
+    # The rules file's own field `prefer: earliest|latest` is read as `t.prefer`. That is the attendee's
+    # setting, not wording re:Seat shows: answers print it as "latest sitting first".
+    texts = {"planning.py": inspect.getsource(P).replace('t.prefer == "latest"', "")}
     server = M.build_server(world[2])
     for t in await server.list_tools():
         if t.name in ("search_sessions", "open_slots"):
@@ -880,3 +882,395 @@ def test_a_walk_up_band_is_no_reservation_not_full(clock):
     fake, client, store, r = _world(clock, cat, (), "targets: []\n")
     out = P.check_plan(client, store, EV, r, ["WLK100"])
     assert "takes no reservations" in out and "full" not in out
+
+
+# ---------------------------------------------------------------- draft_rules and its approve
+
+RULES_FILE = """# my re:Invent rules
+targets:
+  - {session_id: "HELD1", repeats: false}   # ARC301, from the portal
+  # the talks I care about most are above this line
+  - code: CMP320
+    prefer: latest
+max_per_day: 6
+serve_secret: "a-long-secret-that-must-not-move"
+ntfy_topic: "topic-that-must-not-move-1234"
+"""
+PLAN_RE = re.compile(r"Plan ([A-Za-z0-9_-]{20,}),")
+
+
+@pytest.fixture
+def drafting(clock, tmp_path):
+    fake = FakeEventsApi(sessions=CATALOG)
+    fake.schedule.reserved.update({"HELD1", "HELD2"})
+    client = EventsClient(token_provider=lambda: fake.token, quota=QuotaTracker(clock=clock),
+                          sleep=clock.sleep, transport=fake.transport())
+    store = Store(":memory:")
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    path = tmp_path / "rules.yaml"
+    path.write_text(RULES_FILE)
+    path.chmod(0o600)
+    tools = M.Tools(client, store, R.parse(RULES_FILE), EV, clock=clock, rules_path=path)
+    return fake, tools, path
+
+
+def _pid(out):
+    m = PLAN_RE.search(out)
+    assert m, out
+    return m.group(1)
+
+
+def writes_sent(fake):
+    return [op for op, _ in fake.calls if op not in ("GetSchedule", "ListSessions", "GetSession")]
+
+
+def test_draft_shows_the_full_order_and_writes_nothing(drafting):
+    fake, tools, path = drafting
+    out = tools.draft_rules(["AIM311-R", "AIM310"])
+    assert path.read_text() == RULES_FILE and api_calls(fake) == ["GetSchedule"]
+    order = [ln for ln in out.splitlines() if re.match(r"\d+\. ", ln)]
+    assert order == ["1. ARC301, this sitting only · held",
+                     "2. CMP320, any sitting, latest sitting first",
+                     "3. AIM311-R, this sitting only · new",
+                     "4. AIM310, any sitting, earliest sitting first · new"]
+    assert "Nothing has been written" in out and "Facts about what is added" in out
+    assert not any(sid in out for sid in ("HELD1", "FIT1", "FIT2"))
+
+
+def test_approve_writes_only_the_target_lines_and_keeps_a_backup(drafting):
+    fake, tools, path = drafting
+    done = tools.approve_changes(_pid(tools.draft_rules(["AIM311-R", "AIM310"])))
+    assert "written with 4 targets" in done and "Nothing was sent to AWS" in done
+    new = path.read_text()
+    lines = ('  - {session_id: "FIT2", repeats: false, auto_swap: false}   # AIM311-R, added by draft_rules\n'
+             '  - {code: "AIM310", auto_swap: false}   # added by draft_rules\n')
+    assert new.replace(lines, "") == RULES_FILE
+    assert (path.parent / "rules.yaml.bak").read_text() == RULES_FILE
+    assert oct(path.stat().st_mode & 0o777) == "0o600" and oct((path.parent / "rules.yaml.bak").stat().st_mode
+                                                                & 0o777) == "0o600"
+    assert writes_sent(fake) == []
+    assert [t.label for t in tools.rules.targets] == ["HELD1", "CMP320", "FIT2", "AIM310"]
+
+
+def test_approve_is_refused_when_the_file_changed_after_the_draft(drafting):
+    fake, tools, path = drafting
+    pid = _pid(tools.draft_rules(["AIM310"]))
+    path.write_text(RULES_FILE + "buffer_minutes: 20\n")
+    assert "changed after this draft" in tools.approve_changes(pid)
+    assert path.read_text() == RULES_FILE + "buffer_minutes: 20\n"
+
+
+def test_a_draft_works_once_and_expires(drafting, clock):
+    fake, tools, path = drafting
+    pid = _pid(tools.draft_rules(["AIM310"]))
+    assert "written" in tools.approve_changes(pid)
+    assert "Refused" in tools.approve_changes(pid)
+    pid2 = _pid(tools.draft_rules(["STG201"]))
+    clock.t += M.PLAN_TTL + 1
+    assert "Refused" in tools.approve_changes(pid2) and "STG201" not in path.read_text()
+
+
+def test_removing_a_held_target_stops_watching_and_never_cancels(drafting):
+    fake, tools, path = drafting
+    out = tools.draft_rules([], ["ARC301"])
+    assert "Removing ARC301: re:Seat stops watching it, and never cancels. You still hold ARC301." in out
+    order = [ln for ln in out.splitlines() if re.match(r"\d+\. ", ln)]
+    assert order == ["1. CMP320, any sitting, latest sitting first"]
+    tools.approve_changes(_pid(out))
+    assert "HELD1" not in path.read_text() and "# my re:Invent rules" in path.read_text()
+    assert "HELD1" in fake.schedule.reserved and writes_sent(fake) == []
+
+
+def test_notes_for_codes_already_targets_or_not_targets(drafting):
+    out = drafting[1].draft_rules(["CMP320", "AIM310"], ["NOPE100"])
+    assert "CMP320 is already a target" in out and "NOPE100 is not a target" in out and "3. AIM310" in out
+
+
+def test_nothing_drafted_for_unknown_codes_or_no_change(drafting):
+    fake, tools, path = drafting
+    assert "Not in the local catalog: NOPE100" in tools.draft_rules(["AIM310", "NOPE100"])
+    assert "Nothing changes" in tools.draft_rules(["CMP320"])
+    assert "No codes" in tools.draft_rules([], [])
+    assert path.read_text() == RULES_FILE
+
+
+def test_the_watch_cap_stops_a_draft(drafting):
+    fake, tools, path = drafting
+    path.write_text(RULES_FILE + "watch_cap: 3\n")
+    out = tools.draft_rules(["AIM310", "STG201"])
+    assert "watch_cap" in out and "Nothing drafted" in out
+
+
+def test_a_symbolic_link_or_no_rules_file_is_refused(drafting, tmp_path, clock):
+    fake, tools, path = drafting
+    real = tmp_path / "real.yaml"
+    real.write_text(RULES_FILE)
+    path.unlink()
+    path.symlink_to(real)
+    assert "Nothing drafted" in tools.draft_rules(["AIM310"])
+    bare = M.Tools(tools.client, tools.store, tools.rules, EV, clock=clock)
+    assert "no rules file" in bare.draft_rules(["AIM310"])
+
+
+def test_an_empty_targets_list_and_block_style_files(drafting):
+    fake, tools, path = drafting
+    path.write_text("targets: []\nmax_per_day: 4\n")
+    tools.approve_changes(_pid(tools.draft_rules(["AIM310"])))
+    assert R.parse(path.read_text()).targets[0].code == "AIM310"
+    path.write_text("targets:\n- code: CMP320\n  backups: [STG201]\n- code: NET330\nmax_per_day: 4\n")
+    tools.approve_changes(_pid(tools.draft_rules(["AIM310"], ["CMP320"])))
+    r = R.parse(path.read_text())
+    assert [t.label for t in r.targets] == ["NET330", "AIM310"] and "backups" not in path.read_text()
+
+
+def test_after_approval_the_router_plans_the_new_target(drafting):
+    fake, tools, path = drafting
+    tools.approve_changes(_pid(tools.draft_rules(["AIM310"], ["CMP320"])))
+    plan = tools.propose_changes()
+    assert "AIM310" in plan and writes_sent(fake) == []
+
+
+async def test_draft_rules_output_and_description_use_no_ranking_words(drafting):
+    fake, tools, path = drafting
+    listed = {t.name: t.description for t in await M.build_server(tools).list_tools()}
+    out = tools.draft_rules(["AIM310", "AIM311"], ["ARC301"])
+    done = tools.approve_changes(_pid(out))
+    for t in (listed["draft_rules"], out, done):
+        assert not BANNED.search(t or ""), BANNED.search(t or "")
+
+
+# ---------------------------------------------------------------- draft_rules: QA failure paths and edges
+
+
+def _snapshot(folder):
+    return {p.name: (p.stat().st_mtime_ns, p.read_bytes()) for p in folder.iterdir()}
+
+
+@pytest.mark.parametrize("status", [401, 403, 503])
+def test_draft_schedule_errors_draft_nothing_and_leak_no_token(drafting, status):
+    fake, tools, path = drafting
+    fake.fail_next("GetSchedule", status)
+    out = tools.draft_rules(["AIM310"])
+    assert "Could not read your schedule" in out and str(status) in out and "Nothing drafted" in out
+    assert "Plan " not in out and fake.token not in out and tools._plans == {}
+    assert path.read_text() == RULES_FILE
+
+
+def test_draft_429_twice_fails_after_one_wait(drafting):
+    fake, tools, path = drafting
+    fake.fail_next("GetSchedule", 429, times=2)
+    out = tools.draft_rules(["AIM310"])
+    assert api_calls(fake) == ["GetSchedule", "GetSchedule"] and "429" in out and "Nothing drafted" in out
+
+
+def test_draft_network_error_drafts_nothing(clock, tmp_path):
+    import httpx
+
+    def boom(req):
+        raise httpx.ConnectError("no route")
+    client = EventsClient(token_provider=lambda: "t", quota=QuotaTracker(clock=clock), sleep=clock.sleep,
+                          transport=httpx.MockTransport(boom))
+    store = Store(":memory:")
+    store.apply_sweep(EV, CATALOG, with_abstracts=False)
+    path = tmp_path / "rules.yaml"
+    path.write_text(RULES_FILE)
+    tools = M.Tools(client, store, R.parse(RULES_FILE), EV, clock=clock, rules_path=path)
+    out = tools.draft_rules(["AIM310"])
+    assert "Could not read your schedule" in out and "Nothing drafted" in out
+
+
+@pytest.mark.parametrize("text, said", [
+    ("targets:\n  - code: [unclosed\n", "not valid YAML"),
+    ("max_per_day: 4\n", "no top-level targets"),
+    ("- AIM310\n", "mapping"),
+])
+def test_a_bad_rules_file_drafts_nothing_and_reads_no_schedule(drafting, text, said):
+    fake, tools, path = drafting
+    path.write_text(text)
+    out = tools.draft_rules(["AIM310"])
+    assert said in out and "Nothing drafted" in out and tools._plans == {}
+    assert path.read_text() == text
+
+
+def test_an_unreadable_rules_file_drafts_nothing(drafting):
+    import os
+    fake, tools, path = drafting
+    if os.geteuid() == 0:
+        pytest.skip("root reads any file")
+    path.chmod(0)
+    try:
+        out = tools.draft_rules(["AIM310"])
+    finally:
+        path.chmod(0o600)
+    assert "could not be read safely" in out and "Nothing drafted" in out and api_calls(fake) == []
+
+
+def test_a_draft_writes_no_file_and_an_approve_sends_no_api_call(drafting):
+    fake, tools, path = drafting
+    before = _snapshot(path.parent)
+    out = tools.draft_rules(["AIM310", "AIM311"], ["CMP320"])
+    assert _snapshot(path.parent) == before
+    calls = list(fake.calls)
+    assert "written" in tools.approve_changes(_pid(out))
+    assert fake.calls == calls
+    assert sorted(_snapshot(path.parent)) == ["rules.yaml", "rules.yaml.bak"]
+
+
+def test_a_failed_write_on_approve_leaves_the_rules_file_and_the_router_as_they_were(drafting, monkeypatch):
+    fake, tools, path = drafting
+    pid = _pid(tools.draft_rules(["AIM310"]))
+    real = R.write_new
+    router, rules = tools.router, tools.rules
+
+    def fail_on_rules(p, text, replace=False):
+        if p == path:
+            raise R.RulesError(f"Could not write {p} (No space left on device). Nothing written.")
+        return real(p, text, replace=replace)
+    monkeypatch.setattr(R, "write_new", fail_on_rules)
+    out = tools.approve_changes(pid)
+    assert out.startswith("Not written") and "No space left" in out
+    assert path.read_text() == RULES_FILE and tools.rules is rules and tools.router is router
+    assert not [p for p in path.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+def test_a_read_only_folder_on_approve_writes_nothing(drafting):
+    import os
+    fake, tools, path = drafting
+    if os.geteuid() == 0:
+        pytest.skip("root writes anywhere")
+    pid = _pid(tools.draft_rules(["AIM310"]))
+    path.parent.chmod(0o500)
+    try:
+        out = tools.approve_changes(pid)
+        names = sorted(p.name for p in path.parent.iterdir())
+    finally:
+        path.parent.chmod(0o700)
+    assert out.startswith("Not written") and names == ["rules.yaml"] and path.read_text() == RULES_FILE
+
+
+def test_a_symbolic_link_backup_is_refused_and_the_rules_file_kept(drafting, tmp_path):
+    fake, tools, path = drafting
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_text("not mine")
+    (path.parent / "rules.yaml.bak").symlink_to(elsewhere)
+    out = tools.approve_changes(_pid(tools.draft_rules(["AIM310"])))
+    assert out.startswith("Not written") and "symbolic link" in out
+    assert path.read_text() == RULES_FILE and elsewhere.read_text() == "not mine"
+
+
+def test_approve_after_the_rules_file_was_deleted_writes_nothing(drafting):
+    fake, tools, path = drafting
+    pid = _pid(tools.draft_rules(["AIM310"]))
+    path.unlink()
+    out = tools.approve_changes(pid)
+    assert out.startswith("Not written") and not path.exists()
+    assert not (path.parent / "rules.yaml.bak").exists()
+
+
+def test_a_second_draft_is_refused_after_the_first_was_approved(drafting):
+    fake, tools, path = drafting
+    first = _pid(tools.draft_rules(["AIM310"]))
+    second = _pid(tools.draft_rules(["STG201"]))
+    assert "written" in tools.approve_changes(first)
+    assert "changed after this draft" in tools.approve_changes(second)
+    assert "AIM310" in path.read_text() and "STG201" not in path.read_text()
+
+
+def test_an_exact_code_of_a_talk_already_a_base_code_target_is_not_added(drafting):
+    fake, tools, path = drafting
+    path.write_text("targets:\n  - code: AIM311\n")
+    out = tools.draft_rules(["AIM311-R1"])
+    assert "AIM311-R1 is already a target" in out and "Nothing drafted" in out
+
+
+def test_removing_by_base_code_drops_a_pinned_sitting_of_that_talk(drafting):
+    fake, tools, path = drafting
+    path.write_text('targets:\n  - {session_id: "FIT2", repeats: false}\n  - code: CMP320\n')
+    out = tools.draft_rules([], ["AIM311"])
+    assert [ln for ln in out.splitlines() if re.match(r"\d+\. ", ln)] == \
+        ["1. CMP320, any sitting, earliest sitting first"]
+    tools.approve_changes(_pid(out))
+    assert "FIT2" not in path.read_text()
+
+
+def test_remove_and_add_of_one_talk_in_one_draft_is_kept_or_refused(drafting):
+    fake, tools, path = drafting
+    path.write_text("targets:\n  - code: CMP320\n  - code: NET330\n")
+    out = tools.draft_rules(["CMP320"], ["CMP320"])
+    order = [ln for ln in out.splitlines() if re.match(r"\d+\. ", ln)]
+    assert "Nothing drafted" in out or any("CMP320" in ln for ln in order), out
+
+
+def test_a_nested_block_list_is_refused_rather_than_moved_onto_another_target(drafting):
+    fake, tools, path = drafting
+    text = ("targets:\n  - code: CMP320\n    backups:\n      - STG201\n  - code: NET330\n    backups:\n"
+            "      - DEV101\n")
+    path.write_text(text)
+    out = tools.draft_rules([], ["NET330"])
+    if "Plan " in out:
+        tools.approve_changes(_pid(out))
+    assert R.parse(path.read_text()).targets[0].backups == ["STG201"]
+
+
+def test_removing_a_target_never_moves_its_settings_onto_the_one_before(drafting):
+    fake, tools, path = drafting
+    text = ("targets:\n  - code: CMP320\n    auto_swap: false\n  - code: NET330\n    # NET330 only\n"
+            "    auto_swap: true\n")
+    path.write_text(text)
+    out = tools.draft_rules([], ["NET330"])
+    if "Plan " in out:
+        tools.approve_changes(_pid(out))
+    assert R.parse(path.read_text()).targets[0].auto_swap is False
+
+
+def test_removing_the_only_target_drafts_an_empty_list(drafting):
+    fake, tools, path = drafting
+    path.write_text("targets:\n  - code: CMP320\nmax_per_day: 4\n")
+    out = tools.draft_rules([], ["CMP320"])
+    tools.approve_changes(_pid(out))
+    assert R.parse(path.read_text()).targets == []
+
+
+def test_a_base_code_of_a_talk_already_pinned_is_not_added(drafting):
+    fake, tools, path = drafting
+    path.write_text('targets:\n  - {session_id: "FIT2", repeats: false}\n')
+    out = tools.draft_rules(["AIM311"])
+    assert "AIM311 is already a target" in out and "Plan " not in out
+
+
+# ---------------------------------------------------------------- draft_rules: Engineer review fixes
+
+
+def test_a_file_written_by_rules_import_can_be_drafted(drafting):
+    fake, tools, path = drafting
+    imported = R.dump(R.parse("targets:\n- code: CMP320\n  sittings: [FULL]\n  backups: [STG201, NET330]\n"
+                              "- code: AIM311\nmax_per_day: 6\n"))
+    assert "- FULL" in imported                # a nested block list, as yaml.safe_dump writes it
+    path.write_text(imported)
+    tools.approve_changes(_pid(tools.draft_rules(["AIM310"], ["CMP320"])))
+    r = R.parse(path.read_text())
+    assert [t.model_dump(exclude_defaults=True) for t in r.targets] == [
+        {"code": "AIM311"}, {"code": "AIM310"}]
+
+
+def test_removing_a_sitting_of_an_any_sitting_target_says_the_whole_target_goes(drafting):
+    out = drafting[1].draft_rules([], ["CMP320-R1"])
+    assert "Nothing to remove" in out or "The whole target is removed" in out
+    out = drafting[1].draft_rules([], ["CMP320"])
+    assert "1. ARC301" in out and "CMP320" not in out.split("1. ARC301")[1].splitlines()[0]
+
+
+def test_an_exact_sitting_of_an_any_sitting_target_names_the_whole_target(clock, tmp_path):
+    cat = [_s("X1", "XYZ100-R", TUE, "10:00"), _s("X2", "XYZ100-R1", "2026-12-03", "10:00")]
+    fake, client, store, r = _world(clock, cat, (), "targets:\n- code: XYZ100\n")
+    path = tmp_path / "rules.yaml"
+    path.write_text("targets:\n- code: XYZ100\n")
+    d = P.draft_rules(client, store, EV, path, [], ["XYZ100-R1"])
+    note = "XYZ100-R1 is a sitting of the target XYZ100, any sitting. The whole target is removed."
+    assert note in d.summary
+
+
+def test_old_tool_text_has_no_ranking_words():
+    import inspect
+    src = inspect.getsource(M.Tools._propose_swap) + inspect.getsource(M.Tools.propose_swap)
+    assert not re.search(r"\b(best|prefer|preferred)\b", src.replace("_preferred", ""), re.I)

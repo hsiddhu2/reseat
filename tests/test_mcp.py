@@ -87,18 +87,24 @@ def test_read_tools(fake, tools):
     assert "6 added" in tools.explain_drift()
 
 
-async def test_server_exposes_ten_tools_and_none_takes_a_session_list(tools, fake):
+def _is_array(p):
+    return p.get("type") == "array" or any(x.get("type") == "array" for x in p.get("anyOf", []))
+
+
+async def test_server_exposes_eleven_tools_and_none_takes_a_session_list(tools, fake):
     server = M.build_server(tools)
     listed = await server.list_tools()
     assert sorted(t.name for t in listed) == sorted(
         ["list_targets", "propose_changes", "propose_swap", "approve_changes", "explain_drift", "guard_sync",
-         "queue_or_go", "search_sessions", "open_slots", "check_plan"])
+         "queue_or_go", "search_sessions", "open_slots", "check_plan", "draft_rules"])
+    lists = {"check_plan": {"codes"}, "draft_rules": {"add", "remove"}}
     for t in listed:
         props = (t.input_schema or {}).get("properties", {})
         assert not any("session" in k.lower() for k in props), (t.name, props)
-        arrays = {k for k, p in props.items() if p.get("type") == "array"}
-        # Only check_plan takes a list, and it is session codes for a read, never ids for a write.
-        assert arrays == ({"codes"} if t.name == "check_plan" else set()), (t.name, props)
+        arrays = {k for k, p in props.items() if _is_array(p)}
+        # Only check_plan and draft_rules take lists, and they are session codes. check_plan only reads.
+        # draft_rules writes the local rules file after approve_changes, never to the API.
+        assert arrays == lists.get(t.name, set()), (t.name, props)
     out = await server.call_tool("propose_changes", {})
     pid = plan_id(out.content[0].text)
     done = await server.call_tool("approve_changes", {"plan_id": pid})
@@ -325,6 +331,16 @@ def test_cli_mcp_demo_needs_no_sign_in(monkeypatch):
     r = CliRunner().invoke(cli.app, ["mcp", "--demo"])
     assert r.exit_code == 0, r.output
     assert ran["how"] == "stdio" and "SVS306" in ran["tools"].list_targets()
+    path = ran["tools"].rules_path
+    assert path is not None and config_home_untouched(path)
+    out = ran["tools"].draft_rules([], ["DVT201"])          # every demo session is a target already
+    assert "Plan " in out and "Nothing has been written" in out
+
+
+def config_home_untouched(path):
+    """The demo's rules file is a temporary copy, never the attendee's ~/.reseat/rules.yaml."""
+    from reseat import config
+    return path.resolve() != config.RULES_PATH.resolve() and path.parent.name.startswith("reseat-mcp-demo-")
 
 
 def test_target_names_keep_every_real_code_and_hide_ids():

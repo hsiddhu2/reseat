@@ -63,3 +63,15 @@ def test_swap_rolls_back_then_succeeds(demo_env):
     assert "cancelled -> reserved -> verified" in second and "held now: SVS306-R" in second
     assert g["A"] not in out.split("is CMP409-R")[1].replace(f"reseat swap {g['A']}", "")
 
+
+
+def test_plan_finds_a_gap_checks_drafts_approves_and_dry_runs(demo_env):
+    g, out = _run("plan", demo_env)
+    assert "3 of 3, in start-time order" in out
+    assert "14:00 to 16:00, after CON344 at Caesars Forum: 1 fit." in out
+    assert "clashes with held IND406-R1 16:00 to 17:00" in out
+    assert "3. OPN309, any sitting, earliest sitting first · new" in out
+    assert "Rules file written with 3 targets" in out and "Nothing was sent to AWS" in out
+    assert "OPN309 │ Builders' session" in out and "Already held: CON344, IND406" in out
+    writes = [op for op, _ in g["d"].fake.calls if op not in ("GetSchedule", "ListSessions", "GetSession")]
+    assert writes == []

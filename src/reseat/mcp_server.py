@@ -29,9 +29,11 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from . import guard, planning
+from . import rules as R
 from .client import ApiError, EventsClient, OperationClosed
 from .models import Session
 from .router import WRITES_CLOSED, Router, run_booking, target_name
@@ -45,17 +47,19 @@ PLAN_TTL = 600
 @dataclass
 class Plan:
     plan_id: str
-    kind: str                       # book | guard | swap
+    kind: str                       # book | guard | swap | rules
     expires: float
     sessions: list[str] = field(default_factory=list)
     summary: str = ""
     shown: tuple[tuple[str, ...], ...] = ()     # the guard diff the attendee saw
+    draft: planning.Draft | None = None         # rules: the file to write, and the file it came from
 
 
 class Tools:
     def __init__(self, client: EventsClient, store: Store, rules: Rules, event_id: str,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, rules_path: Path | None = None):
         self.client, self.store, self.rules, self.event_id, self.clock = client, store, rules, event_id, clock
+        self.rules_path = rules_path
         self.router = Router(rules, store, event_id)
         self._plans: dict[str, Plan] = {}
         self._lock = threading.Lock()
@@ -140,6 +144,20 @@ class Tools:
         return _guarded(lambda: planning.check_plan(self.client, self.store, self.event_id, self.rules,
                                                     list(codes)))
 
+    def draft_rules(self, add: list[str], remove: list[str] | None = None) -> str:
+        if self.rules_path is None:
+            return "This server has no rules file to edit. Nothing drafted."
+        path = self.rules_path
+        got = _guarded_any(lambda: planning.draft_rules(self.client, self.store, self.event_id, path,
+                                                        list(add), list(remove or [])))
+        if not isinstance(got, planning.Draft):
+            return got
+        p = self._new_plan("rules", [], got.summary)
+        p.draft = got
+        return (f"Plan {p.plan_id}, valid 10 minutes.\n{got.summary}\nNothing has been written. Approving "
+                "writes the rules file and keeps the old one as rules.yaml.bak. It sends nothing to AWS. "
+                "Ask the attendee, then call approve_changes with this plan id.")
+
     def _target_ids(self) -> set[str]:
         return {s.session_id for t in self.rules.targets for s, _ in self.router.tree(t)}
 
@@ -171,7 +189,8 @@ class Tools:
                 "Nothing has been sent. Call approve_changes with this plan id to apply.")
 
     def propose_swap(self, held_code: str) -> str:
-        """A held session's best open sitting of the same talk, checked as swap.py checks. Sends nothing."""
+        """An open sitting of a held talk that comes earlier in the rules' order, checked as swap.py
+        checks. Sends nothing."""
         try:
             return self._propose_swap(held_code)
         except ApiError as e:
@@ -187,11 +206,11 @@ class Tools:
             return f"Refused: {held_code} is not held. Nothing was planned."
         trees = ({x.session_id for x, _ in self.router.tree(t)} for t in self.rules.targets)
         if not any(a.session_id in ids for ids in trees):
-            return f"{a.abbreviation} is not a target in the rules file, so no sitting is preferred to it."
+            return f"{a.abbreviation} is not a target in the rules file, so no sitting comes before it."
         better = [s for s in self._preferred(a) if s.band and s.band.open and s.session_id not in held]
         if not better:
             return (f"No better sitting of {a.base_code} is open. {a.abbreviation} is the first choice the "
-                    "rules allow, or every sitting the rules prefer is full. Nothing was planned.")
+                    "rules allow, or every sitting the rules put first is full. Nothing was planned.")
         swap, reasons = Swap(self.client, self.store, self.rules, self.event_id), []
         for b in better:
             res = swap.check(a.session_id, b.session_id, approved=True)
@@ -226,10 +245,13 @@ class Tools:
         with self._lock:
             p = self._plans.pop(plan_id, None)
         if p is None or p.expires <= self.clock():
-            return "Refused: unknown, used or expired plan id. Call propose_changes or guard_sync first."
+            return ("Refused: unknown, used or expired plan id. Call propose_changes, propose_swap, "
+                    "guard_sync or draft_rules first.")
         try:
             if p.kind == "swap":
                 return self._swap(p)
+            if p.kind == "rules":
+                return self._write_rules(p)
             return self._book(p) if p.kind == "book" else self._guard(p)
         except SwapBusy as e:
             return f"Not run: {e} Nothing was sent. Propose again in a moment."
@@ -264,6 +286,31 @@ class Tools:
         lines.append("Held now: " + (", ".join(self._code(s) for s in res.held_now) or "nothing") + ".")
         return "\n".join(lines)
 
+    def _write_rules(self, p: Plan) -> str:
+        """Write the drafted rules file, only if the file is still the one it was drafted from. The old
+        file is kept beside it. No API call: the rules file only says what to watch and book."""
+        path, d = self.rules_path, p.draft
+        if path is None or d is None:
+            return "Refused: this plan has no rules file. Nothing written."
+        try:
+            R.refuse_symlink(path)
+            now = R.read_nofollow(path)
+            if planning._sha(now) != d.base_sha:
+                return ("Refused: the rules file changed after this draft was made. Nothing written. "
+                        "Call draft_rules again.")
+            backup = path.with_name(path.name + ".bak")
+            R.write_new(backup, now, replace=True)
+            R.write_new(path, d.text, replace=True)
+            self.rules = R.parse(d.text)
+        except Exception as e:      # noqa: BLE001  any failure: say so, never with a path or a trace
+            msg = planning._plain(e, path) if isinstance(e, R.RulesError) else "the file could not be written"
+            return f"Not written: {msg}. The rules file is as it was, or check rules.yaml.bak."
+        self.router = Router(self.rules, self.store, self.event_id)
+        return (f"Rules file written with {len(self.rules.targets)} targets. The old file is kept as "
+                f"{backup.name}. Nothing was sent to AWS. Once reseat serve restarts with these rules, the "
+                "watcher books a target when a seat frees, as it does for every target. Run reseat book "
+                "--dry-run to see what it would reserve now.")
+
     def _guard(self, p: Plan) -> str:
         now = guard.compute(self.client, self.store, self.event_id, self.rules)
         if _diff(now) != p.shown:
@@ -273,6 +320,13 @@ class Tools:
         out = "\n".join(f"- {d}" for d in res.done) or "- nothing sent"
         probs = "\n".join(f"Problem: {x}" for x in res.problems)
         return f"Leave-now blocks:\n{out}" + (f"\n{probs}" if probs else "")
+
+
+def _guarded_any(run: Callable[[], Any]) -> Any:
+    try:
+        return run()
+    except Exception:
+        return "Could not answer: re:Seat hit an internal error. Nothing was sent or changed."
 
 
 def _guarded(run: Callable[[], str]) -> str:
@@ -296,8 +350,8 @@ def build_server(tools: Tools) -> Any:
 
     server = MCPServer("reseat", instructions=(
         "re:Seat manages AWS re:Invent seats for one attendee. Read tools are safe. "
-        "Every change is two steps: propose_changes, propose_swap or guard_sync returns a plan id and sends "
-        "nothing. "
+        "Every change is two steps: propose_changes, propose_swap, guard_sync or draft_rules returns a "
+        "plan id and changes nothing. "
         "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id. "
         "re:Seat lists and checks. Choosing is for the attendee."))
 
@@ -322,7 +376,8 @@ def build_server(tools: Tools) -> Any:
 
     @server.tool()
     def approve_changes(plan_id: str) -> str:
-        """Carry out a plan from propose_changes, propose_swap or guard_sync, once, within 10 minutes."""
+        """Carry out a plan from propose_changes, propose_swap, guard_sync or draft_rules, once, within
+        10 minutes. Ask the attendee first."""
         with tools.serial:
             return tools.approve_changes(plan_id)
 
@@ -364,6 +419,17 @@ def build_server(tools: Tools) -> Any:
         code such as AIM341-R1 checks that sitting. Reads the schedule once. Writes nothing."""
         with tools.serial:
             return tools.check_plan(codes)
+
+    @server.tool()
+    def draft_rules(add: list[str], remove: list[str] | None = None) -> str:
+        """Draft a new rules file: `add` codes go after the current targets in the order given, and
+        `remove` codes are dropped. An earlier target wins a clashing time slot. An exact code such as
+        AIM341-R1 pins that sitting. A code without -R such as AIM341 takes any sitting. Returns a plan
+        id and the full target order. Writes nothing until approve_changes, then only the local rules
+        file, with a .bak copy. Never reserves or cancels. Removing a held target stops watching it, never
+        cancels."""
+        with tools.serial:
+            return tools.draft_rules(add, remove)
 
     @server.tool()
     def queue_or_go(code: str) -> str:

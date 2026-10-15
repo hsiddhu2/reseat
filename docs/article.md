@@ -80,9 +80,20 @@ The token never leaves the laptop. Your phone gets notifications through the fre
 
 Each button carries a plan id that expires after 10 minutes and works once, and a made-up one costs nothing. ntfy.sh topics have no password, so the topic name is the secret. Someone who learns it can read the pushes (codes, titles, times, rooms, venues, the web app's Tailscale address if you use it, the button ids, never the token) and, with buttons on, approve or dismiss a swap re:Seat proposed or update its leave-now blocks, and nothing else. The README says how to rotate it.
 
-### For agents
+### Plan with your own AI
 
-`reseat mcp` runs a local MCP server, so an agent can read your targets and plan changes. Every change is two steps: a propose returns a plan id and sends nothing, and an approve carries that plan out once, within 10 minutes. `reseat mcp --demo` runs the tools on the fake with no sign-in.
+With over 2,000 sessions, picking still takes hours, and I wanted help with it without handing my seats to a chatbot. `reseat mcp` runs a local MCP server, so the AI app you already use can plan with you. re:Seat gives it four planning tools and keeps the choosing with you:
+
+- `search_sessions` searches the local catalog by text, type, day, venue, seat band, level, topic and service. It sends nothing to AWS.
+- `open_slots(day)` reads my schedule once and lists the free gaps in a day, with the sessions I can walk to and away from before the doors close.
+- `check_plan(codes)` states facts about a list of sessions: clashes, two sittings of one talk, a walk I cannot make, a meal, my daily cap.
+- `draft_rules(add, remove)` drafts my rules file and shows the whole target order. Approving it writes only that local file and keeps a backup.
+
+Every list comes back in start-time order. None of them grades a session or picks one for me. The AI never reserves or cancels anything. Booking stays a dry run and my yes, or the watcher acting on rules I approved.
+
+The walk check caught something the API does not. The session I booked in the round trip above starts at 12:30 at Caesars Forum. One of my own sessions ends at 12:30 at Caesars Palace. The API accepted the booking, because the times do not overlap. `check_plan` says: "cannot be reached in time: the walk ... is about 12 min (estimate), 15 allowed, and doors close at 12:19."
+
+Every other change goes through the same two steps: a propose returns a plan id and sends nothing, and an approve carries that plan out once, within 10 minutes. `reseat mcp --demo` runs every tool on the fake with no sign-in, and `python demo/plan.py` shows the planning calls end to end.
 
 ## Why re:Seat runs on your machine
 
@@ -135,7 +146,7 @@ The Activity page keeps what it saw and did. On 14 October the connection droppe
 
 ## How it was tested
 
-Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 979 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
+Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 1026 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
 
 ## What is a heuristic
 
@@ -148,7 +159,7 @@ I want to be honest about which parts are rules and which are guesses.
 
 ## Limits
 
-- It manages seats you already chose. For choosing, use the AWS portal or a planner. re:Seat reads your official schedule, or imports reinvent-planner.cloud exports.
+- It lists and checks sessions, and the choosing is yours, with your AI app, the AWS portal or a planner. re:Seat reads your official schedule, or imports reinvent-planner.cloud exports.
 - It cannot help with the opening rush. Reserved seating opened in the AWS portal on 6 October, two days before API writes were due to open, and until then reserve and cancel return 409.
 - The web app is plain HTTP. If you open it on the phone, do it over Tailscale.
 - The ntfy topic name is the secret. Make it long and random, and rotate it if it leaks.
