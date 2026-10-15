@@ -117,6 +117,19 @@ def test_one_time_link_sets_cookie_redirects_clean_and_works_once(served):
     assert http.get("/api/state").status_code == 200
 
 
+def test_one_time_link_signs_in_the_phone_through_the_tailnet_name(served):
+    """Through Tailscale Serve the phone's Host is the laptop's tailnet name. The printed link
+    still signs it in once, and the cookie works on that Host."""
+    _, _, app, http = served
+    ts = f"laptop.tail1234.ts.net:{app.port}"
+    assert app.one_time_link("laptop.tail1234.ts.net").startswith(f"http://{ts}/open?k=")
+    r = http.get(f"/open?k={app._link_code}", headers={"Host": ts})
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    http.cookies.set(S.COOKIE, r.cookies[S.COOKIE])
+    assert http.get("/api/state", headers={"Host": ts}).status_code == 200
+    assert http.get("/today", headers={"Host": ts}).status_code == 200
+
+
 def test_login_form_posts_the_secret_and_is_rate_limited(served):
     _, _, app, http = served
     assert http.get("/login").status_code == 200

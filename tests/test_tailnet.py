@@ -172,3 +172,65 @@ def test_signal_handlers_are_restored_after_serve(monkeypatch):
     _fake_server(monkeypatch, made)
     CliRunner().invoke(cli.app, ["serve", "--demo"])
     assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_a_kill_signal_while_serving_still_removes_the_forwarding(monkeypatch):
+    """Closing the terminal or `kill` sends SIGTERM or SIGHUP. Cleanup must run as for Ctrl-C."""
+    import signal
+    rec, made = Recorder(), {}
+    monkeypatch.setattr(T.Tailnet, "locate", classmethod(lambda cls, run=None: cls("ts", rec)))
+    _fake_server(monkeypatch, made)
+
+    class Killed:
+        def serve_forever(self):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+        def server_close(self):
+            made["closed"] = True
+    monkeypatch.setattr(S, "make_server", lambda app: made.setdefault("app", app) and Killed())
+    r = CliRunner().invoke(cli.app, ["serve", "--demo", "--tailscale"])
+    assert r.exit_code == 0, r.output
+    assert made["closed"] and "Tailscale forwarding removed." in r.output
+    assert rec.calls[-1] == ["serve", "--http=8491", "off"]
+
+
+def test_a_crash_while_serving_still_removes_the_forwarding(monkeypatch):
+    rec, made = Recorder(), {}
+    monkeypatch.setattr(T.Tailnet, "locate", classmethod(lambda cls, run=None: cls("ts", rec)))
+    _fake_server(monkeypatch, made)
+
+    class Crashes:
+        def serve_forever(self):
+            raise OSError("socket died")
+
+        def server_close(self):
+            made["closed"] = True
+    monkeypatch.setattr(S, "make_server", lambda app: made.setdefault("app", app) and Crashes())
+    r = CliRunner().invoke(cli.app, ["serve", "--demo", "--tailscale"])
+    assert r.exit_code != 0 and made["closed"]
+    assert rec.calls[-1] == ["serve", "--http=8491", "off"]
+
+
+def test_a_refused_forward_leaves_the_other_forwarding_alone(monkeypatch):
+    """When port 8491 already goes somewhere else, re:Seat must not turn that forwarding off on exit."""
+    rec = Recorder(serve_status=_web("http://127.0.0.1:3000"))
+    made = {}
+    monkeypatch.setattr(T.Tailnet, "locate", classmethod(lambda cls, run=None: cls("ts", rec)))
+    _fake_server(monkeypatch, made)
+    r = CliRunner().invoke(cli.app, ["serve", "--demo", "--tailscale"])
+    assert r.exit_code == 2 and "already forwards port 8491" in r.output
+    assert not any(c[-1:] == ["off"] or c[:2] == ["serve", "--bg"] for c in rec.calls)
+    assert "Tailscale forwarding removed." not in r.output
+
+
+def test_stop_reports_failure_when_tailscale_cannot_be_run():
+    def gone(args):
+        raise FileNotFoundError("tailscale")
+    assert T.Tailnet("ts", gone).stop(8491) is False
+
+
+def test_forward_over_our_own_stale_forwarding_goes_ahead():
+    """A forwarding left by an earlier run that died is re:Seat's own: it is replaced, not refused."""
+    rec = Recorder(serve_status=_web("http://127.0.0.1:8491"))
+    T.Tailnet("ts", rec).forward(8491)
+    assert ["serve", "--bg", "--http=8491", "http://127.0.0.1:8491"] in rec.calls

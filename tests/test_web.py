@@ -1571,6 +1571,18 @@ def test_every_type_class_has_a_colour_in_both_themes():
         assert f".b-held.ty-{cls}" in css and f".lg-held.ty-{cls} i" in css
 
 
+def test_dark_theme_redefines_every_colour_token():
+    """The phone asks for dark with prefers-color-scheme. Every colour token set for light
+    must be set again for dark, or a light colour shows on the dark ground."""
+    css = (pathlib.Path(pages.__file__).parent / "static" / "app.css").read_text()
+    light, rest = css.split("@media (prefers-color-scheme: dark)", 1)
+    dark = rest.split("\n}\n", 1)[0]
+    tokens = lambda block: set(re.findall(r"(--[a-z0-9-]+):", block))   # noqa: E731
+    colours = {t for t in tokens(light.split("}", 1)[0]) if t not in {"--sans", "--mono"}}
+    assert colours and colours <= tokens(dark), colours - tokens(dark)
+    assert "color-scheme: dark" in dark
+
+
 def test_week_grid_marks_held_blocks_by_type_and_lists_only_types_present(demo):
     snap = demo.app.snapshot()
     html = pages.render_dashboard(snap, demo=True)

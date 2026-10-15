@@ -30,7 +30,7 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
-| Phone page over Tailscale from home | `2026-10-DD-tailscale.md`, on the day it is run | to do |
+| The web app on a phone over Tailscale, 14 October | [`2026-10-14-tailscale.md`](2026-10-14-tailscale.md) | done |
 | Seat bands after reserved seating opens | in [`2026-10-12-catalog-returned.md`](2026-10-12-catalog-returned.md) | done |
 | Booking the attendee's real targets with `reseat book` | none | not run: those seats were booked in the AWS portal after seating opened on 6 October |
 | Two reversible round trips: reserve, read back, cancel, read back, 12 October | [`2026-10-12-round-trip.md`](2026-10-12-round-trip.md) | done |
