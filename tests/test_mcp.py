@@ -87,12 +87,12 @@ def test_read_tools(fake, tools):
     assert "6 added" in tools.explain_drift()
 
 
-async def test_server_exposes_seven_tools_and_none_takes_a_session_list(tools, fake):
+async def test_server_exposes_nine_tools_and_none_takes_a_session_list(tools, fake):
     server = M.build_server(tools)
     listed = await server.list_tools()
     assert sorted(t.name for t in listed) == sorted(
         ["list_targets", "propose_changes", "propose_swap", "approve_changes", "explain_drift", "guard_sync",
-         "queue_or_go"])
+         "queue_or_go", "search_sessions", "open_slots"])
     for t in listed:
         props = (t.input_schema or {}).get("properties", {})
         assert not any("session" in k.lower() for k in props), (t.name, props)

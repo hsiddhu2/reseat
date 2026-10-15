@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from . import guard
+from . import guard, planning
 from .client import ApiError, EventsClient, OperationClosed
 from .models import Session
 from .router import WRITES_CLOSED, Router, run_booking, target_name
@@ -120,6 +120,24 @@ class Tools:
             a = guard.queue_or_go(s, self.store.band_history(self.event_id, s.session_id))
             out.append(f"{self._code(s.session_id)}: {a.verdict}. {a.basis}")
         return "\n".join(out)
+
+    # ---- planning: lists and checks, never a ranking (D-018)
+
+    def search_sessions(self, text: str = "", type: str = "", day: str = "", venue: str = "", band: str = "",
+                        level: str = "", topic: str = "", service: str = "",
+                        limit: int = planning.DEFAULT_ROWS) -> str:
+        f = planning.Filters(text, type, day, venue, band, level, topic, service)
+        return _guarded(lambda: planning.search_sessions(self.store, self.event_id, f, limit,
+                                                         targets=self._target_ids()))
+
+    def open_slots(self, day: str, type: str = "", text: str = "", band: str = "open", level: str = "",
+                   topic: str = "", service: str = "", venue: str = "") -> str:
+        f = planning.Filters(text, type, "", venue, band, level, topic, service)
+        return _guarded(lambda: planning.open_slots(self.client, self.store, self.event_id, self.rules,
+                                                    day, f))
+
+    def _target_ids(self) -> set[str]:
+        return {s.session_id for t in self.rules.targets for s, _ in self.router.tree(t)}
 
     # ---- proposals: no writes
 
@@ -253,6 +271,15 @@ class Tools:
         return f"Leave-now blocks:\n{out}" + (f"\n{probs}" if probs else "")
 
 
+def _guarded(run: Callable[[], str]) -> str:
+    """A planning read that fails says so in a fixed sentence. The exception text can carry a
+    local path or a database message, and it would land in the AI's context."""
+    try:
+        return run()
+    except Exception:
+        return "Could not answer: re:Seat hit an internal error. Nothing was sent or changed."
+
+
 def _diff(gp: guard.GuardPlan) -> tuple[tuple[str, ...], ...]:
     return (tuple(f"+{b.title}@{b.start}" for b in gp.create)
             + tuple(f"~{pid}:{b.title}@{b.start}" for pid, b in gp.update)
@@ -267,7 +294,8 @@ def build_server(tools: Tools) -> Any:
         "re:Seat manages AWS re:Invent seats for one attendee. Read tools are safe. "
         "Every change is two steps: propose_changes, propose_swap or guard_sync returns a plan id and sends "
         "nothing. "
-        "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id."))
+        "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id. "
+        "re:Seat lists and checks. Choosing is for the attendee."))
 
     @server.tool()
     def list_targets() -> str:
@@ -305,6 +333,24 @@ def build_server(tools: Tools) -> Any:
         """Plan leave-now block changes. Returns a plan id. Sends nothing."""
         with tools.serial:
             return tools.guard_sync()
+
+    @server.tool()
+    def search_sessions(text: str = "", type: str = "", day: str = "", venue: str = "", band: str = "",
+                        level: str = "", topic: str = "", service: str = "", limit: int = 25) -> str:
+        """Sessions in the local catalog that pass every filter, in start-time order, at most 50.
+        text matches title, code, abstract, speakers, topics and services. band is a seat band or
+        "open". day is a weekday name or YYYY-MM-DD. Reads the local catalog only."""
+        with tools.serial:
+            return tools.search_sessions(text, type, day, venue, band, level, topic, service, limit)
+
+    @server.tool()
+    def open_slots(day: str, type: str = "", text: str = "", band: str = "open", level: str = "",
+                   topic: str = "", service: str = "", venue: str = "") -> str:
+        """Free gaps in one day between 08:00 and 18:00, after held sessions and meals, and the
+        sessions that fit each gap with the walk in and out, in start-time order. Reads the
+        schedule once. Writes nothing."""
+        with tools.serial:
+            return tools.open_slots(day, type, text, band, level, topic, service, venue)
 
     @server.tool()
     def queue_or_go(code: str) -> str:
