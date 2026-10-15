@@ -115,14 +115,15 @@ Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). 
 
 ## Observed in the live API, 12 October 2026
 
-Observations from read-only checks and one probe, not spec guarantees.
+Observations from read-only checks, one probe and two reversible round trips, not spec guarantees.
 
-Source: [proof/2026-10-12-catalog-returned.md](proof/2026-10-12-catalog-returned.md).
+Sources: [proof/2026-10-12-catalog-returned.md](proof/2026-10-12-catalog-returned.md), [proof/2026-10-12-round-trip.md](proof/2026-10-12-round-trip.md).
 
 - The catalog is back. ListSessions returned 2,227 sessions on the evening of 12 October. Every held session is in it under the id GetSchedule lists.
 - Ids were kept through the outage. Of 2,068 sessions on 1 October, 2,063 kept their id. Thirteen of those changed code under the same id, for example SEC330 to SEC501. A target pinned by session id follows such a change. A target named by code does not, and `reseat rules check` reports it.
 - CancelReservation on a session the attendee does not hold answered 400 ValidationException, "The request could not be applied to this session". It was tried on a session that is not reservable and on a reservable session not held. The spec lists 400 and 404 for this operation. The 404 documented for a session not held was not seen. The schedule was unchanged afterwards.
 - The guide says every reserve and cancel answers 409 while writes are closed. A 400 therefore points to writes being open. `reseat probe` reads 400 or 404 as open and any other answer as unclear. A reversible booking is the proof.
+- Writes are open. On the evening of 12 October two reversible round trips on AMZ202-R1 each reserved the seat, saw it in GetSchedule, cancelled it and saw it gone. The rest of the schedule was unchanged. [Proof](proof/2026-10-12-round-trip.md).
 
 ## Schedule fields
 

@@ -163,6 +163,25 @@ def test_full_batch_success_reads_back_and_journals(world):
     assert j["op"] == OP and j["outcome"] == "success" and "readBack" in j["response"]
 
 
+def test_round_trip_reserve_then_cancel_each_reads_back_and_journals(world):
+    """The live proof of 12 October 2026, against the fake: reserve, read back, cancel, read back."""
+    from reseat import cancel as C
+    fake, client, store = world
+    fake.schedule.reserved.add("X1")
+    fake.set_band("W1", "available")
+    run = run_booking(router(store, "targets:\n- session_id: W1\n  repeats: false\n"), client, store, EV,
+                      held=["X1"])
+    assert set(run.schedule.reserved) == {"X1", "W1"}
+    chk = C.check(client, EV, "W1")
+    assert chk.held and chk.band_open
+    res = C.cancel(client, store, EV, "W1", was_held=chk.held)
+    assert res.status == "cancelled" and set(res.schedule.reserved) == {"X1"}
+    assert fake.counts[OP] == 1 and fake.counts["CancelReservation"] == 1
+    j = store.journal_entries(EV)
+    assert sorted(e["outcome"] for e in j) == ["cancelled", "success"]
+    assert all(e["response"] and "readBack" in e["response"] for e in j)
+
+
 def test_partial_failure_falls_back_to_next_sitting_same_run(world):
     fake, client, store = world
     fake.full.add("A1")

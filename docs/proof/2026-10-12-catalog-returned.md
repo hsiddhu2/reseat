@@ -138,8 +138,8 @@ GetSchedule afterwards: 14 reserved, 16 favorites, and INV501 not held.
 
 ## What it does not prove
 
-- That writes are open. A 400 is not a 409, which points to open, but only a reserve that lands and is read back proves it.
-- Anything about booking, swapping or cancelling a held seat through the API. No such write was sent.
+- That writes are open. A 400 is not a 409, which points to open, but only a reserve that lands and is read back proves it. That came later the same evening: [2026-10-12-round-trip.md](2026-10-12-round-trip.md).
+- Anything about booking, swapping or cancelling a held seat through the API. No such write was sent in these checks.
 - One account, one evening.
 
 ## Correction to 8 October

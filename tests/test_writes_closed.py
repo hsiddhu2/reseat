@@ -336,6 +336,21 @@ def test_probe_resumes_booking_the_moment_writes_open(clock):
     assert fake.schedule.reserved == {"A1"}     # the probe changed nothing
 
 
+def test_probe_reads_the_live_400_as_open_and_resumes(clock):
+    """Live API, 12 October 2026: a cancel on a session not held answered 400, not the spec's 404."""
+    fake, w, events = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    assert w.writes_closed_until is not None
+    fake.closed = False
+    fake.fail_next("CancelReservation", 400)
+    clock.sleep(60)
+    assert w.tick().booked == ["A1"]
+    assert [e.data["state"] for e in events if e.kind == "writes"] == ["closed", "open"]
+    assert fake.schedule.reserved == {"A1"}
+
+
 def test_probe_never_uses_a_session_that_is_held(clock):
     fake, w, events = probe_env(clock, probe_held=True)
     fake.closed = True

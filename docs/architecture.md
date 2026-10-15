@@ -124,8 +124,8 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 ## Key flows
 
-**8 October, writes open**
-1. Probe with `CancelReservation` on a session never held. 409 while closed, 404 once open. Never changes the schedule.
+**When writes open** (scheduled for 8 October, first seen open on 12 October)
+1. Probe with `CancelReservation` on a session never held. 409 while closed. Once open, the spec documents 404 and the live API answered 400 on 12 October, so either reads as open. Never changes the schedule.
 2. Book in priority order, 10 per call, inside 30 per minute.
 3. On `sessionFull` walk the fallback tree. On `scheduleConflict` record `conflictsWith` and move on.
 4. Read back. Report what landed, what failed and why.
