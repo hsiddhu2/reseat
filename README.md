@@ -20,7 +20,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L262), [5xx on a cancel](tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](tests/test_swap.py#L318).
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
 - **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
-- **1033 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **1034 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
 - **Seen live:** from 8 to 11 October the API served an empty catalog, and re:Seat refused to act on it. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33). On 12 October the catalog came back with its session ids kept. [The record](docs/proof/2026-10-12-catalog-returned.md). Two reversible bookings, each read back and cancelled, confirmed that writes are open. [The round trips](docs/proof/2026-10-12-round-trip.md).
 - **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
@@ -162,7 +162,7 @@ Since 13 October the watcher has run against the live API on the attendee's own 
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 1033 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 1034 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 
@@ -284,15 +284,39 @@ It prints a one-time link. Open it once on each device. It sets a cookie and the
 
 ### MCP server
 
-`reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Install the extra first: `pip install "reseat[mcp]"`. A client config looks like this, with the path to your `reseat` command:
+`reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Your AI app starts it as a child process on your machine. Nothing is hosted.
+
+**Install it once, with the MCP extra, and sign in:**
+
+```bash
+pipx install "reseat[mcp]"     # or pip. Already installed without it: pipx install --force "reseat[mcp]"
+reseat login                   # in a terminal, once. The token goes to the system keychain
+which reseat                   # the full path for the config below. On Windows: where reseat
+```
+
+**Add it to your AI app.** Most apps take the same entry. Use the full path it printed, because an app often does not see your shell's PATH:
 
 ```json
 {
   "mcpServers": {
-    "reseat": { "command": "/path/to/.venv/bin/reseat", "args": ["mcp"] }
+    "reseat":      { "command": "/full/path/to/reseat", "args": ["mcp"] },
+    "reseat-demo": { "command": "/full/path/to/reseat", "args": ["mcp", "--demo"] }
   }
 }
 ```
+
+| App | Where the entry goes |
+|---|---|
+| Claude Code | No file. Run `claude mcp add reseat -- /full/path/to/reseat mcp`, and for the demo `claude mcp add reseat-demo -- /full/path/to/reseat mcp --demo` |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows |
+| Cursor | `~/.cursor/mcp.json` for every project, or `.cursor/mcp.json` in one project |
+| Kiro | `~/.kiro/settings/mcp.json` for every workspace, or `.kiro/settings/mcp.json` in one workspace |
+| Windsurf (Devin Desktop) | `~/.codeium/windsurf/mcp_config.json`, or `~/.config/devin/mcp_config.json` under its new name |
+| VS Code | `.vscode/mcp.json` in one workspace, or the user `mcp.json` from the command MCP: Open User Configuration. The top key is `servers`, not `mcpServers`, and each entry adds `"type": "stdio"` |
+
+Use the file for every project where you can. A project file holds only a path, but that path names your home folder, so keep it out of commits others see. Restart or reload the app after editing. It should list the reseat server with 11 tools. The four planning tools need re:Seat 0.7.0 or newer. Version 0.6.1 has the other 7. Start with `reseat-demo`: it needs no sign-in and nothing reaches AWS. Use an app that shows you each tool call before it runs, because the agent could approve a plan without asking you (see the limit below).
+
+**Without installing.** If you use [uv](https://docs.astral.sh/uv/), an app can run the server straight from PyPI: `"command": "uvx", "args": ["--from", "reseat[mcp]==0.7.0", "reseat", "mcp"]`. Pin the version, so a new release never runs with your token before you choose it. You still sign in once, with `uvx --from "reseat[mcp]==0.7.0" reseat login`. The watcher runs as `reseat serve` in a terminal, so most people install it.
 
 Tools: `list_targets`, `propose_changes`, `propose_swap`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. `search_sessions` searches the local catalog by text, type, day, venue, seat band, level, topic and service, and sends nothing to AWS. `open_slots(day)` reads your schedule once and lists the free gaps between 08:00 and 18:00, with the sessions you can walk to and away from in time. `check_plan(codes)` takes up to 25 session codes and states, for each, whether it fits what you hold and the rest of the list: clashes, two sittings of one talk, walks that miss the 11-minute door rule, meals, `max_per_day` and `watch_cap`. A full sitting lists the other open sittings of the talk. `draft_rules(add, remove)` drafts a new rules file: the codes in `add` go after your current targets in the order given, and the answer shows the whole target order. re:Seat tries targets in that order, so an earlier target wins a clashing time slot. An exact code such as AIM341-R1 pins that sitting. A code without -R such as AIM341 takes any sitting, so a repeat AWS adds later can still be booked. Removing a target you hold only stops re:Seat watching it, and never cancels the seat. Approving the draft writes only your local rules file, keeps the old one as `rules.yaml.bak`, and sends nothing to AWS. Comments and settings in the file stay as they were. Once `reseat serve` runs with the new rules, the watcher books a new target when a seat frees, as it does for every target. The planning tools list in start-time order, or in the order you gave. re:Seat lists and checks, and leaves the choosing to you. Every change is two steps. `propose_changes`, `propose_swap` or `guard_sync` returns a plan id and sends nothing. `propose_swap(held_code)` finds an open sitting of a held talk that your rules put before the one you hold, runs the swap's checks with fresh reads, and lists them. Approving it runs the same checked swap as `reseat swap`. `approve_changes` carries that plan out once, within 10 minutes, and reserves only what it named. A leave-now plan is refused if what you hold changed after it was shown. Calls run one at a time. No tool takes a list of session ids.
 

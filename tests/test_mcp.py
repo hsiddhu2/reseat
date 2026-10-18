@@ -349,3 +349,14 @@ def test_target_names_keep_every_real_code_and_hide_ids():
     for code in ("ARC301", "AIM310-R1", "AIM101-S", "INV201-S-R1", "KEY001", "DEV202-S"):
         assert target_name(code, st, "ev") == code
     assert target_name("1780441463028001GEdS", st, "ev") == "a pinned sitting"
+
+
+async def test_readme_names_the_tools_the_server_lists(tools):
+    """README's "Tools:" line and its "with N tools" count match what the server lists."""
+    from pathlib import Path
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    line = next(x for x in readme.splitlines() if x.startswith("Tools: "))
+    named = re.findall(r"`([a-z_]+)`", line.split(". ", 1)[0])
+    count = int(re.search(r"with (\d+) tools", readme).group(1))
+    listed = sorted(t.name for t in await M.build_server(tools).list_tools())
+    assert sorted(named) == listed and count == len(listed) == 11
