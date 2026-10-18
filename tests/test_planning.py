@@ -1,5 +1,6 @@
 """D-018 planning tools: lists and checks for the attendee's own AI, never a ranking."""
 
+import os
 import random
 import re
 
@@ -950,8 +951,9 @@ def test_approve_writes_only_the_target_lines_and_keeps_a_backup(drafting):
              '  - {code: "AIM310", auto_swap: false}   # added by draft_rules\n')
     assert new.replace(lines, "") == RULES_FILE
     assert (path.parent / "rules.yaml.bak").read_text() == RULES_FILE
-    assert oct(path.stat().st_mode & 0o777) == "0o600" and oct((path.parent / "rules.yaml.bak").stat().st_mode
-                                                                & 0o777) == "0o600"
+    if os.name != "nt":                                         # Windows has no POSIX modes
+        assert oct(path.stat().st_mode & 0o777) == "0o600"
+        assert oct((path.parent / "rules.yaml.bak").stat().st_mode & 0o777) == "0o600"
     assert writes_sent(fake) == []
     assert [t.label for t in tools.rules.targets] == ["HELD1", "CMP320", "FIT2", "AIM310"]
 
@@ -1011,7 +1013,9 @@ def test_a_symbolic_link_or_no_rules_file_is_refused(drafting, tmp_path, clock):
     real.write_text(RULES_FILE)
     path.unlink()
     path.symlink_to(real)
-    assert "Nothing drafted" in tools.draft_rules(["AIM310"])
+    out = tools.draft_rules(["AIM310"])                 # refused on every OS, Windows has no O_NOFOLLOW
+    assert "symbolic link" in out and out.endswith("Nothing drafted.") and str(real) not in out
+    assert real.read_text() == RULES_FILE and path.is_symlink()
     bare = M.Tools(tools.client, tools.store, tools.rules, EV, clock=clock)
     assert "no rules file" in bare.draft_rules(["AIM310"])
 
@@ -1096,8 +1100,8 @@ def test_a_bad_rules_file_drafts_nothing_and_reads_no_schedule(drafting, text, s
     assert path.read_text() == text
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_an_unreadable_rules_file_drafts_nothing(drafting):
-    import os
     fake, tools, path = drafting
     if os.geteuid() == 0:
         pytest.skip("root reads any file")
@@ -1137,8 +1141,8 @@ def test_a_failed_write_on_approve_leaves_the_rules_file_and_the_router_as_they_
     assert not [p for p in path.parent.iterdir() if p.name.endswith(".tmp")]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX modes")
 def test_a_read_only_folder_on_approve_writes_nothing(drafting):
-    import os
     fake, tools, path = drafting
     if os.geteuid() == 0:
         pytest.skip("root writes anywhere")

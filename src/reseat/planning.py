@@ -714,6 +714,7 @@ def draft_rules(client: EventsClient, store: Store, event_id: str, path: Path, a
     if both:
         return f"{', '.join(both)} is both to add and to remove. Nothing drafted."
     try:
+        R.refuse_symlink(path)              # Windows has no O_NOFOLLOW
         text = R.read_nofollow(path)
         old = R.parse(text, "the rules file")
     except (R.RulesError, UnicodeDecodeError) as e:
