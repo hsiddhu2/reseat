@@ -93,7 +93,7 @@ class Tools:
             tree = [s for s, _ in self.router.tree(t)]
             mine = [s for s in tree if s.session_id in held]
             state = (f"held: {self._code(mine[0].session_id)}" if mine
-                     else f"not held, {len(tree)} sittings known")
+                     else f"not held, {len(tree)} sitting{'' if len(tree) == 1 else 's'} known")
             lines.append(f"{i}. {self._target(t.label)}{' (auto swap)' if t.auto_swap else ''}: {state}")
         return "\n".join(lines) or "The rules file has no targets."
 
@@ -207,12 +207,14 @@ class Tools:
         trees = ({x.session_id for x, _ in self.router.tree(t)} for t in self.rules.targets)
         if not any(a.session_id in ids for ids in trees):
             return f"{a.abbreviation} is not a target in the rules file, so no sitting comes before it."
-        better = [s for s in self._preferred(a) if s.band and s.band.open and s.session_id not in held]
-        if not better:
-            return (f"No better sitting of {a.base_code} is open. {a.abbreviation} is the first choice the "
-                    "rules allow, or every sitting the rules put first is full. Nothing was planned.")
+        earlier = [s for s in self._preferred(a) if s.band and s.band.open and s.session_id not in held]
+        if not earlier:
+            code, base = planning.clean(a.abbreviation, 20), planning.clean(a.base_code, 20)
+            return (f"No sitting of {base} that the rules list before {code} is open. "
+                    f"{code} comes first in the rules' order, or every sitting before it is full. "
+                    "Nothing was planned.")
         swap, reasons = Swap(self.client, self.store, self.rules, self.event_id), []
-        for b in better:
+        for b in earlier:
             res = swap.check(a.session_id, b.session_id, approved=True)
             if not res.reasons:
                 p = self._new_plan("swap", [a.session_id, b.session_id],
@@ -353,7 +355,8 @@ def build_server(tools: Tools) -> Any:
         "Every change is two steps: propose_changes, propose_swap, guard_sync or draft_rules returns a "
         "plan id and changes nothing. "
         "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id. "
-        "re:Seat lists and checks. Choosing is for the attendee."))
+        "re:Seat lists and checks. Choosing is for the attendee: give the facts and let the attendee "
+        "pick and order the sessions."))
 
     @server.tool()
     def list_targets() -> str:
@@ -369,8 +372,9 @@ def build_server(tools: Tools) -> Any:
 
     @server.tool()
     def propose_swap(held_code: str) -> str:
-        """Plan moving a held session to a better open sitting of the same talk.
-        Returns a plan id and the checks. Sends nothing."""
+        """Plan moving a held session to an open sitting of the same talk that its target lists
+        earlier, by the rules' order (earliest or latest sitting first). Returns a plan id and the
+        checks. Sends nothing."""
         with tools.serial:
             return tools.propose_swap(held_code)
 

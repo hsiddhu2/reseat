@@ -160,7 +160,8 @@ class Rules(BaseModel):
     def _limits(self) -> Rules:
         if len(self.targets) > self.watch_cap:
             raise ValueError(f"{len(self.targets)} targets, watch_cap is {self.watch_cap}. "
-                             "Trim the list. re:Seat caps watch lists to be a good citizen")
+                             "Remove targets, or raise watch_cap in the rules file, at most 100. "
+                             "re:Seat caps watch lists to be a good citizen.")
         seen: dict[str, int] = {}
         for i, t in enumerate(self.targets, 1):
             key = t.code or t.session_id or ""

@@ -413,7 +413,7 @@ async def test_both_tools_through_the_mcp_server(world):
 # ---------------------------------------------------------------- neutral wording
 
 BANNED = re.compile(r"\b(best|top|recommend|rank|score|ideal|should attend|suggest|prefer|popular|must"
-                    r"|match percentage|match score)\b", re.I)
+                    r"|better|strongest|match percentage|match score)\b", re.I)
 
 
 def _outputs(clock, world):
@@ -533,7 +533,8 @@ def test_check_plan_states_facts_per_code(world):
     assert _block(one("AIM310"), "AIM310").strip().endswith("fits.")
     out = "\n".join(one(c) for c in ("SEC401", "CMP320", "NET330", "DEV101", "ARC301", "NOPE999"))
     assert "clashes with held ARC301 09:00 to 10:00" in _block(out, "SEC401")
-    assert "full (unavailable)" in _block(out, "CMP320") and "No other sitting of this talk is open" in out
+    assert "full, no seat to reserve now" in _block(out, "CMP320")
+    assert "No other sitting of this talk is open" in out
     net = _block(out, "NET330")
     assert "leaves no time for DOP302" in net and "55 min (estimate)" in net
     assert "takes no reservations" in _block(out, "DEV101")
@@ -619,7 +620,9 @@ def test_check_plan_names_no_session_id_and_cleans_codes(world):
 def test_codes_in_one_plan_are_checked_against_each_other(world):
     out = world[2].check_plan(["SEC401", "AIM310"])
     assert "clashes with held ARC301" in _block(out, "SEC401")
-    assert "cannot be reached in time: the walk from SEC401 at The Venetian" in _block(out, "AIM310")
+    aim = _block(out, "AIM310")
+    assert "cannot be reached in time: SEC401 ends at 10:30 at The Venetian, the walk is about" in aim
+    assert "so arrival is about 10:42, and doors close at 10:19" in _block(out, "AIM310")
 
 
 async def test_check_plan_through_the_mcp_server(world):
@@ -638,7 +641,7 @@ def test_the_walk_in_starts_from_what_ends_last_not_what_starts_last(clock):
            _s("N", "AMZ202-R1", MON, "12:30", mins=120, room="Caesars Forum | Level 1 | Room 3")]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = P.check_plan(client, store, EV, r, ["IND415", "AMZ202-R1"])
-    assert "cannot be reached in time: the walk from TNC337 at Caesars Palace" in _block(out, "AMZ202-R1")
+    assert "cannot be reached in time: TNC337 ends at 12:30 at Caesars Palace" in _block(out, "AMZ202-R1")
 
 
 def test_the_watch_cap_counts_only_new_targets(clock):
@@ -744,7 +747,7 @@ def test_a_base_code_where_every_sitting_is_full(clock):
     fake, client, store, r = _world(clock, cat, (), "targets: []\n")
     block = _block(P.check_plan(client, store, EV, r, ["FUL100"]), "FUL100")
     rows = [ln.strip() for ln in block.splitlines()[1:]]
-    assert len(rows) == 2 and all("full (unavailable)" in ln for ln in rows)
+    assert len(rows) == 2 and all("full, no seat to reserve now" in ln for ln in rows)
     assert "fits" not in block
 
 
@@ -758,7 +761,7 @@ def test_a_full_exact_code_with_no_other_sitting(clock):
     cat = [_s("F", "SOLO100", TUE, "10:00", band="unavailable")]
     fake, client, store, r = _world(clock, cat, (), "targets: []\n")
     out = P.check_plan(client, store, EV, r, ["SOLO100"])
-    assert "full (unavailable)" in out and "No other sitting of this talk is open." in out
+    assert "full, no seat to reserve now" in out and "No other sitting of this talk is open." in out
 
 
 def test_an_unknown_walk_in_still_needs_the_11_minutes(clock):
@@ -766,7 +769,8 @@ def test_an_unknown_walk_in_still_needs_the_11_minutes(clock):
            _s("NV2", "NOV200", TUE, "10:11", room=None)]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     near = P.check_plan(client, store, EV, r, ["NOV100"])
-    assert "cannot be reached in time: AAA101 ends at 10:00, and doors close at 09:54" in near
+    assert ("cannot be reached in time: AAA101 ends at 10:00, the walk time is not known, "
+            "and doors close at 09:54") in near
     assert _block(P.check_plan(client, store, EV, r, ["NOV200"]), "NOV200").strip().endswith("fits.")
 
 
@@ -1274,3 +1278,82 @@ def test_old_tool_text_has_no_ranking_words():
     import inspect
     src = inspect.getsource(M.Tools._propose_swap) + inspect.getsource(M.Tools.propose_swap)
     assert not re.search(r"\b(best|prefer|preferred)\b", src.replace("_preferred", ""), re.I)
+
+
+# ---------------------------------------------------------------- live test fixes, 17 October
+
+def test_open_slots_header_says_which_seat_bands_it_lists(world):
+    tools = world[2]
+    assert "Open seat bands only." in tools.open_slots("Tuesday")
+    assert "All seat bands, full ones included." in tools.open_slots("Tuesday", band="")
+    assert "Seat band limited only." in tools.open_slots("Tuesday", band="limited")
+
+
+def test_check_plan_does_not_repeat_the_band(world):
+    out = world[2].check_plan(["CMP320"])
+    assert "full, no seat to reserve now" in out and "full (" not in out
+
+
+def test_the_walk_problem_names_the_end_the_venue_and_the_arrival(clock):
+    cat = [_s("H", "TNC337", MON, "08:30", mins=240, room="Caesars Palace | Level 1 | Room 1"),
+           _s("N", "AMZ202-R1", MON, "12:30", mins=120, room="Caesars Forum | Level 1 | Room 3")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = _block(P.check_plan(client, store, EV, r, ["AMZ202-R1"]), "AMZ202-R1")
+    assert "TNC337 ends at 12:30 at Caesars Palace, the walk is about" in out
+    assert "about 12 min (estimate), 15 allowed, so arrival is about 12:45, and doors close at 12:19" in out
+    assert writes_sent(fake) == []
+
+
+def test_the_watch_cap_error_says_it_can_be_raised():
+    from pydantic import ValidationError
+
+    from reseat.rules import Rules
+    with pytest.raises(ValidationError) as e:
+        Rules.model_validate({"targets": [{"code": f"ABC{i:03d}"} for i in range(3)], "watch_cap": 2})
+    msg = str(e.value)
+    assert "raise watch_cap in the rules file, at most 100" in msg and "good citizen." in msg
+
+
+def test_list_targets_says_one_sitting_not_one_sittings(world):
+    out = world[2].list_targets()                  # CMP320 has exactly one sitting, not held
+    assert "CMP320" in out and "not held, 1 sitting known" in out and "1 sittings" not in out
+
+
+def test_list_targets_keeps_the_plural_for_more_sittings(clock):
+    cat = [_s("A", "SVS401-R", MON, "13:00"), _s("B", "SVS401-R1", TUE, "14:00")]
+    fake, client, store, r = _world(clock, cat, (), "targets:\n- code: SVS401\n")
+    out = M.Tools(client, store, r, EV, clock=clock).list_targets()
+    assert "not held, 2 sittings known" in out and writes_sent(fake) == []
+
+
+async def test_no_ranking_words_in_any_tool_description_or_swap_answer(world):
+    fake, store, tools = world
+    server = M.build_server(tools)
+    texts = {t.name: t.description or "" for t in await server.list_tools()}
+    texts["instructions"] = server.instructions
+    for code in ("ARC301", "HHH100", "XYZ999"):
+        texts[f"propose_swap {code}"] = tools.propose_swap(code)
+    texts.update(_swap_answers(tools.clock))
+    assert "comes first in the rules' order" in texts["swap none earlier"]
+    assert "Plan " in texts["swap plan"] and "Cancel SVS401-R1 " in texts["swap plan"]
+    assert "reserve SVS401-R Title" in texts["swap plan"]
+    assert texts["swap checks failed"].startswith("No swap planned. The checks failed")
+    hits = {k: BANNED.findall(v) for k, v in texts.items() if BANNED.search(v)}
+    assert not hits, hits
+    assert writes_sent(fake) == []
+
+
+def _swap_answers(clock):
+    """propose_swap's three answers past the guards: none earlier open, a plan, checks failed."""
+    cat = [_s("A1", "SVS401-R", MON, "13:00", band="unavailable"), _s("A2", "SVS401-R1", TUE, "14:00"),
+           _s("A3", "SVS401-R2", "2026-12-03", "11:00"), _s("C", "CLA100", MON, "13:00")]
+    fake, client, store, r = _world(clock, cat, {"A2"}, "targets:\n- code: SVS401\n")
+    tools, out = M.Tools(client, store, r, EV, clock=clock), {}
+    out["swap none earlier"] = tools.propose_swap("SVS401-R1")
+    fake.set_band("A1", "limited")
+    store.apply_sweep(EV, list(fake.sessions.values()), with_abstracts=True)
+    out["swap plan"] = tools.propose_swap("SVS401-R1")
+    fake.schedule.reserved.add("C")                # now A1 clashes with a held session
+    out["swap checks failed"] = tools.propose_swap("SVS401-R1")
+    assert writes_sent(fake) == [], writes_sent(fake)
+    return out

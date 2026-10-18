@@ -1,6 +1,6 @@
 # re:Seat
 
-re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for a better one without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and it can ask you on your phone, as a notification you approve with one tap.
+re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for the sitting your rules put first without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and it can ask you on your phone, as a notification you approve with one tap.
 
 ![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
@@ -20,7 +20,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L262), [5xx on a cancel](tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](tests/test_swap.py#L318).
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
 - **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
-- **1026 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **1033 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
 - **Seen live:** from 8 to 11 October the API served an empty catalog, and re:Seat refused to act on it. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33). On 12 October the catalog came back with its session ids kept. [The record](docs/proof/2026-10-12-catalog-returned.md). Two reversible bookings, each read back and cancelled, confirmed that writes are open. [The round trips](docs/proof/2026-10-12-round-trip.md).
 - **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
@@ -88,7 +88,7 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 | While you plan | Your own AI app plans with you through re:Seat's MCP server: it searches the catalog, finds the free gaps in a day with the walks counted, checks a list of sessions against what you hold, and drafts the rules file. You approve the draft. re:Seat lists and checks, and the choosing stays with you. See [MCP server](#mcp-server). |
 | Before writes open | Takes your targets from the schedule you built in the AWS portal, or from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export, and mirrors them into your favorites. |
 | The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
-| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A better sitting that clashes with a lower-priority hold becomes a swap proposal: a card on the Week page, and a push, with Swap now and Keep if you opt in. Leave-now reminders go into your official schedule. |
+| Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A sitting your rules put first that clashes with a lower-priority hold becomes a swap proposal: a card on the Week page, and a push, with Swap now and Keep if you opt in. Leave-now reminders go into your official schedule. |
 | At re:Invent | The laptop stays in the hotel room. Your phone gets the morning briefing, leave in 10 minutes and leave now, and a heads-up when a talk you want starts soon, with whether to queue. During the day the laptop checks your sessions every 20 seconds, so a no-show's seat can be booked while you stand in the walk-up line. |
 
 ## Safe swap
@@ -162,7 +162,7 @@ Since 13 October the watcher has run against the live API on the attendee's own 
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 1026 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 1033 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 

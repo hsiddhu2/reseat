@@ -5,7 +5,7 @@ that wants to know what happened subscribes a callback and gets typed events:
 
     sweep     every tick: counts of sessions, added, opened, moved, booked, proposed
     booked    a target sitting was reserved and read back
-    proposed  a better sitting overlaps a held lower-priority target: swap proposal
+    proposed  a sitting the rules put first overlaps a held lower-priority target: swap proposal
     swap      an auto swap ran, with its final state
     moved     a held session changed room, venue or time. re:Seat does not act
     removed   a held session left the catalog. re:Seat does not act

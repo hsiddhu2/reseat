@@ -307,6 +307,15 @@ def _fit_row(f: _Fit) -> str:
             f"{_band(s)}  {walk(f.walk_in, 'walk in')}, {out}\n  {clean(s.title, 160)}")
 
 
+def _band_scope(band: str) -> str:
+    """Which seat bands an answer lists, so a reader can tell a full gap from a filtered one."""
+    if not band.strip():
+        return "All seat bands, full ones included."
+    if band.strip().lower() == "open":
+        return "Open seat bands only."
+    return f"Seat band {clean(band, 20)} only."
+
+
 def open_slots(client: EventsClient, store: Store, event_id: str, rules: Rules, day: str,
                f: Filters | None = None) -> str:
     """Free gaps in one day, and the sessions that fit each gap with the walks in and out, in
@@ -331,7 +340,7 @@ def open_slots(client: EventsClient, store: Store, event_id: str, rules: Rules, 
     d = _day_bounds(date)[0].astimezone(VEGAS)
     head = (f"{_synced(store, event_id)} {d:%A} {d.day} {d:%b}, {DAY_START} to {DAY_END} PT. "
             f"Held that day: {sum(1 for b in busy if not b.meal)}. Meals: {sum(1 for b in busy if b.meal)}. "
-            "Sessions in each gap are in start-time order.")
+            f"{_band_scope(f.band)} Sessions in each gap are in start-time order.")
     gaps = _gaps(date, busy)
     if not gaps:
         return head + f"\nNo free gap of {MIN_GAP} minutes or more."
@@ -370,8 +379,10 @@ def _walk_problem(a: _Item, b: _Item, rules: Rules) -> str | None:
     allow = decisions.walk_allowance(walk, rules.arrive_confidence) if walk is not None else 0
     if a.window[1] + timedelta(minutes=allow) <= b.window[0] - door:
         return None
-    what = (f"the walk from {_code(a)} at {a.session.campus_venue} is about {walk} min (estimate), "
-            f"{allow} allowed" if walk is not None else f"{_code(a)} ends at {_clock(a.window[1])}")
+    end = f"{_code(a)} ends at {_clock(a.window[1])}"
+    what = (f"{end} at {a.session.campus_venue}, the walk is about {walk} min (estimate), {allow} allowed, "
+            f"so arrival is about {_clock(a.window[1] + timedelta(minutes=allow))}"
+            if walk is not None else f"{end}, the walk time is not known")
     return f"cannot be reached in time: {what}, and doors close at {_clock(b.window[0] - door)}"
 
 
@@ -387,7 +398,7 @@ def _problems(s: Session, w: tuple[datetime, datetime], items: list[_Item], held
     if s.is_reservable is False or s.band == SeatBand.WALK_UP:
         out.append("takes no reservations (walk-up only)")
     elif s.band is not None and not s.band.open:
-        out.append(f"full ({clean(s.seat_availability, 20)})")
+        out.append("full, no seat to reserve now")
     if s.base_code in held_bases:
         out.append("another sitting of this talk is held")
     if any(not i.held and i.session.base_code == s.base_code and i.session.session_id != s.session_id
