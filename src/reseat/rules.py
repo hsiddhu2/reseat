@@ -249,7 +249,8 @@ def parse(text: str, source: str = "rules") -> Rules:
     try:
         return Rules.model_validate(raw)
     except ValidationError as e:
-        msgs = [f"{'.'.join(str(p) for p in err['loc']) or 'rules'}: {err['msg']}" for err in e.errors()]
+        msgs = [(f"{'.'.join(str(p) for p in err['loc'])}: " if err["loc"] else "")
+                + err["msg"].removeprefix("Value error, ") for err in e.errors()]
         raise RulesError(f"{source} has problems:\n  " + "\n  ".join(msgs)) from None
 
 

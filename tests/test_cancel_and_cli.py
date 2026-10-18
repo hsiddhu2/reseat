@@ -385,3 +385,13 @@ def test_code_changed_under_the_same_id_pinned_target_books_and_reads_back(cli_e
     assert "S-SEC1" not in r.output
     entry = store.journal_entries(EV)[-1]
     assert entry["outcome"] == "success" and "readBack" in entry["response"]
+
+
+def test_rules_check_on_an_over_cap_file_reads_as_one_plain_problem(cli_env):
+    fake, _, home = cli_env
+    write_rules(home / "rules.yaml", "watch_cap: 2\ntargets:\n- code: A1\n- code: A2\n- code: A3\n")
+    r = runner.invoke(cli.app, ["rules", "check"])
+    assert r.exit_code == 2, r.output
+    assert "has problems:\n  3 targets, watch_cap is 2. Remove targets, or raise watch_cap" in r.output
+    assert "Value error" not in r.output and "rules: " not in r.output
+    assert sum(fake.counts.values()) == 0          # a bad file stops before any call

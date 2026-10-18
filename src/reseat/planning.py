@@ -18,7 +18,7 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -307,6 +307,16 @@ def _fit_row(f: _Fit) -> str:
             f"{_band(s)}  {walk(f.walk_in, 'walk in')}, {out}\n  {clean(s.title, 160)}")
 
 
+def _why_none(fits: list[_Fit], any_band: list[Session], g: tuple[datetime, datetime], busy: list[_Busy],
+              rules: Rules, f: Filters) -> str:
+    """Why a gap lists nothing: the time, or the seat band filter."""
+    if fits or not f.band.strip():
+        return ""
+    n = sum(1 for s in any_band if _fits(s, g, busy, rules))
+    return (f". {n} {'fits' if n == 1 else 'fit'} the time but not the seat band filter" if n
+            else ", whatever the seat band")
+
+
 def _band_scope(band: str) -> str:
     """Which seat bands an answer lists, so a reader can tell a full gap from a filtered one."""
     if not band.strip():
@@ -348,11 +358,14 @@ def open_slots(client: EventsClient, store: Store, event_id: str, rules: Rules, 
     candidates = sorted((s for s in store.all(event_id)
                          if s.session_time and s.session_time.date == date and f.keep(s)
                          and s.session_id not in reserved and s.base_code not in held_bases), key=_order)
+    any_band = [s for s in store.all(event_id) if s.session_time and s.session_time.date == date
+                and replace(f, band="").keep(s) and s.session_id not in reserved
+                and s.base_code not in held_bases] if f.band.strip() else []
     out = [head, DATA_NOTE]
     for g in gaps:
         fits = [x for x in (_fits(s, g, busy, rules) for s in candidates) if x]
         out.append(f"{_clock(g[0])} to {_clock(g[1])}, {_gap_label(g[0], busy, rules.home_venue)}: "
-                   f"{len(fits)} fit.")
+                   f"{len(fits)} fit{_why_none(fits, any_band, g, busy, rules, f)}.")
         out += [_fit_row(x) for x in fits[:PER_GAP]]
         if len(fits) > PER_GAP:
             out.append(f"  {len(fits) - PER_GAP} more in this gap. Narrow with type, text, topic or service.")
@@ -377,13 +390,18 @@ def _walk_problem(a: _Item, b: _Item, rules: Rules) -> str | None:
     door = timedelta(minutes=CUTOFF_MINUTES)
     walk = walk_minutes(a.session.campus_venue, b.session.campus_venue)
     allow = decisions.walk_allowance(walk, rules.arrive_confidence) if walk is not None else 0
-    if a.window[1] + timedelta(minutes=allow) <= b.window[0] - door:
+    doors, arrive = b.window[0] - door, a.window[1] + timedelta(minutes=allow)
+    if arrive <= doors:
         return None
-    end = f"{_code(a)} ends at {_clock(a.window[1])}"
-    what = (f"{end} at {a.session.campus_venue}, the walk is about {walk} min (estimate), {allow} allowed, "
-            f"so arrival is about {_clock(a.window[1] + timedelta(minutes=allow))}"
-            if walk is not None else f"{end}, the walk time is not known")
-    return f"cannot be reached in time: {what}, and doors close at {_clock(b.window[0] - door)}"
+    end = f"{'held ' if a.held else ''}{_code(a)} ends {_clock(a.window[1])}"
+    if walk is None:
+        return (f"cannot be reached in time: {end}, the walk time is not known, "
+                f"and doors close at {_clock(doors)}")
+    late = int((arrive - doors).total_seconds() // 60)
+    return (f"cannot be reached in time: {end} at {a.session.campus_venue}, the walk is about {walk} min "
+            f"(estimate) and {allow} min is allowed, enough to arrive in time "
+            f"{round(rules.arrive_confidence * 100)}% of the time, so arrival is about {_clock(arrive)}, "
+            f"{late} min after doors close at {_clock(doors)}")
 
 
 def _code(i: _Item | Session) -> str:

@@ -55,6 +55,10 @@ class Plan:
     draft: planning.Draft | None = None         # rules: the file to write, and the file it came from
 
 
+def _count(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 class Tools:
     def __init__(self, client: EventsClient, store: Store, rules: Rules, event_id: str,
                  clock: Callable[[], float] = time.time, rules_path: Path | None = None):
@@ -82,7 +86,8 @@ class Tools:
             return sid
         st = s.session_time
         when = f"{st.date} {st.time}" if st and st.date else "time not set"
-        return f"{s.abbreviation} {s.title} ({when}, {s.campus_venue or 'venue not set'})"
+        return (f"{planning.clean(s.abbreviation, 20)} {planning.clean(s.title, 160)} "
+                f"({when}, {planning.clean(s.campus_venue, 40) or 'venue not set'})")
 
     # ---- reads
 
@@ -90,10 +95,12 @@ class Tools:
         held = set(self.client.get_schedule(self.event_id).reserved)
         lines = []
         for i, t in enumerate(self.rules.targets, 1):
-            tree = [s for s, _ in self.router.tree(t)]
-            mine = [s for s in tree if s.session_id in held]
+            tree = self.router.tree(t)
+            mine = [s for s, _ in tree if s.session_id in held]
+            own, backup = sum(1 for _, b in tree if not b), sum(1 for _, b in tree if b)
             state = (f"held: {self._code(mine[0].session_id)}" if mine
-                     else f"not held, {len(tree)} sitting{'' if len(tree) == 1 else 's'} known")
+                     else f"not held, {_count(own, 'sitting')} known"
+                     + (f", plus {_count(backup, 'backup sitting')}" if backup else ""))
             lines.append(f"{i}. {self._target(t.label)}{' (auto swap)' if t.auto_swap else ''}: {state}")
         return "\n".join(lines) or "The rules file has no targets."
 
@@ -207,11 +214,15 @@ class Tools:
         trees = ({x.session_id for x, _ in self.router.tree(t)} for t in self.rules.targets)
         if not any(a.session_id in ids for ids in trees):
             return f"{a.abbreviation} is not a target in the rules file, so no sitting comes before it."
-        earlier = [s for s in self._preferred(a) if s.band and s.band.open and s.session_id not in held]
+        before = self._preferred(a)
+        earlier = [s for s in before if s.band and s.band.open and s.session_id not in held]
         if not earlier:
-            code, base = planning.clean(a.abbreviation, 20), planning.clean(a.base_code, 20)
-            return (f"No sitting of {base} that the rules list before {code} is open. "
-                    f"{code} comes first in the rules' order, or every sitting before it is full. "
+            code = planning.clean(a.abbreviation, 20)
+            if not before:
+                return (f"The rules list no sitting of this talk before {code}, so there is nothing to "
+                        "move to. Nothing was planned.")
+            names = ", ".join(planning.clean(s.abbreviation, 20) for s in before)
+            return (f"The rules list {names} before {code}, and none had an open seat at the last sync. "
                     "Nothing was planned.")
         swap, reasons = Swap(self.client, self.store, self.rules, self.event_id), []
         for b in earlier:

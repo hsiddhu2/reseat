@@ -193,7 +193,9 @@ def test_propose_swap_with_a_better_open_sitting_returns_a_plan_and_sends_nothin
 def test_propose_swap_without_a_better_open_sitting_gives_a_reason(swapper):
     fake, _, tools = swapper
     out = tools.propose_swap("SVS401-R1")          # A1 is full and A3 is later
-    assert out.startswith("No sitting of SVS401 that the rules list before") and not PLAN.search(out)
+    assert out == ("The rules list SVS401-R before SVS401-R1, and none had an open seat at the last sync. "
+                   "Nothing was planned.")
+    assert not PLAN.search(out)
     assert writes(fake) == 0
 
 
@@ -261,7 +263,9 @@ def test_propose_swap_on_an_exact_sitting_target_plans_nothing(swapper, clock):
     exact = M.Tools(tools.client, store, R.parse("targets:\n- session_id: A2\n  repeats: false\n"), EV,
                     clock=clock)
     out = exact.propose_swap("SVS401-R1")
-    assert out.startswith("No sitting of") and not PLAN.search(out) and writes(fake) == 0
+    assert out == ("The rules list no sitting of this talk before SVS401-R1, so there is nothing to move to. "
+                   "Nothing was planned.")
+    assert not PLAN.search(out) and writes(fake) == 0
 
 
 @pytest.mark.parametrize("op,status", [("GetSession", 503), ("GetSession", 404), ("GetSchedule", 401),

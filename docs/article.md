@@ -91,7 +91,7 @@ With over 2,000 sessions, picking still takes hours, and I wanted help with it w
 
 Every list comes back in start-time order. None of them grades a session or picks one for me. The AI never reserves or cancels anything. Booking stays a dry run and my yes, or the watcher acting on rules I approved.
 
-The walk check caught something the API does not. The session I booked in the round trip above starts at 12:30 at Caesars Forum. One of my own sessions ends at 12:30 at Caesars Palace. The API accepted the booking, because the times do not overlap. `check_plan` says: "cannot be reached in time: ... ends at 12:30 at Caesars Palace, the walk is about 12 min (estimate), 15 allowed, so arrival is about 12:45, and doors close at 12:19."
+The walk check caught something the API does not. The session I booked in the round trip above starts at 12:30 at Caesars Forum. One of my own sessions ends at 12:30 at Caesars Palace. The API accepted the booking, because the times do not overlap. `check_plan` says: "cannot be reached in time: held ... ends 12:30 at Caesars Palace, the walk is about 12 min (estimate) and 15 min is allowed, enough to arrive in time 80% of the time, so arrival is about 12:45, 26 min after doors close at 12:19."
 
 Every other change goes through the same two steps: a propose returns a plan id and sends nothing, and an approve carries that plan out once, within 10 minutes. `reseat mcp --demo` runs every tool on the fake with no sign-in, and `python demo/plan.py` shows the planning calls end to end.
 
@@ -146,7 +146,7 @@ The Activity page keeps what it saw and did. On 14 October the connection droppe
 
 ## How it was tested
 
-Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 1034 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
+Every write path runs against an in-process fake that produces each failure the API documents, from partial bulk results and `scheduleConflict` to 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in. A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the catalog I pulled on 1 October, with 30 percent of reserves full, a 429 every minute, a 503 and fifteen minutes of 409 under the real quotas, and checks that no quota is exceeded, no talk is held twice and every write is read back. The suite has 1044 tests, and CI runs them on Linux, macOS and Windows. The storm found two bugs: the watcher proposed swaps that could never run, and re-sent writes every minute into a 409. A third turned up before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. I fixed it in the client, so every write path inherits the fix.
 
 ## What is a heuristic
 

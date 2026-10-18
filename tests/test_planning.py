@@ -622,8 +622,8 @@ def test_codes_in_one_plan_are_checked_against_each_other(world):
     out = world[2].check_plan(["SEC401", "AIM310"])
     assert "clashes with held ARC301" in _block(out, "SEC401")
     aim = _block(out, "AIM310")
-    assert "cannot be reached in time: SEC401 ends at 10:30 at The Venetian, the walk is about" in aim
-    assert "so arrival is about 10:42, and doors close at 10:19" in _block(out, "AIM310")
+    assert "cannot be reached in time: SEC401 ends 10:30 at The Venetian, the walk is about" in aim
+    assert "so arrival is about 10:42, 23 min after doors close at 10:19" in aim
 
 
 async def test_check_plan_through_the_mcp_server(world):
@@ -642,7 +642,7 @@ def test_the_walk_in_starts_from_what_ends_last_not_what_starts_last(clock):
            _s("N", "AMZ202-R1", MON, "12:30", mins=120, room="Caesars Forum | Level 1 | Room 3")]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = P.check_plan(client, store, EV, r, ["IND415", "AMZ202-R1"])
-    assert "cannot be reached in time: TNC337 ends at 12:30 at Caesars Palace" in _block(out, "AMZ202-R1")
+    assert "cannot be reached in time: held TNC337 ends 12:30 at Caesars Palace" in _block(out, "AMZ202-R1")
 
 
 def test_the_watch_cap_counts_only_new_targets(clock):
@@ -770,7 +770,7 @@ def test_an_unknown_walk_in_still_needs_the_11_minutes(clock):
            _s("NV2", "NOV200", TUE, "10:11", room=None)]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     near = P.check_plan(client, store, EV, r, ["NOV100"])
-    assert ("cannot be reached in time: AAA101 ends at 10:00, the walk time is not known, "
+    assert ("cannot be reached in time: held AAA101 ends 10:00, the walk time is not known, "
             "and doors close at 09:54") in near
     assert _block(P.check_plan(client, store, EV, r, ["NOV200"]), "NOV200").strip().endswith("fits.")
 
@@ -1303,8 +1303,9 @@ def test_the_walk_problem_names_the_end_the_venue_and_the_arrival(clock):
            _s("N", "AMZ202-R1", MON, "12:30", mins=120, room="Caesars Forum | Level 1 | Room 3")]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = _block(P.check_plan(client, store, EV, r, ["AMZ202-R1"]), "AMZ202-R1")
-    assert "TNC337 ends at 12:30 at Caesars Palace, the walk is about" in out
-    assert "about 12 min (estimate), 15 allowed, so arrival is about 12:45, and doors close at 12:19" in out
+    assert "held TNC337 ends 12:30 at Caesars Palace, the walk is about 12 min (estimate)" in out
+    assert ("and 15 min is allowed, enough to arrive in time 80% of the time, so arrival is about 12:45, "
+            "26 min after doors close at 12:19") in out
     assert writes_sent(fake) == []
 
 
@@ -1338,7 +1339,8 @@ async def test_no_ranking_words_in_any_tool_description_or_swap_answer(world):
     for code in ("ARC301", "HHH100", "XYZ999"):
         texts[f"propose_swap {code}"] = tools.propose_swap(code)
     texts.update(_swap_answers(tools.clock))
-    assert "comes first in the rules' order" in texts["swap none earlier"]
+    assert texts["swap none earlier"].startswith("The rules list SVS401-R before SVS401-R1, and none had an "
+                                                 "open seat at the last sync")
     assert "Plan " in texts["swap plan"] and "Cancel SVS401-R1 " in texts["swap plan"]
     assert "reserve SVS401-R Title" in texts["swap plan"]
     assert texts["swap checks failed"].startswith("No swap planned. The checks failed")
@@ -1361,3 +1363,76 @@ def _swap_answers(clock):
     out["swap checks failed"] = tools.propose_swap("SVS401-R1")
     assert writes_sent(fake) == [], writes_sent(fake)
     return out
+
+
+# ---------------------------------------------------------------- retest polish, 18 October
+
+def test_list_targets_counts_backup_sittings_apart(clock):
+    cat = [_s("A", "NET334-R1", TUE, "16:00"), _s("B", "NET334-R", MON, "10:00")]
+    fake, client, store, r = _world(clock, cat, (), 'targets:\n- {session_id: "A", repeats: false, '
+                                    'backups: [NET334]}\n')
+    out = M.Tools(client, store, r, EV, clock=clock).list_targets()
+    assert "not held, 1 sitting known, plus 1 backup sitting" in out and writes_sent(fake) == []
+
+
+def test_list_targets_trims_catalog_title_spaces(clock):
+    cat = [_s("H", "TNC330", MON, "13:30", title="Monitor agents   ")]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets:\n- code: TNC330\n")
+    out = M.Tools(client, store, r, EV, clock=clock).list_targets()
+    assert "Monitor agents (" in out
+
+
+def test_open_slots_says_when_the_band_filter_hides_a_fit(world):
+    tools = world[2]
+    walk_up = tools.open_slots("Tuesday", band="walkUp")
+    assert "after ARC301 at The Venetian: 0 fit. 3 fit the time but not the seat band filter." in walk_up
+    assert "walks counted from The Venetian: 0 fit, whatever the seat band." in walk_up
+    any_band = tools.open_slots("Tuesday", band="")
+    assert "walks counted from The Venetian: 0 fit.\n" in any_band and "seat band filter" not in any_band
+
+
+def test_the_validator_label_is_not_shown():
+    from reseat.rules import RulesError, parse
+    with pytest.raises(RulesError) as e:
+        parse("targets:\n- code: A1\n- code: A2\n- code: A3\nwatch_cap: 2\n")
+    msg = str(e.value)
+    assert "Value error" not in msg and "rules: " not in msg and "3 targets, watch_cap is 2." in msg
+
+
+def test_the_walk_out_reads_in_full_and_names_no_held_prefix(world):
+    # The walk out starts from the code being checked, which is never held, so no "held " prefix.
+    out = _block(world[2].check_plan(["NET330"]), "NET330")
+    assert ("leaves no time for DOP302: NET330 ends 13:30 at Wynn, the walk is about 55 min (estimate) "
+            "and 65 min is allowed, enough to arrive in time 80% of the time, so arrival is about 14:35, "
+            "46 min after doors close at 13:49.") in out
+    assert "held NET330" not in out and writes_sent(world[0]) == []
+
+
+def test_the_walk_from_a_planned_code_has_no_held_prefix_and_a_held_one_does(world):
+    out = world[2].check_plan(["SEC401", "AIM310"])
+    aim = _block(out, "AIM310")
+    assert "cannot be reached in time: SEC401 ends 10:30" in aim and "held SEC401" not in out
+    assert ("leaves no time for AIM310: SEC401 ends 10:30 at The Venetian, the walk is about 10 min "
+            "(estimate) and 12 min is allowed, enough to arrive in time 80% of the time, "
+            "so arrival is about 10:42, 23 min after doors close at 10:19.") in _block(out, "SEC401")
+    assert writes_sent(world[0]) == []
+
+
+def test_an_unknown_walk_out_reads_in_full(clock):
+    cat = [_s("H", "AAA101", TUE, "11:00"), _s("NV", "NOV100", TUE, "09:55", room=None)]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = P.check_plan(client, store, EV, r, ["NOV100"])
+    assert out.endswith("leaves no time for AAA101: NOV100 ends 10:55, the walk time is not known, "
+                        "and doors close at 10:49.")
+    assert writes_sent(fake) == []
+
+
+@pytest.mark.parametrize("start,late", [("10:22", 1), ("10:15", 8)])
+def test_minutes_late_is_arrival_less_doors(clock, start, late):
+    # Same venue, 12 min allowed at 0.8. Held ends 10:00, arrival 10:12, doors close 11 min before start.
+    cat = [_s("H", "AAA101", TUE, "09:00"), _s("X", "EDG300", TUE, start)]
+    fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
+    out = _block(P.check_plan(client, store, EV, r, ["EDG300"]), "EDG300")
+    assert f"so arrival is about 10:12, {late} min after doors close at" in out
+    assert "cannot be reached in time: held AAA101 ends 10:00 at The Venetian" in out
+    assert writes_sent(fake) == []
