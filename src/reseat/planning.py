@@ -172,10 +172,11 @@ def _synced(store: Store, event_id: str) -> str:
     return f"Catalog synced {d:%a} {d.day} {d:%b} {d:%H:%M} PT."
 
 
-def _row(s: Session, store: Store, event_id: str, targets: set[str]) -> str:
+def _row(s: Session, store: Store, event_id: str, targets: set[str], talks: set[str]) -> str:
     sittings = store.by_base_code(event_id, s.base_code) if s.base_code else []
     others = len([x for x in sittings if x.session_id != s.session_id])
-    mark = " · already a target" if s.session_id in targets else ""
+    watched = s.session_id in targets or (s.base_code and s.base_code in talks)
+    mark = " · already a target" if watched else ""
     level = clean(s.level).split(" ")[0][:4] if s.level else ""      # "300 - Advanced" -> "300"
     head = (f"- {clean(s.abbreviation, 20) or 'no code'}  {when(s)}  {clean(s.type, 30) or 'type not set'}"
             f"{' ' + level if level else ''}  {_venue(s)}  {_band(s)}"
@@ -187,7 +188,7 @@ def _row(s: Session, store: Store, event_id: str, targets: set[str]) -> str:
 
 
 def search_sessions(store: Store, event_id: str, f: Filters, limit: int = DEFAULT_ROWS,
-                    targets: Iterable[str] = ()) -> str:
+                    targets: Iterable[str] = (), talks: Iterable[str] = ()) -> str:
     """Sessions in the local catalog that pass every filter, in start-time order. Sends nothing, so it
     does not know what is held. Targets in the rules file are marked. open_slots reads what is held."""
     bad = f.problem()
@@ -199,7 +200,7 @@ def search_sessions(store: Store, event_id: str, f: Filters, limit: int = DEFAUL
     head = f"{_synced(store, event_id)} {len(shown)} of {len(found)}, in start-time order."
     if not found:
         return head + " Nothing passed the filters."
-    rows = [_row(s, store, event_id, set(targets)) for s in shown]
+    rows = [_row(s, store, event_id, set(targets), set(talks)) for s in shown]
     left = len(found) - len(shown)
     more = f"\n{left} more. Narrow the search to see them." if left else ""
     return f"{head}\n{DATA_NOTE}\n" + "\n".join(rows) + more
@@ -506,8 +507,10 @@ def _check(store: Store, event_id: str, rules: Rules, codes: list[str], reserved
     for c in codes:
         lines += _check_one(c, *resolved[c], items, held_bases, reserved, store, event_id, rules)
     targets = {s.session_id for t in rules.targets for s in _target_sittings(store, event_id, t)}
+    talks = watched_talks(rules, store, event_id)
     new = {sittings[0].base_code or sittings[0].session_id for sittings, _ in resolved.values()
-           if sittings and not any(x.session_id in reserved or x.session_id in targets for x in sittings)}
+           if sittings and not any(x.session_id in reserved or x.session_id in targets
+                                   or (x.base_code and x.base_code in talks) for x in sittings)}
     lines += _caps(items, rules, len(new))        # one target per talk, as the rules file allows
     return "\n".join(lines)
 
@@ -647,7 +650,7 @@ def _additions(resolved: dict[str, tuple[list[Session], bool]], old: Rules, stor
     if unknown:
         return f"Not in the local catalog: {', '.join(unknown)}. Check the codes or run reseat sync."
     lines, codes, notes = [], [], []
-    talks = {_talk(t, store, event_id) for t in old.targets}
+    talks = watched_talks(old, store, event_id)
     for c, (sittings, _) in resolved.items():
         # A draft pins a sitting only for an -R code. A code without -R is the talk: any sitting, so the
         # watcher can still book a repeat AWS adds later.
@@ -662,6 +665,13 @@ def _additions(resolved: dict[str, tuple[list[Session], bool]], old: Rules, stor
         lines.append(line)
         codes.append(c)
     return lines, codes, notes
+
+
+def watched_talks(rules: Rules, store: Store, event_id: str) -> set[str]:
+    """The talks the rules already watch: each target's talk and each backup. search_sessions,
+    check_plan and draft_rules all use this, so they agree on what is already a target."""
+    talks = {_talk(t, store, event_id) for t in rules.targets} | {b for t in rules.targets for b in t.backups}
+    return {t for t in talks if t}
 
 
 def _talk(t: Target, store: Store, event_id: str) -> str | None:

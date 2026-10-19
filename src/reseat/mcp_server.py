@@ -139,7 +139,9 @@ class Tools:
                         limit: int = planning.DEFAULT_ROWS) -> str:
         f = planning.Filters(text, type, day, venue, band, level, topic, service)
         return _guarded(lambda: planning.search_sessions(self.store, self.event_id, f, limit,
-                                                         targets=self._target_ids()))
+                                                         targets=self._target_ids(),
+                                                         talks=planning.watched_talks(self.rules, self.store,
+                                                                                      self.event_id)))
 
     def open_slots(self, day: str, type: str = "", text: str = "", band: str = "open", level: str = "",
                    topic: str = "", service: str = "", venue: str = "") -> str:

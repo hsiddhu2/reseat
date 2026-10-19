@@ -1436,3 +1436,43 @@ def test_minutes_late_is_arrival_less_doors(clock, start, late):
     assert f"so arrival is about 10:12, {late} min after doors close at" in out
     assert "cannot be reached in time: held AAA101 ends 10:00 at The Venetian" in out
     assert writes_sent(fake) == []
+
+
+def test_watch_cap_does_not_count_a_backup_or_another_sitting_of_a_target(clock):
+    # Live retest, 18 October: NET334-R is the backup of target NET334-R1, so it is not a new target.
+    cat = [_s("A", "NET334-R1", TUE, "16:00"), _s("B", "NET334-R", "2026-12-03", "10:30"),
+           _s("C", "COP410-R1", TUE, "13:00"), _s("D", "COP410-R", "2026-12-04", "08:30"),
+           _s("E", "NEW100", "2026-12-04", "14:00")]
+    fake, client, store, r = _world(clock, cat, (), 'targets:\n- {session_id: "A", repeats: false, '
+                                    'backups: [NET334]}\n- {session_id: "C", repeats: false}\nwatch_cap: 2\n')
+    out = P.check_plan(client, store, EV, r, ["NET334-R", "COP410-R"])
+    assert "watch_cap" not in out and writes_sent(fake) == []
+    more = P.check_plan(client, store, EV, r, ["NEW100"])
+    assert "2 targets now plus 1 new would pass watch_cap 2." in more
+
+
+def test_watch_cap_does_not_count_another_sitting_of_a_code_target(clock):
+    # A code target covers every sitting of the talk, so a pinned sitting code of it is not new.
+    cat = [_s("A", "XYZ100-R", TUE, "16:00"), _s("B", "XYZ100-R1", "2026-12-03", "10:30")]
+    fake, client, store, r = _world(clock, cat, (), 'targets:\n- {code: XYZ100}\nwatch_cap: 1\n')
+    assert "watch_cap" not in P.check_plan(client, store, EV, r, ["XYZ100-R1"])
+    assert writes_sent(fake) == []
+
+
+def test_a_backup_is_already_a_target_in_check_search_and_draft(clock, tmp_path):
+    # check_plan, search_sessions and draft_rules must agree that a target's backup is already watched.
+    cat = [_s("A", "NET334-R1", TUE, "16:00"), _s("B", "NET334-R", "2026-12-03", "10:30"),
+           _s("C", "COP410", "2026-12-04", "08:30")]
+    text = 'targets:\n- {code: COP410, backups: [NET334]}\nwatch_cap: 1\n'
+    fake, client, store, r = _world(clock, cat, (), text)
+    path = tmp_path / "rules.yaml"
+    path.write_text(text)
+    path.chmod(0o600)
+    tools = M.Tools(client, store, r, EV, clock=clock, rules_path=path)
+    assert "watch_cap" not in P.check_plan(client, store, EV, r, ["NET334-R"])
+    found = tools.search_sessions(day="2026-12-03")
+    assert "NET334-R " in found and "already a target" in found
+    draft = P.draft_rules(client, store, EV, path, ["NET334-R"], [])
+    summary = draft if isinstance(draft, str) else draft.summary
+    assert "already a target" in summary and "added by draft_rules" not in getattr(draft, "text", "")
+    assert path.read_text() == text and writes_sent(fake) == []
