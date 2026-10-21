@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.table import Column, Table
 
-from . import auth, config, fixtures
+from . import auth, config, eventinfo, fixtures
 from . import cancel as cancel_engine
 from . import favorites as favorites_engine
 from . import guard as guard_engine
@@ -40,7 +40,7 @@ app.add_typer(favorites_app, name="favorites")
 con = Console(emoji=False)   # ":word:" in a session title must stay text
 
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 def _esc(v: object) -> str:
@@ -119,8 +119,17 @@ def logout():
 
 @app.command()
 def whoami(event: str = config.DEFAULT_EVENT):
-    """Check sign-in and registration for the event."""
+    """Check the event, sign-in and registration."""
     c = _client()
+    ev = eventinfo.fetch(c, event)
+    if ev.event:
+        con.print(_esc(ev.line()))
+    for n in ev.notes:
+        con.print(f"[dim]{_esc(n)}[/dim]")
+    for p in ev.problems:
+        con.print(f"[red]{_esc(p)}[/red]")
+    if not ev.ok:
+        raise typer.Exit(2)
     try:
         s = c.get_schedule(event)
     except NotRegistered:
@@ -155,6 +164,13 @@ def sync(event: str = config.DEFAULT_EVENT,
     """Pull the whole catalog into the local store and report what changed."""
     c, st = _client(), _store()
     t0 = time.time()
+    ev = eventinfo.fetch(c, event)
+    for n in ev.notes:
+        con.print(f"[dim]{_esc(n)}[/dim]")
+    for p in ev.problems:
+        con.print(f"[red]{_esc(p)}[/red]")
+    if not ev.ok:
+        raise typer.Exit(4)
     sessions = list(c.iter_sessions(event, include_abstracts=abstracts))
     try:
         res = st.apply_sweep(event, sessions, with_abstracts=abstracts, force=force)
@@ -481,17 +497,38 @@ def rules_check(event: str = config.DEFAULT_EVENT):
 
 @favorites_app.command("sync")
 def favorites_sync(event: str = config.DEFAULT_EVENT,
-                   dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be sent.")):
-    """Add every target sitting to favorites, so the official app shows the same plan."""
+                   dry_run: bool = typer.Option(False, "--dry-run", help="Print what would be sent."),
+                   prune: bool = typer.Option(True, "--prune/--no-prune",
+                                              help="Remove favorites re:Seat added for dropped targets.")):
+    """Add every target sitting to favorites, and remove the ones re:Seat added for dropped targets."""
     r, c, st = _rules(), _client(), _store()
-    res = favorites_engine.sync(c, st, event, r, dry_run=dry_run)
+    res = favorites_engine.sync(c, st, event, r, dry_run=dry_run, prune=prune)
     for o in res.outcomes:
         color = {"added": "green", "already": "dim", "not_sent": "dim"}.get(o.status, "yellow")
         label = "would add" if dry_run and o.status == "not_sent" else o.status
         con.print(f"  [{color}]{label}[/{color}] {_esc(_who(st, event, o.target, o.session_id))}"
                   f"{_esc(' ' + o.code if o.code else '')}")
-    con.print(f"{len(res.wanted)} sittings: {res.count('added')} added, {res.count('already')} already "
-              f"favorited, {res.count('failed')} failed, {res.count('unconfirmed')} unconfirmed.")
+    for o in res.removals:
+        color = {"removed": "cyan", "gone": "dim", "not_sent": "dim"}.get(o.status, "yellow")
+        label = {"not_sent": "would remove" if dry_run else "not sent", "gone": "already gone"}.get(
+            o.status, o.status)
+        con.print(f"  [{color}]{label}[/{color}] {_esc(_code(st, event, o.session_id))} ({o.target})")
+    n = len(res.wanted)
+    con.print(f"{n} sitting{'' if n == 1 else 's'}: {res.count('added')} added, "
+              f"{res.count('already')} already favorited, {res.count('failed')} failed, "
+              f"{res.count('unconfirmed')} unconfirmed.")
+    if res.removals:
+        verb = "to remove" if dry_run else "removed"
+        n = len(res.removals) if dry_run else res.removed("removed")
+        con.print(f"{n} favorite{'' if n == 1 else 's'} re:Seat added for dropped targets {verb}. "
+                  "Favorites you added are never removed.")
+    if res.prune_skipped:
+        con.print("[yellow]No favorite was removed, because a target is missing from the local "
+                  "catalog.[/yellow]")
+    if res.kept_held:
+        n = len(res.kept_held)
+        con.print(f"{n} favorite{'' if n == 1 else 's'} re:Seat added for dropped targets kept, because you "
+                  "hold a seat there.")
     for d in res.disagreements:
         con.print(f"[red]{_esc(d)}[/red]")
     for label in res.missing:

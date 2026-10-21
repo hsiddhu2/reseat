@@ -38,7 +38,8 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 ## What re:Seat does
 
 **Favorites** (built)
-- `reseat favorites sync` mirrors every target sitting, and each backup's sittings, into favorites, so the official app shows the same plan. Works before 8 October, when reservations are still closed.
+- `reseat favorites sync` mirrors every target sitting, and each backup's sittings, into favorites, so the official app shows the same plan. Works before 8 October, when reservations are still closed. When a target is dropped, the favorites re:Seat added for it are removed with DisassociateFavorite, one call each. Which favorites re:Seat added comes from its own journal: only sessions an AssociateFavorites result listed as successful. Only rows written by `favorites sync` count, and only while its own read-back listed the session. A favorite the attendee added, in the app or with `reseat favorite`, a batch whose answer was lost even if it landed, and any session the attendee holds a seat in are never removed. While any target is missing from the local catalog, nothing is removed. A 404 means the favorite is already gone, and it is recorded and never sent again. A removal the read-back still lists stays, and is not sent again. One case the journal cannot see: a favorite re:Seat added, removed by the attendee and then added again by hand, still counts as re:Seat's. `--no-prune` keeps them all. `--dry-run` shows both lists.
+- `reseat whoami` and `reseat sync` first read the event with GetEvent. Session times carry no time zone, so re:Seat checks that the event is in America/Los_Angeles and runs 30 November to 4 December 2026, the zone and days every leave time and day name is built on. Anything else is refused before the catalog is read. It uses the IANA zone, not the abbreviation, which the live API gives as PDT for this December event.
 - Skips sessions already favorited, sends 10 per call inside the quota, reports each failure, and reads back once at the end.
 
 **Book** (built)
@@ -115,7 +116,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Safe swap | built | State machine: proposed, checked, cancelled, reserved, verified, rolled back, failed. |
 | Cutoff guard | built | Leave-now blocks, queue-or-go advice, venue-switch warnings. |
 | Decisions | built | `decisions.py`: walk-up odds as a Beta-binomial with an 80 percent range, and the walking allowance as a lognormal quantile at `arrive_confidence`. Sources and formulas in [The models behind re:Seat](models.md). |
-| Favorites sync | built | Mirror target sittings into favorites, read back. |
+| Favorites sync | built | Mirror target sittings into favorites, remove the ones re:Seat added for dropped targets (never the attendee's own, never a held seat), read back once. |
 | Web app | built | Local HTTP server: Week, Day, Approve, Today, Activity, Targets and Status views, a change tracker (`changes.py`) that labels what changed on the week, approve by plan id, demo mode, on-site polling, optional push. |
 | Reminders | built | `reminders.py`: morning briefing, leave in 10 minutes, leave now, a wanted talk soon, a swap offer about to lapse, a walk you cannot make, an exact sitting full while another has seats. Each once, from the local store. |
 | Change tracker | built | `changes.py`: compares held and proposed sessions at each refresh and labels what changed on the week. The first look is a baseline. |
@@ -141,12 +142,19 @@ Every test runs against an in-process fake of the API that produces each documen
 
 ## API operations used
 
-| Operation | Used by |
-|---|---|
-| ListEvents, GetEvent | Setup and event dates. |
-| ListSessions | Full sync, band sweeps, new-session diffs. |
-| GetSession | Fresh check before any cancel or swap. |
-| GetSchedule | Read-back after every write. Source of truth. |
-| ReserveSessions, CancelReservation | Booking, fallback trees, cancel, swap. |
-| AssociateFavorites, DisassociateFavorite | Favorites sync and the `favorite` command. |
-| Create, Update, DeletePersonalTime | Leave-now blocks. |
+re:Seat uses all 12 operations in the spec. Each write is read back with GetSchedule.
+
+| Operation | Used by | The API rule it is used under |
+|---|---|---|
+| ListEvents | `reseat events` | No sign-in needed. |
+| GetEvent | `reseat whoami` and `reseat sync` check the event first | Session times carry no time zone, so the event's `timezone` is the only source. Another zone or other dates are refused. The IANA zone is used, never the abbreviation. |
+| ListSessions | Full sync, band sweeps, new-session diffs | Paged with `nextToken`. A walk short of `totalCount`, or an empty catalog, is refused. |
+| GetSession | Fresh check before any cancel or swap, on-site polling | Reads before writes. |
+| GetSchedule | Read-back after every write. Source of truth | 60 per minute. |
+| ReserveSessions | Booking, fallback trees, swap | Not idempotent. Per-session failures read from `failed`. Never re-sent. |
+| CancelReservation | Cancel, swap, the writes-open probe | Not idempotent. 400 or 404 on a session not held. |
+| AssociateFavorites | `favorites sync` adds every target sitting | Up to 10 per call, quota counts sessions. `alreadyFavorited` skipped. |
+| DisassociateFavorite | `favorites sync` removes favorites re:Seat added for dropped targets | One per call. A 404 means already gone and is never re-sent. Never a favorite the attendee added, never a held seat. |
+| CreatePersonalTime | Leave-now blocks | UTC, no offset, 5-minute steps. |
+| UpdatePersonalTime | Leave-now blocks when holds change | Only blocks carrying the re:Seat tag. |
+| DeletePersonalTime | Leave-now blocks no longer needed | The only idempotent write. |

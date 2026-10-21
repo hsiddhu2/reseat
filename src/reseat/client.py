@@ -226,7 +226,7 @@ class EventsClient:
         return _body(r, "ListEvents", lambda j: [Event.model_validate(e) for e in j["items"]])
 
     def get_event(self, event_id: str) -> Event:
-        r = self._request("GetEvent", "GET", f"/v1/events/{event_id}", auth=False)
+        r = self._request("GetEvent", "GET", f"/v1/events/{_seg(event_id)}", auth=False)
         return _body(r, "GetEvent", lambda j: Event.model_validate(j["event"]))
 
     def list_sessions_page(
@@ -240,7 +240,7 @@ class EventsClient:
             params["includeAbstracts"] = "false"
         if locale:
             params["locale"] = locale
-        r = self._request("ListSessions", "GET", f"/v1/events/{event_id}/sessions", params=params)
+        r = self._request("ListSessions", "GET", f"/v1/events/{_seg(event_id)}/sessions", params=params)
         return _body(r, "ListSessions", ListSessionsPage.model_validate)
 
     def iter_sessions(self, event_id: str, *, include_abstracts: bool = True,
@@ -266,7 +266,7 @@ class EventsClient:
         return _body(r, "GetSession", lambda j: Session.model_validate(j["session"]))
 
     def get_schedule(self, event_id: str) -> Schedule:
-        r = self._request("GetSchedule", "GET", f"/v1/events/{event_id}/schedule")
+        r = self._request("GetSchedule", "GET", f"/v1/events/{_seg(event_id)}/schedule")
         return _body(r, "GetSchedule", lambda j: Schedule.model_validate(j["schedule"]))
 
     # ------------------------------------------------------------------ writes
@@ -274,7 +274,7 @@ class EventsClient:
     def reserve(self, event_id: str, session_ids: list[str]) -> BulkResult:
         """One call, at most 10 sessions. Quota is spent per session."""
         ids = _check_batch(session_ids)
-        r = self._request("ReserveSessions", "POST", f"/v1/events/{event_id}/reservations",
+        r = self._request("ReserveSessions", "POST", f"/v1/events/{_seg(event_id)}/reservations",
                           units=len(ids), json={"sessionIds": ids})
         return _body(r, "ReserveSessions", lambda j: BulkResult.model_validate(j["result"]))
 
@@ -284,7 +284,7 @@ class EventsClient:
 
     def favorite(self, event_id: str, session_ids: list[str]) -> BulkResult:
         ids = _check_batch(session_ids)
-        r = self._request("AssociateFavorites", "POST", f"/v1/events/{event_id}/favorites",
+        r = self._request("AssociateFavorites", "POST", f"/v1/events/{_seg(event_id)}/favorites",
                           units=len(ids), json={"sessionIds": ids})
         return _body(r, "AssociateFavorites", lambda j: BulkResult.model_validate(j["result"]))
 
@@ -293,7 +293,7 @@ class EventsClient:
                       f"/v1/events/{_seg(event_id)}/favorites/{_seg(session_id)}")
 
     def create_personal_time(self, event_id: str, body: PersonalTimeInput) -> None:
-        self._request("CreatePersonalTime", "POST", f"/v1/events/{event_id}/personal-time",
+        self._request("CreatePersonalTime", "POST", f"/v1/events/{_seg(event_id)}/personal-time",
                       json=body.payload())
 
     def update_personal_time(self, event_id: str, pt_id: str, body: PersonalTimeInput) -> None:

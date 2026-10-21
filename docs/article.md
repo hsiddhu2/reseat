@@ -34,10 +34,11 @@ Seats free up after opening day, and AWS adds repeat sittings for popular sessio
 | **Swaps without losing a seat** | Moves you to the sitting you want more, only after checking there is a way back in. | GetSession fresh reads, CancelReservation, ReserveSessions, GetSchedule |
 | **Gets you there on time** | Writes leave-now blocks into your official schedule. Pushes a morning briefing, leave in 10 minutes, and leave now. | CreatePersonalTime, UpdatePersonalTime, DeletePersonalTime |
 | **Says queue or go** | For a talk you want but do not hold, the odds of a walk-up seat, with a range and its basis. | Band history from every sweep |
+| **Keeps the official app in step** | Every target sitting shows as a favorite. When you drop a target, the favorites re:Seat added for it are removed. Never one you added, never a seat you hold. | AssociateFavorites, DisassociateFavorite, GetSchedule read-back |
 | **Asks on your phone** | A swap proposal arrives as a notification with Swap now and Keep. | None. The phone never holds a token. |
 | **Plans with your own AI** | Four MCP tools let the AI app you already use search, find free slots, check a plan and draft your rules. | Local catalog, GetSchedule. The planning tools never reserve or cancel. |
 
-**By the numbers:** 11 MCP tools. 22 demo scenarios. 1,047 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
+**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,107 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
 
 ## It has to be right the first time
 
@@ -46,6 +47,7 @@ Reserve and cancel are not idempotent. A retried booking can hold a second seat,
 - **Never a blind retry.** After every reserve or cancel, re:Seat reads your schedule back with GetSchedule and journals the result. A timeout or a 5xx is settled by that read, never by sending the write again.
 - **Quota per operation, per minute.** Bulk calls count sessions, not requests. A tracker never sends a batch larger than the quota left. On a 429 it waits `Retry-After` once, then stops.
 - **Writes can be closed.** Until reserved seating opened to the API, every write returned 409. re:Seat handles that answer everywhere a write can happen, and probes for it only with a session you can never hold.
+- **Check the event before any time.** Session times carry no time zone. The only place the API states it is GetEvent's `timezone`, so `reseat whoami` and `reseat sync` read it first and refuse an event in another zone or on other dates. re:Seat uses the IANA zone, not the abbreviation: the live API labels this December event PDT, when Las Vegas is on PST.
 - **Personal time is UTC.** No offset, seconds `00`, a whole number of 5-minute steps. Sessions are Las Vegas time. One module does every conversion.
 - **The token stays home.** Sign-in is OAuth with PKCE through a loopback port, so it only works on your own machine. Tokens live in the OS keychain. The access token goes only to `api.awsevents.com`, and the client refuses any other host. The refresh token goes to the Builder ID sign-in service.
 
@@ -160,7 +162,7 @@ If you are attending re:Invent 2026, install it, point it at your schedule, and 
 - Code: [github.com/hsiddhu2/reseat](https://github.com/hsiddhu2/reseat)
 - Install: [pypi.org/project/reseat](https://pypi.org/project/reseat/)
 - Click-through demo: [hsiddhu2.github.io/reseat](https://hsiddhu2.github.io/reseat/)
-- How it works: [docs/architecture.md](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md)
+- How it works, and how each of the 12 API operations is used: [docs/architecture.md](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md#api-operations-used)
 - The models behind it, with sources: [docs/models.md](https://github.com/hsiddhu2/reseat/blob/main/docs/models.md)
 - API facts it relies on: [docs/api-facts.md](https://github.com/hsiddhu2/reseat/blob/main/docs/api-facts.md)
 - Every live record: [docs/proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof)

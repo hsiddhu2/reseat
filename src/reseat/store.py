@@ -393,6 +393,13 @@ class Store:
                          json.dumps(response, default=str), outcome))
         self.db.commit()
 
+    def journal_ops(self, event_id: str, ops: tuple[str, ...]) -> list[sqlite3.Row]:
+        """Every journal row for these operations, oldest first."""
+        marks = ",".join("?" * len(ops))
+        return self.db.execute(
+            f"SELECT * FROM journal WHERE event_id=? AND op IN ({marks}) ORDER BY rowid",
+            (event_id, *ops)).fetchall()
+
     def journal_entries(self, event_id: str, limit: int = 100) -> list[sqlite3.Row]:
         return self.db.execute(
             "SELECT * FROM journal WHERE event_id=? ORDER BY rowid DESC LIMIT ?",

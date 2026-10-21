@@ -9,6 +9,7 @@ error bodies and per-session bulk results. Faults can be scripted per session:
     fake.fail_next("ReserveSessions", 503)  -> one 5xx, nothing applied. times=3 for a storm
     fake.ghost.add("S1")                -> reserve or favorite says successful, GetSchedule omits S1
     fake.refuse["S1"] = "seatHeldByCrew" -> any failure code on reserve or favorite, known or not
+    fake.stuck.add("S1")                -> unfavorite S1 answers 204, GetSchedule still lists it
     fake.schedule.reserved.add("S9")    -> conflicts computed from session times
     FakeEventsApi.from_fixture("tests/fixtures/catalog-2026-10-01.json")  -> real shapes
     fake.storm(clock, full_rate=0.3, fail_503_at=40, closed=(t0, t1))  -> a fault storm, see storm()
@@ -60,6 +61,7 @@ class FakeEventsApi:
         self.no_access: set[str] = set()
         self.time_passed: set[str] = set()
         self.ghost: set[str] = set()   # reported successful, never stored
+        self.stuck: set[str] = set()   # unfavorite answers 204, the favorite stays
         self.refuse: dict[str, str] = {}  # session -> any failure code, known or not
         self._throttle: dict[str, int] = {}
         self._fail: dict[str, tuple[int, int]] = {}
@@ -246,7 +248,8 @@ class FakeEventsApi:
             sid = parts[4]
             if sid not in self.schedule.favorites:
                 return self._err(404, "Not favorited.")
-            self.schedule.favorites.discard(sid)
+            if sid not in self.stuck:
+                self.schedule.favorites.discard(sid)
             return httpx.Response(204)
         if op == "CreatePersonalTime":
             err = _validate_pt(body)

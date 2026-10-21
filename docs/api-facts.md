@@ -152,3 +152,11 @@ Source: https://docs.aws.amazon.com/events/latest/devguide/auth-signing-in.md an
 - "Treat a 401 as refresh once, then retry the request. If the retry also returns 401, the refresh token is no longer good."
 - Sign-out: revoke the refresh token, delete both tokens. Ending the Builder ID browser session needs a redirect chain a CLI cannot drive. Point the attendee to `https://profile.aws.amazon.com`.
 - Token handling: "Do not log tokens, put them in URLs, or store them where other code on the device can read them." Use the OS keychain.
+
+## Observed in the live API, 21 October 2026
+
+From `reseat whoami`, a read-only GetEvent with no sign-in. Observations, not spec guarantees.
+
+- GetEvent for `reinvent2026` answers `timezone` "America/Los_Angeles" and `timezoneAbbreviation` "PDT". The event runs 30 November to 4 December 2026, when Las Vegas is on PST, UTC-8. Its own `startDate` and `endDate` carry `-08:00`. re:Seat uses the IANA zone and ignores the abbreviation.
+- `eventType` is "AWS Global Summit" for re:Invent. re:Seat does not use it.
+- Session times carry no zone, `sessionTime.timezone` is never sent, so GetEvent's `timezone` is the only place the API states the zone of every session time. `whoami` and `sync` check it before anything else.
