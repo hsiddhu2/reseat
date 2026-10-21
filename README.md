@@ -143,7 +143,7 @@ The rest of the schedule was the same before and after. The commands and output 
 
 ### On the real catalog
 
-Since 13 October the watcher has run against the live API on the attendee's own schedule, on the attendee's laptop. On 14 October the attendee opened the web app on a phone over Tailscale. [The record](docs/proof/2026-10-14-tailscale.md). In these screenshots the session codes, titles and rooms of the attendee's sessions are covered. Times and everything re:Seat adds are not.
+Since 13 October the watcher has run against the live API on the attendee's own schedule, on the attendee's laptop. On 14 October the attendee opened the web app on a phone over Tailscale. [The record](docs/proof/2026-10-14-tailscale.md). From 12 to 20 October the watcher swept the catalog 3,826 times. A full session opened again 25 times on 19 sessions, at least once every day, and three of those seats were gone within 10 minutes. 36 sessions were added, 28 still listed, among them two sittings of one new talk. None was a talk the attendee asked for, so nothing was booked. [The record](docs/proof/2026-10-20-watcher-first-week.md). In these screenshots the session codes, titles and rooms of the attendee's sessions are covered. Times and everything re:Seat adds are not.
 
 ![The Week page on the live catalog: held sessions coloured by type, a leave time on each, wanted talks in a strip beside them, and the watcher's last sweep of 2,240 sessions in the top bar. Session codes, titles and rooms are covered](docs/screenshots/live-week.png)
 

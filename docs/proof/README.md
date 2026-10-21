@@ -30,6 +30,8 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
+| The planning tools on the real schedule, 17 and 20 October | [`2026-10-21-check-plan.md`](2026-10-21-check-plan.md) | done |
+| What the watcher saw in its first eight days, 12 to 20 October | [`2026-10-20-watcher-first-week.md`](2026-10-20-watcher-first-week.md) | done, to be updated to submission |
 | The web app on a phone over Tailscale, 14 October | [`2026-10-14-tailscale.md`](2026-10-14-tailscale.md) | done |
 | Seat bands after reserved seating opens | in [`2026-10-12-catalog-returned.md`](2026-10-12-catalog-returned.md) | done |
 | Booking the attendee's real targets with `reseat book` | none | not run: those seats were booked in the AWS portal after seating opened on 6 October |
