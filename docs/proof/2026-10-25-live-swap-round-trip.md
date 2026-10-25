@@ -11,7 +11,7 @@ The safe swap on the real API: cancel a held seat and reserve another at the sam
 - **INV510-R1**, Fri 4 Dec 09:00, Encore, chalk talk, held, open
 - **INV508-R1**, Fri 4 Dec 09:00, Encore, chalk talk, open
 
-The API has no swap. Reserving INV508-R1 while holding INV510-R1 is refused with `scheduleConflict`, so INV510-R1 must be cancelled first.
+The API has no swap. Its documentation says reserving a session that overlaps a held one fails with `scheduleConflict` ([API facts](../api-facts.md)), so INV510-R1 must be cancelled first. That refusal was not tried live here.
 
 ## Commands and output
 
