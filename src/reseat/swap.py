@@ -117,8 +117,9 @@ class Swap:
         return res
 
     def decline(self, res: SwapResult, why: object = None) -> None:
-        """The attendee said no after the checks. Journal it so the swap has an end state."""
-        self._go(res, "failed", why if why is not None else {"declined": True})
+        """The attendee said no after the checks. Journal it as declined, not failed: nothing went
+        wrong and nothing was sent, so the record must not read as a failure."""
+        self._go(res, "declined", why if why is not None else {"declined": True})
 
     def end_proposal(self, res: SwapResult, state: str, why: object) -> None:
         """A proposer stopped after the checks, with nothing sent: `planned` (a plan id waits for

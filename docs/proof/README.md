@@ -31,6 +31,7 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
+| A safe swap on the live API, there and back, 25 October | [`2026-10-25-live-swap-round-trip.md`](2026-10-25-live-swap-round-trip.md) | done |
 | Autopilot books two ranked targets on its own, read back and emailed, 25 October | [`2026-10-25-autopilot-first-booking.md`](2026-10-25-autopilot-first-booking.md) | done |
 | An email alert through the attendee's own SNS topic, 24 October | [`2026-10-24-email-alert.md`](2026-10-24-email-alert.md) | done |
 | Favorites sync adds a favorite, then removes it when its target is dropped, 24 October | [`2026-10-24-favorites-round-trip.md`](2026-10-24-favorites-round-trip.md) | done |

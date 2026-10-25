@@ -363,7 +363,7 @@ def test_the_cancel_is_journaled_before_and_after(env):
         < ops.index(("swap.cancelled", "state:cancelled"))
 
 
-def test_cli_swap_declined_is_journaled_as_failed(env, tmp_path, monkeypatch):
+def test_cli_swap_declined_is_journaled_as_declined_not_failed(env, tmp_path, monkeypatch):
     fake, client, store, _ = env
     monkeypatch.setattr(config, "RULES_PATH", tmp_path / "rules.yaml")
     monkeypatch.setattr(cli, "_client", lambda: client)
@@ -371,8 +371,31 @@ def test_cli_swap_declined_is_journaled_as_failed(env, tmp_path, monkeypatch):
     (tmp_path / "rules.yaml").write_text(RULES)
     r = CliRunner().invoke(cli.app, ["swap", "H1", "B1"], input="n\n")
     assert r.exit_code == 1 and cancels(fake) == 0
-    assert journal_ops(store)[-1] == ("swap.failed", "state:failed")
+    assert journal_ops(store)[-1] == ("swap.declined", "state:declined")    # nothing went wrong
     assert json.loads(store.journal_entries(EV, 1)[0]["response"]) == {"declined": True}
+
+
+def test_declined_swap_sends_no_write_and_reads_as_declined_on_activity(env):
+    from reseat import pages
+    from reseat import serve as S
+    from reseat.watcher import Watcher
+    fake, client, store, _ = env
+    rules = R.parse(RULES)
+    sw = Swap(client, store, rules, EV)
+    pre = sw.check("H1", "B1", approved=True)
+    assert not pre.reasons
+    sw.decline(pre)
+    assert cancels(fake) == 0 and fake.counts.get("ReserveSessions", 0) == 0
+    assert fake.schedule.reserved == {"H1"}                       # the held seat is untouched
+    app = S.App(Watcher(client, store, rules, EV), store, rules, EV, port=0)
+    app.refresh()
+    snap = app.snapshot()
+    [row] = [j for j in snap["view"]["log"] if j["op"] == "swap.declined"]
+    assert row["outcome"] == "declined" and row["what"] == "SEC201-R → ARC301"
+    assert not any(j["op"] == "swap.failed" for j in snap["view"]["log"])
+    html = pages.render_activity(snap)
+    assert '<span class="o o-declined">declined</span>' in html and "o-failed" not in html
+    assert not any("Swap" in c["text"] for c in snap["view"].get("changes", []))   # not a catalog change
 
 
 def test_garbled_favorites_body_is_an_api_error(env):
