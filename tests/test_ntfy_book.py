@@ -23,8 +23,9 @@ class StubWatcher:
 def app(book=False, approve=False, offers=(), proposals=()):
     """A bare App with only what handle_reply reads. approve() is stubbed to a booked result."""
     a = S.App.__new__(S.App)
-    a.rules = SimpleNamespace(ntfy_book=book, ntfy_approve=approve)
     a.watcher = StubWatcher(offers, proposals)
+    a.rules = SimpleNamespace(ntfy_book=book, ntfy_approve=approve)
+    a._ntfy_book, a._ntfy_approve = book, approve      # fixed at start, as App.__init__ does
     a.clock = lambda: 1_796_000_000.0
     a._lock = S.threading.Lock()
     a._replied = S.deque(maxlen=200)

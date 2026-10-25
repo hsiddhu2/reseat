@@ -721,6 +721,8 @@ def _print_watch_event(ev: WatchEvent, st: Store | None = None,
         why = "new session" if d.get("reason") == "added" else "seat opened on a favorite"
         con.print(f"  [cyan]offer[/cyan] {_esc(d.get('code') or d['session_id'])}: {why}. Book it on the "
                   "Approve page")
+    elif ev.kind == "rules":
+        con.print(f"  [cyan]{_esc(d['message'])}[/cyan]")
     elif ev.kind == "new_sessions":
         con.print(f"  [cyan]{_esc(d['message'])}[/cyan]")
     elif ev.kind == "moved":
@@ -748,12 +750,12 @@ def watch(event: str = config.DEFAULT_EVENT,
     """Watch the catalog and book targets as seats free or new sittings appear."""
     r, c, st = _rules(), _client(), _store()
     def auto_swap(p: Proposal, approved: bool) -> SwapResult:
-        res = Swap(c, st, r, event).run_plan(p, approved=approved)
+        res = Swap(c, st, w.rules, event).run_plan(p, approved=approved)   # the rulebook in use now
         _print_swap(res, st, event)
         return res
 
     try:
-        w = Watcher(c, st, r, event, interval=interval, swapper=auto_swap)
+        w = Watcher(c, st, r, event, interval=interval, swapper=auto_swap, rules_path=config.RULES_PATH)
         w.offering = False          # Book offers need reseat serve: its web app or push takes the tap
     except WatchError as e:
         con.print(f"[red]{_esc(e)}[/red]")
@@ -840,10 +842,10 @@ def serve(event: str = config.DEFAULT_EVENT,
             raise typer.Exit(2)
 
         def swapper(p: Proposal, approved: bool) -> SwapResult:
-            return Swap(c, st, r, event).run_plan(p, approved=approved)
+            return Swap(c, st, w.rules, event).run_plan(p, approved=approved)   # the rulebook in use now
 
         try:
-            w = Watcher(c, st, r, event, interval=interval, swapper=swapper)
+            w = Watcher(c, st, r, event, interval=interval, swapper=swapper, rules_path=config.RULES_PATH)
             a = serve_mod.App(w, st, r, event, host=host, port=port or serve_mod.DEFAULT_PORT)
             server = serve_mod.make_server(a)
         except (WatchError, serve_mod.ServeError, OSError) as e:

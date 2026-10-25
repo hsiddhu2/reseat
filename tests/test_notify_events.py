@@ -183,7 +183,7 @@ def test_a_held_session_removed_along_with_its_reservation_is_still_pushed(env):
 def test_a_session_the_attendee_cancelled_earlier_is_not_pushed_as_held_when_removed(env):
     fake, *_ = env
     fake.schedule.reserved.add("X1")
-    w, events = start(env, "targets:\n- code: SEC201\n")
+    w, events = start(env, "targets:\n- code: ARC301\n")     # not a target: the catch-up would rebook it
     fake.schedule.reserved.discard("X1")                    # cancelled in the official app
     w.tick()                                                # the read-back sees it go
     del fake.sessions["X1"]

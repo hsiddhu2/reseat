@@ -613,15 +613,55 @@ def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _target_line(sittings: list[Session], exact: bool) -> str | None:
-    s = sittings[0]
+def _target_line(sittings: list[Session], exact: bool, auto: bool = False) -> str | None:
+    s, swap = sittings[0], "true" if auto else "false"
     if exact:
         if not _SAFE.fullmatch(s.session_id) or not _SAFE.fullmatch(s.abbreviation or "x"):
             return None
-        return (f'{{session_id: "{s.session_id}", repeats: false, auto_swap: false}}'
+        return (f'{{session_id: "{s.session_id}", repeats: false, auto_swap: {swap}}}'
                 f"   # {s.abbreviation}, added by draft_rules")
     base = s.base_code or ""
-    return f'{{code: "{base}", auto_swap: false}}   # added by draft_rules' if _SAFE.fullmatch(base) else None
+    line = f'{{code: "{base}", auto_swap: {swap}}}   # added by draft_rules'
+    return line if _SAFE.fullmatch(base) else None
+
+
+_SWAP_OFF = re.compile(r"\bauto_swap:([ \t]*)(false|False|FALSE|no|No|NO|off|Off|OFF)\b")
+
+
+def _flip_line(lines: list[str], a: int, b: int) -> bool:
+    """Turn auto_swap on in one target, lines[a:b], changing nothing else. False when unsure."""
+    code = [(k, *lines[k].partition("#")) for k in range(a, b)]
+    hits = [(k, c, h, r) for k, c, h, r in code if _SWAP_OFF.search(c)]
+    if len(hits) == 1:
+        k, c, h, r = hits[0]
+        lines[k] = _SWAP_OFF.sub(r"auto_swap:\1true", c, count=1) + h + r
+        return True
+    if any("auto_swap" in c for _, c, _, _ in code):
+        return False
+    first = code[0][1].rstrip()
+    if first.endswith("}") and "{" in first:            # a flow mapping on one line
+        lines[a] = first[:-1].rstrip() + ", auto_swap: true}" + lines[a][len(first):]
+        return True
+    m = re.match(r"^([ \t]*-[ \t]+)[A-Za-z_]+:", lines[a])
+    if not m:
+        return False
+    last = max(k for k, c, _, _ in code if c.strip())
+    lines.insert(last + 1, " " * len(m.group(1)) + "auto_swap: true")
+    return True
+
+
+def _flip_auto_swap(text: str, flips: list[int]) -> str | None:
+    """The rules file text with auto_swap turned on for the targets at `flips` (0-based), and every
+    other line kept. None when a target's lines are not a shape re:Seat edits."""
+    lines = text.splitlines()
+    at = next((i for i, ln in enumerate(lines) if R._TARGETS_LINE.match(ln)), None)
+    if at is None:
+        return None
+    spans, _, _ = R._item_spans(lines, at)
+    for i in sorted(flips, reverse=True):               # from the bottom, so an insert moves no span above
+        if i >= len(spans) or not _flip_line(lines, *spans[i]):
+            return None
+    return "\n".join(lines) + "\n"
 
 
 def _matches(t: Target, code: str, store: Store, event_id: str) -> bool:
@@ -644,7 +684,7 @@ def _shown(t: Target, store: Store, event_id: str) -> str:
 
 
 def _additions(resolved: dict[str, tuple[list[Session], bool]], old: Rules, store: Store,
-               event_id: str) -> tuple[list[str], list[str], list[str]] | str:
+               event_id: str, auto: set[str]) -> tuple[list[str], list[str], list[str]] | str:
     """(lines to write, codes added, notes), or why nothing can be drafted."""
     unknown = [c for c, (sittings, _) in resolved.items() if not sittings]
     if unknown:
@@ -659,7 +699,7 @@ def _additions(resolved: dict[str, tuple[list[Session], bool]], old: Rules, stor
             notes.append(f"{c} is already a target, as {sittings[0].base_code}. Not added again.")
             continue
         talks.add(sittings[0].base_code)
-        line = _target_line(sittings, exact)
+        line = _target_line(sittings, exact, c in auto)
         if line is None:
             return f"{c} has a code re:Seat will not write into the rules file."
         lines.append(line)
@@ -704,10 +744,13 @@ def _removals(drops: list[str], old: Rules, store: Store, event_id: str,
     return sorted(set(idx)), notes
 
 
-def _same_but_targets(old: Rules, new: Rules, drop_idx: list[int], add_lines: list[str]) -> bool:
+def _same_but_targets(old: Rules, new: Rules, drop_idx: list[int], add_lines: list[str],
+                      flips: list[int] | None = None) -> bool:
     """The edit changed only the targets list, and exactly as intended: every kept target is the same
-    in every field (auto_swap, backups, sittings), in the same order, and then the added ones."""
-    kept = [t for i, t in enumerate(old.targets) if i not in drop_idx]
+    in every field (auto_swap, backups, sittings), in the same order, and then the added ones. The one
+    change allowed to a kept target is auto_swap turned on, and only for the targets at `flips`."""
+    kept = [t.model_copy(update={"auto_swap": True}) if i in (flips or []) else t
+            for i, t in enumerate(old.targets) if i not in drop_idx]
     added = R.parse("targets:\n" + "".join(f"  - {a}\n" for a in add_lines)).targets if add_lines else []
     return (new.model_dump(exclude={"targets"}) == old.model_dump(exclude={"targets"})
             and new.targets == kept + added)
@@ -728,19 +771,58 @@ def _target_order(new: Rules, kept: int, store: Store, event_id: str, reserved: 
     return out
 
 
+AUTOPILOT_NOTE = ("re:Seat cancels a lower-ranked seat it holds for them only after a fresh read shows "
+                  "the new seat open and a way back to the old one. Everything else asks first.")
+
+
+def _autopilot_flips(pilots: list[str], new_codes: list[str], old: Rules, store: Store,
+                     event_id: str) -> tuple[list[int], list[str]] | str:
+    """(existing target positions to turn auto_swap on, notes), or why nothing can be drafted. Auto
+    mode is opt-in per target: a code is accepted only if this draft adds it or it is already a target."""
+    flips, notes, stray = [], [], []
+    for c in pilots:
+        if c in new_codes:
+            continue
+        hit = [i for i, t in enumerate(old.targets) if _matches(t, c, store, event_id)]
+        if not hit:
+            stray.append(c)
+        for i in hit:
+            if old.targets[i].auto_swap:
+                notes.append(f"{c} already swaps on its own. Not changed.")
+            elif i not in flips:
+                flips.append(i)
+    if stray:
+        return (f"{', '.join(stray)} is in autopilot but is neither added by this draft nor a target. "
+                "Autopilot is only for a target.")
+    return flips, notes
+
+
+def _name(t: Target, store: Store, event_id: str) -> str:
+    """A target's code for the attendee. Never a session id."""
+    if t.code:
+        return t.code
+    s = store.get(event_id, t.session_id or "")
+    return clean(s.abbreviation, 20) if s and s.abbreviation else "a session not in the local catalog"
+
+
 def draft_rules(client: EventsClient, store: Store, event_id: str, path: Path, add: list[str],
-                remove: list[str]) -> Draft | str:
+                remove: list[str], autopilot: list[str] | None = None) -> Draft | str:
     """A new rules file with `add` appended to the targets in the order given and `remove` dropped.
     Nothing is written. Reads the rules file and GetSchedule once. Removing a target only stops
-    re:Seat watching it: no seat is ever cancelled. Every other line of the file is kept."""
-    adds, drops = _codes(add), _codes(remove)
-    if isinstance(adds, str) or isinstance(drops, str):
-        return f"{adds if isinstance(adds, str) else drops} Nothing drafted."
-    if not adds and not drops:
+    re:Seat watching it: no seat is ever cancelled. Every other line of the file is kept. Ask-first is
+    the default for any cancel: only a code in `autopilot`, added here or already a target, gets
+    auto_swap on."""
+    adds, drops, pilots = _codes(add), _codes(remove), _codes(autopilot or [])
+    if isinstance(adds, str) or isinstance(drops, str) or isinstance(pilots, str):
+        return f"{next(x for x in (adds, drops, pilots) if isinstance(x, str))} Nothing drafted."
+    if not adds and not drops and not pilots:
         return "No codes to add or remove. Nothing drafted."
     both = sorted(set(adds) & set(drops))
     if both:
         return f"{', '.join(both)} is both to add and to remove. Nothing drafted."
+    both = sorted(set(pilots) & set(drops))
+    if both:
+        return f"{', '.join(both)} is both in autopilot and to remove. Nothing drafted."
     try:
         R.refuse_symlink(path)              # Windows has no O_NOFOLLOW
         text = R.read_nofollow(path)
@@ -751,25 +833,35 @@ def draft_rules(client: EventsClient, store: Store, event_id: str, path: Path, a
         reserved = client.get_schedule(event_id).reserved
     except ApiError as e:
         return f"Could not read your schedule: {clean(e, 160)}. Nothing drafted."
-    got = _additions({c: _resolve(store, event_id, c) for c in adds}, old, store, event_id)
+    got = _additions({c: _resolve(store, event_id, c) for c in adds}, old, store, event_id, set(pilots))
     if isinstance(got, str):
         return got + " Nothing drafted."
     new_lines, new_codes, notes = got
+    flipped = _autopilot_flips(pilots, new_codes, old, store, event_id)
+    if isinstance(flipped, str):
+        return flipped + " Nothing drafted."
+    flips, flip_notes = flipped
     drop_idx, drop_notes = _removals(drops, old, store, event_id, reserved)
-    notes += drop_notes
-    if not new_lines and not drop_idx:
+    notes += flip_notes + drop_notes
+    if not new_lines and not drop_idx and not flips:
         return "\n".join(notes + ["Nothing changes. Nothing drafted."])
+    flipped_text = _flip_auto_swap(text, flips) if flips else text
+    if flipped_text is None:
+        return "re:Seat could not edit the rules file safely. Nothing drafted."
     try:
-        new_text = R.edit_targets(text, new_lines, drop_idx)
+        new_text = R.edit_targets(flipped_text, new_lines, drop_idx)
         new = R.parse(new_text, "the drafted rules file")
     except R.RulesError as e:
         return f"{_plain(e, path)} Nothing drafted."
     kept = [t.label for i, t in enumerate(old.targets) if i not in drop_idx]
-    if not _same_but_targets(old, new, drop_idx, new_lines):
+    if not _same_but_targets(old, new, drop_idx, new_lines, flips):
         return "re:Seat could not edit the rules file safely. Nothing drafted."
     lines = [f"Draft, not written. The rules file would list {len(new.targets)} targets. re:Seat tries "
              "targets in this order: an earlier target wins a clashing time slot and the daily cap.",
              *_target_order(new, len(kept), store, event_id, reserved), *notes]
+    auto = [_name(t, store, event_id) for t in new.targets if t.auto_swap]
+    if auto:
+        lines.append(f"These targets may swap on their own: {', '.join(auto)}. {AUTOPILOT_NOTE}")
     if new_codes:
         lines += ["Facts about what is added:", _check(store, event_id, new, new_codes, reserved)]
     return Draft(new_text, _sha(text), "\n".join(lines))

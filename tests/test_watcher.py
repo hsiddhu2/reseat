@@ -53,12 +53,23 @@ def kinds(events):
     return [e.kind for e in events]
 
 
-def test_first_sweep_is_a_baseline_and_books_nothing(env):
+def test_first_sweep_books_a_target_already_open_once(env):
+    """Autopilot: a target open at start is booked on the first sweep, not left until it changes."""
     fake, *_ = env
     fake.set_band("A1", "available")
     w, events = watcher(env, "targets:\n- code: ARC301\n")
-    assert fake.counts.get("ReserveSessions", 0) == 0
-    assert kinds(events) == ["sweep"] and events[0].data["count"] == 4
+    assert fake.counts.get("ReserveSessions", 0) == 0                  # the first load is a baseline
+    w.tick()                                                         # the first normal sweep
+    assert fake.counts.get("ReserveSessions", 0) == 1 and "A1" in fake.schedule.reserved
+    assert kinds(events)[-2:] == ["booked", "sweep"]
+    w.tick()
+    assert fake.counts["ReserveSessions"] == 1                       # once: the catch-up does not repeat
+
+
+def test_first_sweep_books_nothing_when_no_target_is_open(env):
+    fake, *_ = env
+    w, events = watcher(env, "targets:\n- code: ARC301\n")
+    assert fake.counts.get("ReserveSessions", 0) == 0 and kinds(events) == ["sweep"]
 
 
 def test_opened_target_gets_booked(env):

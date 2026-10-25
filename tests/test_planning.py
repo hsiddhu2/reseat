@@ -1476,3 +1476,80 @@ def test_a_backup_is_already_a_target_in_check_search_and_draft(clock, tmp_path)
     summary = draft if isinstance(draft, str) else draft.summary
     assert "already a target" in summary and "added by draft_rules" not in getattr(draft, "text", "")
     assert path.read_text() == text and writes_sent(fake) == []
+
+
+# ---------------------------------------------------------------- draft_rules: autopilot, opt-in per target
+
+AUTO_SAYS = ("re:Seat cancels a lower-ranked seat it holds for them only after a fresh read shows the "
+             "new seat open and a way back to the old one. Everything else asks first.")
+
+
+def test_autopilot_on_a_new_target_drafts_auto_swap_true_and_names_it(drafting):
+    fake, tools, path = drafting
+    out = tools.draft_rules(["AIM310", "AIM311-R"], autopilot=["AIM310"])
+    assert f"These targets may swap on their own: AIM310. {AUTO_SAYS}" in out
+    assert path.read_text() == RULES_FILE and writes_sent(fake) == []
+    done = tools.approve_changes(_pid(out))
+    assert "written with 4 targets" in done and writes_sent(fake) == []
+    lines = ('  - {code: "AIM310", auto_swap: true}   # added by draft_rules\n'
+             '  - {session_id: "FIT2", repeats: false, auto_swap: false}'
+             '   # AIM311-R, added by draft_rules\n')
+    assert path.read_text().replace(lines, "") == RULES_FILE
+    assert [t.auto_swap for t in tools.rules.targets] == [False, False, True, False]
+
+
+def test_autopilot_flips_only_auto_swap_on_existing_targets(drafting):
+    fake, tools, path = drafting
+    out = tools.draft_rules([], autopilot=["ARC301", "CMP320"])
+    assert "These targets may swap on their own: ARC301, CMP320." in out and AUTO_SAYS in out
+    assert "HELD1" not in out
+    tools.approve_changes(_pid(out))
+    held = '{session_id: "HELD1", repeats: false'
+    want = (RULES_FILE.replace(held + "}", held + ", auto_swap: true}")
+            .replace("    prefer: latest\n", "    prefer: latest\n    auto_swap: true\n"))
+    assert path.read_text() == want and writes_sent(fake) == []
+    old = R.parse(RULES_FILE).targets
+    assert tools.rules.targets == [t.model_copy(update={"auto_swap": True}) for t in old]
+
+
+def test_autopilot_flips_an_existing_false_value_in_place(drafting):
+    fake, tools, path = drafting
+    text = RULES_FILE.replace("    prefer: latest\n", "    auto_swap: false   # ask me\n    prefer: latest\n")
+    path.write_text(text)
+    tools.approve_changes(_pid(tools.draft_rules(["CMP320"], autopilot=["CMP320"])))
+    assert path.read_text() == text.replace("auto_swap: false   # ask me", "auto_swap: true   # ask me")
+
+
+def test_autopilot_for_a_code_not_added_and_not_a_target_is_refused(drafting):
+    fake, tools, path = drafting
+    out = tools.draft_rules(["AIM310"], autopilot=["AIM310", "STG201"])
+    assert "STG201 is in autopilot but is neither added by this draft nor a target" in out
+    assert out.endswith("Nothing drafted.") and "Plan " not in out and path.read_text() == RULES_FILE
+    assert "in autopilot and to remove" in tools.draft_rules([], ["CMP320"], ["CMP320"])
+    assert "at most 25" in tools.draft_rules(["AIM310"], autopilot=[f"X{i:03d}" for i in range(26)])
+
+
+def test_autopilot_on_a_target_already_swapping_changes_nothing(drafting):
+    fake, tools, path = drafting
+    path.write_text(RULES_FILE.replace("    prefer: latest\n", "    prefer: latest\n    auto_swap: true\n"))
+    out = tools.draft_rules([], autopilot=["CMP320"])
+    assert "CMP320 already swaps on its own" in out and "Nothing changes" in out and "Plan " not in out
+
+
+def test_the_verifier_refuses_a_forged_auto_swap_change_on_another_line(drafting, monkeypatch):
+    fake, tools, path = drafting
+    real = P._flip_auto_swap
+    monkeypatch.setattr(P, "_flip_auto_swap", lambda text, flips: real(text, [0, 1]))
+    out = tools.draft_rules([], autopilot=["CMP320"])
+    assert "could not edit the rules file safely" in out and "Plan " not in out
+    monkeypatch.setattr(P, "_flip_auto_swap", real)
+    forged = R.edit_targets
+    monkeypatch.setattr(R, "edit_targets", lambda t, a, d: forged(t, a, d).replace(
+        '"HELD1", repeats: false}', '"HELD1", repeats: false, auto_swap: true}'))
+    out = tools.draft_rules(["AIM310"], autopilot=["AIM310"])
+    assert "could not edit the rules file safely" in out and path.read_text() == RULES_FILE
+
+
+def test_without_autopilot_the_answer_names_no_target_as_swapping(drafting):
+    out = drafting[1].draft_rules(["AIM310"])
+    assert "swap on their own" not in out

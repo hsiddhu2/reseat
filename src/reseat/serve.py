@@ -103,7 +103,11 @@ class App:
         if host not in LOOPBACK and not rules.serve_secret:
             raise ServeError(f"Refusing to listen on {host} without serve_secret in the rules file. "
                              "Loopback (127.0.0.1) needs none.")
-        self.watcher, self.store, self.rules, self.event_id = watcher, store, rules, event_id
+        self.watcher, self.store, self.event_id = watcher, store, event_id
+        self.watcher.rules = rules
+        # Buttons that act through ntfy are fixed at start: a rulebook reload never turns them on.
+        self._ntfy_approve, self._ntfy_book = rules.ntfy_approve, rules.ntfy_book
+        self.push_on = bool(rules.ntfy_topic)       # the pusher is built once, from the start-up rules
         self.host, self.port, self.clock, self.demo = host, port, clock, demo
         self.cookie = cookie       # browsers share cookies across ports, so the demo uses its own name
         # Demo mode only: the control panel's scenarios, (key, label, what you should see), and a runner.
@@ -130,6 +134,15 @@ class App:
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         self._ntfy_books: list[str] = []                    # Las Vegas day of each Book tap that ran
         watcher.subscribe(self._on_event)
+
+    @property
+    def rules(self) -> Rules:
+        """The rulebook the watcher uses now. It is re-read when the file changes on disk."""
+        return self.watcher.rules
+
+    @rules.setter
+    def rules(self, value: Rules) -> None:
+        self.watcher.rules = value
 
     # ---- access
 
@@ -234,9 +247,9 @@ class App:
             self.update_blocks(plan_id, wait=False)   # push says how it went; Swap now taps never queue
             return None
         booking = any(o.plan_id == plan_id for o in self.watcher.pending_offers())
-        if booking and not self.rules.ntfy_book:
+        if booking and not self._ntfy_book:
             return None                  # Book buttons are not switched on: a forged tap does nothing
-        if not booking and self.rules.ntfy_book and not self.rules.ntfy_approve:
+        if not booking and self._ntfy_book and not self._ntfy_approve:
             return None                  # only Book buttons are on: a forged swap tap does nothing
         if not self.watcher.is_pending(plan_id):
             return None                  # unknown, used or expired: no push, no work for the watcher
@@ -505,7 +518,7 @@ def page(app: App, path: str, query: str = "") -> bytes:
         return pages.render_starting(app.clock(), app.demo, snap.get("view_error")).encode()
     snap["now"] = app.clock()        # the countdowns start from the laptop's clock now, not the snapshot's
     if path == "/approve":
-        return pages.render_approve(snap, app.demo, push=bool(app.rules.ntfy_topic)).encode()
+        return pages.render_approve(snap, app.demo, push=app.push_on).encode()
     if path == "/today":
         return pages.render_today(snap, app.demo).encode()
     if path == "/activity":

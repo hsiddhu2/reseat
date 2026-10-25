@@ -97,7 +97,7 @@ async def test_server_exposes_eleven_tools_and_none_takes_a_session_list(tools, 
     assert sorted(t.name for t in listed) == sorted(
         ["list_targets", "propose_changes", "propose_swap", "approve_changes", "explain_drift", "guard_sync",
          "queue_or_go", "search_sessions", "open_slots", "check_plan", "draft_rules"])
-    lists = {"check_plan": {"codes"}, "draft_rules": {"add", "remove"}}
+    lists = {"check_plan": {"codes"}, "draft_rules": {"add", "remove", "autopilot"}}
     for t in listed:
         props = (t.input_schema or {}).get("properties", {})
         assert not any("session" in k.lower() for k in props), (t.name, props)

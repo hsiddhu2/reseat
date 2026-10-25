@@ -26,7 +26,7 @@ from . import push
 from .watcher import WatchEvent
 
 KINDS = ("offer", "new_sessions", "booked", "not_booked", "unconfirmed", "proposed", "swap", "removed",
-         "moved", "signin", "offline")
+         "moved", "signin", "offline", "rules")
 SUBJECT_MAX = 100          # SNS rejects a longer email subject
 
 

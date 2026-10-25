@@ -95,6 +95,7 @@ def run_flow(seed):
         return Swap(client, store, rules, EV).run_plan(p, approved=ok)
 
     w = Watcher(client, store, rules, EV, clock=clock, sleep=clock.sleep, swapper=swapper)
+    w._catch_up = False          # the storm measures openings. The catch-up pass has tests of its own
     w.subscribe(events.append)
     tree_ids = sorted({s.session_id for t in rules.targets for s, _ in router.tree(t)})
     for minute in range(60):

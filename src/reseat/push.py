@@ -52,6 +52,8 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
         return (f"{what}: {d.get('code') or ''}".strip(),
                 f"{code_title(d['session_id'])}, {band}. Book it from the web app. re:Seat checks the seat "
                 "and your day first.")
+    if ev.kind == "rules":
+        return "Rules changed", d["message"]
     if ev.kind == "new_sessions":
         return f"{d['count']} new sessions", f"{d['message']} Open the Activity page to see them."
     if ev.kind == "proposed":
@@ -130,7 +132,7 @@ PAGE = {"proposed": "/approve", "expiring": "/approve", "offer": "/approve", "ne
 CATEGORY = {
     "proposed": "swaps", "expiring": "swaps", "swap": "swaps",
     "booked": "bookings", "not_booked": "bookings", "unconfirmed": "bookings", "other_sitting": "bookings",
-    "catalog": "bookings", "offer": "bookings", "new_sessions": "bookings",
+    "catalog": "bookings", "offer": "bookings", "new_sessions": "bookings", "rules": "health",
     "moved": "schedule", "removed": "schedule", "tight": "schedule", "blocks": "schedule",
     "blocks_done": "schedule",
     "briefing": "on_site", "leave_soon": "on_site", "leave": "on_site", "wanted_soon": "on_site",

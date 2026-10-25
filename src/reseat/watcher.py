@@ -51,6 +51,7 @@ API rules this module exists to respect:
 from __future__ import annotations
 
 import json
+import os
 import queue
 import secrets
 import threading
@@ -59,6 +60,7 @@ from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -70,7 +72,8 @@ from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
 from .models import PersonalTime
 from .router import FULL_SKIP, Router, run_booking
-from .rules import Rules, unresolved
+from .rules import Rules, RulesError, exposure_warning, unresolved
+from .rules import load as load_rules
 from .store import Store, SweepRefused
 
 MIN_INTERVAL = 30
@@ -96,8 +99,22 @@ EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
                     "outage", "offline", "back", "signin", "leave", "writes",
                     "catalog", "removed", "unconfirmed", "not_booked",
                     "briefing", "leave_soon", "wanted_soon", "expiring", "tight", "other_sitting",
-                    "blocks", "blocks_done", "offer", "new_sessions"]
+                    "blocks", "blocks_done", "offer", "new_sessions", "rules"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
+
+
+def _unsafe_file(path: Path) -> str | None:
+    """Why a rules file may not be trusted for a reload, or None. It decides what is booked and
+    cancelled, so a link, another owner, or write access for others is refused."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return "it cannot be read"
+    if path.is_symlink():
+        return "it is a symbolic link"
+    if os.name == "posix" and (st.st_uid != os.getuid() or st.st_mode & 0o022):
+        return "other users can change it or it belongs to another user"
+    return None
 
 
 @dataclass
@@ -150,7 +167,8 @@ Swapper = Callable[[Proposal, bool], Any]   # (proposal, approved) -> result wit
 class Watcher:
     def __init__(self, client: EventsClient, store: Store, rules: Rules, event_id: str,
                  interval: int = DEFAULT_INTERVAL, clock: Callable[[], float] = time.time,
-                 sleep: Callable[[float], None] | None = None, swapper: Swapper | None = None):
+                 sleep: Callable[[float], None] | None = None, swapper: Swapper | None = None,
+                 rules_path: Path | None = None):
         if interval < MIN_INTERVAL:
             raise WatchError(f"Interval {interval}s is under the {MIN_INTERVAL}s floor. A full sweep "
                              "is about 9 ListSessions calls.")
@@ -168,6 +186,10 @@ class Watcher:
         self.proposals: dict[str, Proposal] = {}
         self.offers: dict[str, offers.Offer] = {}    # Book taps waiting, by plan id
         self.offering = True       # off under `reseat watch`: no web app or button can take the tap
+        self.rules_path = rules_path                 # the rulebook, re-read when it changes on disk
+        self._rules_stamp = self._stamp()
+        self._catch_up = True      # book targets already open: at start and after the rulebook changes
+        self._quiet: set[str] = set()                # catch-up sittings: no "not booked" push for them
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
         self._cap_warned: str | None = None
@@ -256,6 +278,9 @@ class Watcher:
             return self._book(p)
         if p is None or self.swapper is None:
             return None
+        prio = self._priorities()
+        if p.held_id not in prio or p.wanted_id not in prio:
+            return None                 # made under rules that no longer cover these seats: never run it
         if self.read_only:
             self._keep(p)
             raise ApprovalFailed("Sign in needed on the laptop. Nothing was sent. The proposal is kept.")
@@ -475,7 +500,66 @@ class Watcher:
         res.error = f"{res.error}; {message}" if res.error else message
         self._emit("error", message=message)
 
+    def _stamp(self) -> tuple[int, int, int] | None:
+        try:
+            st = self.rules_path.stat() if self.rules_path else None
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino) if st else None
+
+    def _reload_rules(self) -> None:
+        """The rulebook is the attendee's instructions. When it changes on disk, through draft_rules or
+        an edit, use it from the next sweep. A file that does not load is refused and the old rules
+        stay, so a half-saved edit never stops the watcher or books against it."""
+        stamp = self._stamp()
+        if stamp is None or stamp == self._rules_stamp or self.rules_path is None:
+            return
+        self._rules_stamp = stamp
+        unsafe = _unsafe_file(self.rules_path)
+        if unsafe:
+            self._emit("error", message=f"The rules file changed but {unsafe}, so the old rules stay.")
+            return
+        try:
+            new = load_rules(self.rules_path)
+            if len(new.targets) > new.watch_cap:
+                raise RulesError(f"{len(new.targets)} targets, watch_cap is {new.watch_cap}")
+        except (RulesError, OSError, ValueError) as e:
+            self._emit("error", message=f"The rules file changed but has a problem, so the old rules stay: "
+                       f"{str(e)[:200]}")
+            return
+        with self._lock:
+            self.rules, self.router = new, Router(new, self.store, self.event_id)
+        prio = self._priorities()
+        with self._lock:
+            # A proposal or offer made under the old rules must not outlive them: a swap whose seats
+            # are no longer targets could cancel a seat the attendee no longer covers.
+            stale = [p for p, x in self.proposals.items() if x.held_id not in prio or x.wanted_id not in prio]
+            for pid in stale:
+                self.proposals.pop(pid)
+            for pid in [p for p, x in self.offers.items() if x.session_id in prio]:
+                self.offers.pop(pid)                 # now a target: the rules book it
+        warn = exposure_warning(self.rules_path, new)
+        if warn:
+            self._emit("error", message=warn)
+        self._catch_up = True
+        self.store.journal(self.event_id, "watcher.rules", None, {"targets": len(new.targets)}, "reloaded")
+        auto = [t.label for t in new.targets if t.auto_swap]
+        self._emit("rules", targets=len(new.targets), auto=len(auto),
+                   message=f"Rules file reloaded: {len(new.targets)} targets, {len(auto)} on autopilot. "
+                           "Open ones are booked now.")
+
+    def _open_targets(self, held: set[str]) -> list[str]:
+        """Target sittings open right now and not held. Booked on the catch-up pass, in rule order."""
+        out = []
+        for sid in self._priorities():
+            s = self.store.get(self.event_id, sid)
+            if (sid not in held and s is not None and s.is_reservable is not False
+                    and (s.seat_availability or "") not in ("unavailable", "walkUp", "")):
+                out.append(sid)
+        return out
+
     def _tick(self, res: TickResult, now: float) -> None:
+        self._reload_rules()
         sessions = list(self.client.iter_sessions(self.event_id, include_abstracts=False))
         self._signed_in()
         # Read the schedule before saving the sweep. If it fails, the changes stay
@@ -503,11 +587,14 @@ class Watcher:
             self._baseline(sweep, now)
             res.opened, res.moved = sweep.opened, sweep.moved
             self._warn_moved(sweep.moved, held, now)
-            self._act(sweep.opened, held, res, now)
+            self._act(sweep.opened, held, res, now)          # the catch-up waits for a normal sweep
             return
         res.added, res.opened, res.moved = sweep.added, sweep.opened, sweep.moved
         self._warn_moved(sweep.moved, held, now)
-        self._act(sweep.opened + sweep.added, held, res, now)
+        extra = self._catch_up_targets(held)
+        self._quiet -= set(sweep.opened + sweep.added)    # a seat that just opened is still news
+        self._act(sweep.opened + sweep.added + extra, held, res, now)
+        self._quiet = set()                              # one sweep only, even when _act returned early
         self._offer(sweep.added, sweep.opened, set(sched.favorites), now)
 
     def _offer(self, added: list[str], opened: list[str], favorites: set[str], now: float) -> None:
@@ -543,6 +630,17 @@ class Watcher:
         if new_seen > len([o for o in made if o.reason == "added"]):
             self._emit("new_sessions", count=new_seen, offered=len([o for o in made if o.reason == "added"]),
                        message=f"{new_seen} sessions were added to the catalog.")
+
+    def _catch_up_targets(self, held: set[str]) -> list[str]:
+        """Once after start or a rulebook change: targets already open, so autopilot does not wait for
+        their band to change again. Only on a normal sweep: a first load or a re-keyed catalog is a
+        baseline, and nothing is booked from one. They are quiet: a clash is not news."""
+        if not self._catch_up:
+            return []
+        self._catch_up = False
+        extra = self._open_targets(held)
+        self._quiet = set(extra)
+        return extra
 
     def _baseline(self, sweep: Any, now: float) -> None:
         if sweep.reason == "rekeyed":
@@ -726,8 +824,9 @@ class Watcher:
                 why.setdefault(o.session_id, {"full": "it filled before the reserve",
                                               "conflict": "it clashes with a session you hold"}
                                .get(o.status, o.note or "the API refused it"))
+        quiet, self._quiet = self._quiet, set()
         for sid in candidates:
-            if sid in held_now or sid in res.booked or sid in proposed or sid not in why:
+            if sid in held_now or sid in res.booked or sid in proposed or sid not in why or sid in quiet:
                 continue
             if why[sid] == FULL_SKIP:
                 continue                      # a full sitting did not open: nothing to tell

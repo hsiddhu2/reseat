@@ -153,12 +153,13 @@ class Tools:
         return _guarded(lambda: planning.check_plan(self.client, self.store, self.event_id, self.rules,
                                                     list(codes)))
 
-    def draft_rules(self, add: list[str], remove: list[str] | None = None) -> str:
+    def draft_rules(self, add: list[str], remove: list[str] | None = None,
+                    autopilot: list[str] | None = None) -> str:
         if self.rules_path is None:
             return "This server has no rules file to edit. Nothing drafted."
         path = self.rules_path
         got = _guarded_any(lambda: planning.draft_rules(self.client, self.store, self.event_id, path,
-                                                        list(add), list(remove or [])))
+                                                        list(add), list(remove or []), list(autopilot or [])))
         if not isinstance(got, planning.Draft):
             return got
         p = self._new_plan("rules", [], got.summary)
@@ -321,10 +322,14 @@ class Tools:
             msg = planning._plain(e, path) if isinstance(e, R.RulesError) else "the file could not be written"
             return f"Not written: {msg}. The rules file is as it was, or check rules.yaml.bak."
         self.router = Router(self.rules, self.store, self.event_id)
+        auto = [self._target(t.label) for t in self.rules.targets if t.auto_swap]
         return (f"Rules file written with {len(self.rules.targets)} targets. The old file is kept as "
-                f"{backup.name}. Nothing was sent to AWS. Once reseat serve restarts with these rules, the "
-                "watcher books a target when a seat frees, as it does for every target. Run reseat book "
-                "--dry-run to see what it would reserve now.")
+                f"{backup.name}. Nothing was sent to AWS by this tool. A running reseat serve uses the new "
+                "rules from its next sweep: it books every target that has an open seat now, then books "
+                "or proposes as seats free. "
+                + (f"These targets swap on their own: {', '.join(auto)}. " if auto else
+                   "Every swap asks first. ")
+                + "Run reseat book --dry-run to see what it would reserve now.")
 
     def _guard(self, p: Plan) -> str:
         now = guard.compute(self.client, self.store, self.event_id, self.rules)
@@ -438,15 +443,19 @@ def build_server(tools: Tools) -> Any:
             return tools.check_plan(codes)
 
     @server.tool()
-    def draft_rules(add: list[str], remove: list[str] | None = None) -> str:
+    def draft_rules(add: list[str], remove: list[str] | None = None,
+                    autopilot: list[str] | None = None) -> str:
         """Draft a new rules file: `add` codes go after the current targets in the order given, and
         `remove` codes are dropped. An earlier target wins a clashing time slot. An exact code such as
         AIM341-R1 pins that sitting. A code without -R such as AIM341 takes any sitting. Returns a plan
         id and the full target order. Writes nothing until approve_changes, then only the local rules
         file, with a .bak copy. Never reserves or cancels. Removing a held target stops watching it, never
-        cancels."""
+        cancels. Drafted targets ask first before any cancel. `autopilot` is opt-in per target: codes,
+        each in `add` or already a target, that get auto_swap on, so the watcher may cancel a held seat
+        for an earlier target after a fresh read shows the new seat open and a way back. Ask the attendee
+        before setting it, and name each code. Any other code in `autopilot` is refused."""
         with tools.serial:
-            return tools.draft_rules(add, remove)
+            return tools.draft_rules(add, remove, autopilot)
 
     @server.tool()
     def queue_or_go(code: str) -> str:
