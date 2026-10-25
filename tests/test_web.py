@@ -2021,3 +2021,40 @@ def test_approve_page_shows_book_offers_with_book_and_dismiss():
     assert "Book with one tap" in html and f'data-approve="{"p" * 22}">Book</button>' in html
     assert f'data-skip="{"p" * 22}">Dismiss' in html and "<b>x</b>" not in html
     assert "p" * 22 in html.split('data-plans="')[1].split('"')[0]
+
+
+def test_status_page_says_whether_book_buttons_and_email_alerts_are_on():
+    d, _, _ = panel()
+    off = dict(pages._health(d.app, d.clock(), None)["rows"])
+    assert off["Email and text"].startswith("Off") and "Book and Dismiss" not in off["Push"]
+    d.app.rules = d.app.rules.model_copy(update={"ntfy_topic": "t" * 20, "ntfy_book": True,
+                                                 "sns_topic_arn": "arn:aws:sns:us-east-1:123456789012:x"})
+    on = dict(pages._health(d.app, d.clock(), None)["rows"])
+    assert on["Email and text"] == "On, through your Amazon SNS topic" and "Book and Dismiss" in on["Push"]
+    assert "123456789012" not in str(on)                       # the account number is never shown
+
+
+def test_status_page_push_and_email_rows_for_each_flag_alone():
+    d, _, _ = panel()
+    base = d.app.rules
+
+    def rows(**kw: object) -> dict[str, str]:
+        d.app.rules = base.model_copy(update=kw)
+        return dict(pages._health(d.app, d.clock(), None)["rows"])
+
+    # Book buttons asked for but push is off: the row says Off, not the buttons
+    r = rows(ntfy_book=True, ntfy_approve=True)
+    assert r["Push"].startswith("Off") and "Book and Dismiss" not in r["Push"]
+    # SNS on with push off: each row stands on its own
+    r = rows(sns_topic_arn="arn:aws:sns:us-east-1:123456789012:x")
+    assert r["Email and text"].startswith("On") and r["Push"].startswith("Off")
+    assert "123456789012" not in str(r) and "arn:aws" not in str(r)
+    # Push on, no buttons
+    assert rows(ntfy_topic="t" * 20)["Push"] == "On"
+    # Approve alone, book alone, both in order
+    assert rows(ntfy_topic="t" * 20, ntfy_approve=True)["Push"] == \
+        "On, Swap now and Keep in the notification"
+    assert rows(ntfy_topic="t" * 20, ntfy_book=True)["Push"] == "On, Book and Dismiss in the notification"
+    assert rows(ntfy_topic="t" * 20, ntfy_approve=True, ntfy_book=True)["Push"] == \
+        "On, Swap now and Keep in the notification, Book and Dismiss in the notification"
+    assert rows(ntfy_topic="t" * 20)["Email and text"].startswith("Off")

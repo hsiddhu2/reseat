@@ -39,7 +39,7 @@ Seats free up after opening day, and AWS adds repeat sittings for popular sessio
 | **Asks on your phone** | A swap proposal arrives as a notification with Swap now and Keep. Alerts can also go by email or text through an SNS topic in your own AWS account. | None from the phone. It never holds a token. Amazon SNS for email and text. |
 | **Plans with your own AI** | Four MCP tools let the AI app you already use search, find free slots, check a plan and draft your rules. | Local catalog, GetSchedule. The planning tools never reserve or cancel. |
 
-**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,223 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
+**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,225 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
 
 ## It has to be right the first time
 
@@ -109,7 +109,7 @@ The second time I checked the seat in the AWS portal before cancelling. [The rec
 
 **Favorites in step, both ways.** On 24 October `favorites sync` added one talk to my favorites, and after I dropped it from my rules, removed it again. Each write was read back. My own 25 favorites were never listed for removal. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-favorites-round-trip.md).
 
-**Live and simulated, plainly.** Seen live: the empty catalog, its return, the 400, two booking round trips, a favorite added and removed, the watcher on my week, the phone over Tailscale, 36 connection drops it recovered from on its own. Not yet seen live: a swap, a booking the watcher caught, a Book tap, an SNS alert, a seat filling at the moment of booking. Those run against a fake of the API that produces every failure the documentation lists.
+**Live and simulated, plainly.** Seen live: the empty catalog, its return, the 400, two booking round trips, a favorite added and removed, a test email through my own SNS topic ([the record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-email-alert.md)), the watcher on my week, the phone over Tailscale, 36 connection drops it recovered from on its own. Not yet seen live: a swap, a booking the watcher caught, a Book tap, an alert the watcher raised by email, a seat filling at the moment of booking. Those run against a fake of the API that produces every failure the documentation lists.
 
 ## Getting you to the room before the doors close
 

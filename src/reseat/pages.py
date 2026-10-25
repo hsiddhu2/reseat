@@ -187,8 +187,11 @@ def _health(app: App, now: float, last_sweep: float | None) -> dict[str, Any]:
         ("Last sweep", stamp(last_sweep, seconds=True) if last_sweep else "None yet"),
         ("Leave-now blocks", f"{sum(1 for p in w.personal_time if guard.is_mine(p))} in your schedule"
          + (", out of date" if app.blocks_state else "")),
-        ("Push", ("On" + (", Swap now and Keep in the notification" if r.ntfy_approve else ""))
-         if r.ntfy_topic else "Off. Set ntfy_topic in the rules file"),
+        ("Push", ("On" + "".join(f", {x} in the notification" for x, on in
+                                 (("Swap now and Keep", r.ntfy_approve), ("Book and Dismiss", r.ntfy_book))
+                                 if on)) if r.ntfy_topic else "Off. Set ntfy_topic in the rules file"),
+        ("Email and text", "On, through your Amazon SNS topic" if r.sns_topic_arn
+         else "Off. Set sns_topic_arn in the rules file"),
         ("Quiet hours", f"{r.notify.quiet}, Las Vegas time" if r.notify.quiet else "None"),
         ("Muted", ", ".join(r.notify.mute) or "Nothing"),
     ]

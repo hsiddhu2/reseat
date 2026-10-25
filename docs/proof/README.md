@@ -16,6 +16,7 @@ This folder is public. Replace, do not just trim:
 
 - Tokens, refresh tokens, any `Authorization` or `Bearer` line, and any URL containing `code=`. Paste `reseat login` output only after sign-in has finished.
 - The one-time phone link: write its `k=` value as `k=REDACTED` in text and blur it in images, even after it was used. Never show `serve_secret`.
+- Amazon SNS: write the topic ARN as `arn:aws:sns:<region>:<account>:<topic>`, the `aws_profile` value as `<profile>`, and never show the subscribed email address or phone number.
 - `ntfy_topic`: it is the only thing that protects the pushes. Crop it out of ntfy screenshots and notification banners. If one leaks, change the topic. If you paste the rules file, remove `serve_secret` and `ntfy_topic`.
 - Hostnames, `*.ts.net` names, the tailnet name, and every IP address (100.x Tailscale, LAN, public): write `<host>` and `<ip>`. Crop the phone's address bar and any Tailscale admin console.
 - Your timetable. Show only the throwaway session used for the check. Write other held sessions as `<held session>`, or keep full-schedule evidence out of the repo until after 4 December.
@@ -24,12 +25,13 @@ This folder is public. Replace, do not just trim:
 
 Session ids and session codes such as ARC301 are fine.
 
-Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntfy`, `secret`, `token` and `Bearer`.
+Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntfy`, `secret`, `token`, `Bearer`, `arn:` and any 12-digit number.
 
 ## Checks
 
 | Check | File | Status |
 |---|---|---|
+| An email alert through the attendee's own SNS topic, 24 October | [`2026-10-24-email-alert.md`](2026-10-24-email-alert.md) | done |
 | Favorites sync adds a favorite, then removes it when its target is dropped, 24 October | [`2026-10-24-favorites-round-trip.md`](2026-10-24-favorites-round-trip.md) | done |
 | The planning tools on the real schedule, 17 and 20 October | [`2026-10-21-check-plan.md`](2026-10-21-check-plan.md) | done |
 | What the watcher saw, 12 to 20 October, updated 24 October | [`2026-10-20-watcher-first-week.md`](2026-10-20-watcher-first-week.md) | done, to be updated to submission |
