@@ -14,6 +14,8 @@ from reseat.store import Store
 from reseat.swap import Swap
 from reseat.watcher import Watcher
 
+POSIX_ONLY = pytest.mark.skipif(os.name != "posix", reason="file modes and symlinks: macOS and Linux only")
+
 
 def stack(clock, tmp_path, body, sessions=None, held=(), hooks=None):
     """`hooks` maps an operation to fn(req, send): a dropped connection or a fault around the fake."""
@@ -268,6 +270,17 @@ def test_a_pending_proposal_for_a_target_the_reload_removed_does_not_cancel(cloc
     assert fake.schedule.reserved == {"O1"} and fake.counts.get("CancelReservation", 0) == 0
 
 
+def test_a_rulebook_deleted_mid_run_keeps_the_old_rules_on_every_os(clock, tmp_path):
+    fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: ARC301\n")
+    w.tick()
+    path.unlink()
+    clock.sleep(60)
+    w.tick()
+    assert [t.code for t in w.rules.targets] == ["ARC301"] and "ReserveSessions" not in ops(fake)
+    assert fake.counts.get("CancelReservation", 0) == 0
+
+
+@POSIX_ONLY
 def test_a_rulebook_deleted_or_unreadable_mid_run_keeps_the_old_rules(clock, tmp_path):
     fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: ARC301\n")
     w.tick()
@@ -301,6 +314,7 @@ def test_auto_swap_whose_fallback_check_fails_never_cancels(clock, tmp_path):
     assert any(e.kind == "swap" and e.data.get("state") == "failed" for e in events)
 
 
+@POSIX_ONLY
 def test_a_symlinked_or_group_writable_rules_file_is_refused_on_reload(clock, tmp_path):
     fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: ARC301\n")
     w.tick()

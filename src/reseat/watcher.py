@@ -54,6 +54,7 @@ import json
 import os
 import queue
 import secrets
+import stat
 import threading
 import time
 from collections import deque
@@ -110,7 +111,7 @@ def _unsafe_file(path: Path) -> str | None:
         st = path.lstat()
     except OSError:
         return "it cannot be read"
-    if path.is_symlink():
+    if stat.S_ISLNK(st.st_mode):                     # from the same lstat: no second look
         return "it is a symbolic link"
     if os.name == "posix" and (st.st_uid != os.getuid() or st.st_mode & 0o022):
         return "other users can change it or it belongs to another user"
