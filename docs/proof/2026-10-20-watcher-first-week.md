@@ -65,9 +65,9 @@ Seats do open on full sessions, every day, and some close again within minutes. 
 
 ## Update, 24 October
 
-Counted the same way, read-only, from 2026-10-12 20:12 to 2026-10-24 21:06 PDT, at re:Seat `dd09555`.
+Counted the same way, read-only, from 2026-10-12 20:12 to 2026-10-24 23:40 PDT, at re:Seat `dd09555`.
 
-- **Sweeps:** 6,748 sweeps of the whole catalog.
+- **Sweeps:** 6,892 sweeps of the whole catalog.
 - **Seats that opened on full sessions:** 30 openings on 23 sessions. 29 went to very limited and 1 to available. Chalk talks had 20 openings on 15 sessions, workshops 7 on 6, and code talks 3 on 2. Four were full again within 10 minutes. A full session opened on 11 of the 13 days.
 - **Target talks:** none of the 23 sessions was a sitting the attendee targets, so the watcher booked nothing.
 - **Writes:** the watcher reserved and cancelled nothing. The only reserve and cancel rows in the journal are the two round trips on 12 October.
@@ -77,12 +77,12 @@ Counted the same way, read-only, from 2026-10-12 20:12 to 2026-10-24 21:06 PDT, 
 Seat bands now:
 
 ```
-unavailable  1373
-veryLimited    56
-limited        35
-available      15
+unavailable  1374
+veryLimited    55
+limited        36
+available      14
 no band       794
 total        2273
 ```
 
-1,373 of the 1,479 sessions that take reservations are full.
+1,374 of the 1,479 sessions that take reservations are full. The same counts are in [`docs/findings.json`](../findings.json), exported with `reseat findings --json`.

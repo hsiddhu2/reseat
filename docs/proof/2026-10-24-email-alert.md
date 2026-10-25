@@ -49,6 +49,10 @@ The attendee received the email, subject "re:Seat: Test alert", body:
 This is a test from re:Seat on your laptop. Email alerts are set up. Nothing was booked or changed.
 ```
 
+## Screenshots
+
+- `2026-10-24-email-alert-inbox.png`: the email as it arrived. The sender name, which is the topic name, is covered. No address is shown.
+
 ## Result
 
 The SNS path works end to end: boto3 found the credentials through the named profile, SNS accepted the publish, and the subscription delivered it by email. re:Seat stored no AWS keys.
