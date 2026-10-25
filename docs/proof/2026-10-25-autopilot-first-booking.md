@@ -35,6 +35,10 @@ On the first normal sweep after the restart, the catch-up pass booked the open t
 
 The attendee received a push and an email saying "Seat booked" for each.
 
+![The two "Seat booked" emails from the attendee's own Amazon SNS topic, one for AIM433 and one for INV510-R1. A mail label is covered](2026-10-25-booked-emails.png)
+
+The crop leaves out the received time. The journal time above is the record.
+
 ## Later the same day
 
 The attendee added nine more full sessions to the two slots in two edits, each with `auto_swap: true`, ranked above the held seats. Each edit was picked up by the watcher running at the time, with no restart for it. Between the two edits, at about 13:00, the attendee restarted `reseat serve` under `caffeinate -is` with `--interval 30`. The journal rows, read-only, columns trimmed:
