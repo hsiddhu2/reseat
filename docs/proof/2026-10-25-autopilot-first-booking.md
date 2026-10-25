@@ -35,9 +35,27 @@ On the first normal sweep after the restart, the catch-up pass booked the open t
 
 The attendee received a push and an email saying "Seat booked" for each.
 
+## Later the same day
+
+The attendee added nine more full sessions to the two slots in two edits, each with `auto_swap: true`, ranked above the held seats. Each edit was picked up by the watcher running at the time, with no restart for it. Between the two edits, at about 13:00, the attendee restarted `reseat serve` under `caffeinate -is` with `--interval 30`. The journal rows, read-only, columns trimmed:
+
+```
+12:32:22 PDT  watcher.rules  reloaded  {"targets": 31}
+13:11:37 PDT  watcher.rules  reloaded  {"targets": 38}
+```
+
+The first sweeps after the restart, from the local store's `sweeps` table, read-only: 13:00:16, 13:00:52, 13:01:29, 13:02:03 PDT, 34 to 37 seconds apart (the 30-second interval plus the sweep itself).
+
+The two slots now hold twelve full sessions on autopilot above the two held seats. The attendee chose not to show the nine added later, so they appear as counts:
+
+```
+Mon 30 Nov 15:00, MGM Grand   AIM353, CON338, 4 more full sessions   above held AIM433
+Fri 4 Dec, morning            CON301-R1, 5 more full sessions        above held INV510-R1
+```
+
 ## Result
 
-re:Seat booked two real sessions on its own, from the rules file alone, within its caps, and confirmed both from the official schedule. From here AIM353, CON338 and CON301-R1 are on autopilot. If AIM353 or CON338 frees, re:Seat swaps up from AIM433 on its own, and if CON301-R1 frees, from INV510-R1, after a fresh read of the new seat and a checked way back to the old one, and says what it did.
+re:Seat booked two real sessions on its own, from the rules file alone, within its caps, and confirmed both from the official schedule. By the end of the day twelve full sessions were on autopilot, as listed above. If one on Monday frees, re:Seat swaps up from AIM433 on its own, and if one on Friday frees, from INV510-R1, after a fresh read of the new seat and a checked way back to the old one, and says what it did.
 
 ## What it does not prove
 
