@@ -10,14 +10,14 @@ The first booking re:Seat made on its own, for sessions the attendee will attend
 
 ## The rules the attendee set
 
-Two time slots, each with targets in rank order. Codes are left out because these are now the attendee's own timetable.
+Two time slots in the attendee's free time, each with targets in rank order. The attendee chose to show these codes, days, times and venues, an exception to the timetable rule in [the proof README](README.md). Their other held sessions stay hidden.
 
 ```
-Monday afternoon slot:  rank 1  <full session>    auto_swap: true
-                        rank 2  <full session>    auto_swap: true
-                        rank 3  <held session>    open when added
-Friday morning slot:    rank 1  <full workshop>   auto_swap: true
-                        rank 2  <held session>    open when added
+Mon 30 Nov 15:00, MGM Grand    rank 1  AIM353     builders' session  full  auto_swap: true
+                               rank 2  CON338     code talk          full  auto_swap: true
+                               rank 3  AIM433     chalk talk         open when added
+Fri 4 Dec, morning, Encore     rank 1  CON301-R1  workshop 08:00     full  auto_swap: true
+                               rank 2  INV510-R1  chalk talk 09:00   open when added
 ```
 
 The dry run before the restart, sending nothing, listed exactly the two open sessions to reserve and every other target as full or walk-up only.
@@ -27,9 +27,9 @@ The dry run before the restart, sending nothing, listed exactly the two open ses
 On the first normal sweep after the restart, the catch-up pass booked the open targets, in rank order, in one call, and read the schedule back:
 
 ```
-2026-10-25 01:10:53 PDT  ReserveSessions  success
+2026-10-25 01:10:53 PDT  ReserveSessions  AIM433, INV510-R1  success
   result:     successful 2, failed 0
-  read-back:  both sessions listed as reserved. 17 reserved in all, 25 favorites
+  read-back:  AIM433 and INV510-R1 listed as reserved. 17 reserved in all, 25 favorites
   disagreements: none
 ```
 
@@ -37,7 +37,7 @@ The attendee received a push and an email saying "Seat booked" for each.
 
 ## Result
 
-re:Seat booked two real sessions on its own, from the rules file alone, within its caps, and confirmed both from the official schedule. From here the three full targets ranked above them are on autopilot. If one frees, re:Seat swaps up on its own after a fresh read of the new seat and a checked way back to the old one, and says what it did.
+re:Seat booked two real sessions on its own, from the rules file alone, within its caps, and confirmed both from the official schedule. From here AIM353, CON338 and CON301-R1 are on autopilot. If AIM353 or CON338 frees, re:Seat swaps up from AIM433 on its own, and if CON301-R1 frees, from INV510-R1, after a fresh read of the new seat and a checked way back to the old one, and says what it did.
 
 ## What it does not prove
 

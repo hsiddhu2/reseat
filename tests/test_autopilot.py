@@ -345,3 +345,15 @@ def test_a_rules_change_is_pushed_and_emailed_with_the_autopilot_count(clock, tm
     title, body = push.message(ev, str)
     assert title == "Rules changed" and "2 targets, 1 on autopilot" in body
     assert "rules" in sns.KINDS and push.CATEGORY["rules"] == "health"
+
+
+def test_open_targets_in_different_slots_go_in_one_reserve_call(clock, tmp_path):
+    """The live proof's log line: two open ranked targets booked in one ReserveSessions, read back once."""
+    sessions = [mk("O1", "AIM433", "2026-11-30", "15:00", band="veryLimited"),
+                mk("O2", "INV510-R1", "2026-12-04", "09:00", band="available")]
+    fake, w, events, _ = stack(clock, tmp_path, "targets:\n- code: AIM433\n- code: INV510-R1\n", sessions)
+    reads = fake.counts.get("GetSchedule", 0)
+    w.tick()
+    assert fake.schedule.reserved == {"O1", "O2"} and fake.counts["ReserveSessions"] == 1
+    assert fake.counts["GetSchedule"] - reads == 2                     # the sweep's read, then the read-back
+    assert sorted(e.data["session_id"] for e in events if e.kind == "booked") == ["O1", "O2"]
