@@ -45,6 +45,15 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
     d = ev.data
     if ev.kind == "booked":
         return "Seat booked", f"{d.get('code') or ''} {d.get('title') or ''}".strip()
+    if ev.kind == "offer":
+        what = "New session" if d.get("reason") == "added" else "Seat opened on a favorite"
+        band = {"available": "seats available", "limited": "limited seats",
+                "veryLimited": "very few seats"}.get(d.get("band") or "", "seats open")
+        return (f"{what}: {d.get('code') or ''}".strip(),
+                f"{code_title(d['session_id'])}, {band}. Book it from the web app. re:Seat checks the seat "
+                "and your day first.")
+    if ev.kind == "new_sessions":
+        return f"{d['count']} new sessions", f"{d['message']} Open the Activity page to see them."
     if ev.kind == "proposed":
         then = "Running it now (auto)." if d.get("auto") else "Approve it in the web app."
         return "Swap proposed", f"{code_title(d['wanted_id'])} instead of {code_title(d['held_id'])}. {then}"
@@ -113,14 +122,15 @@ def message(ev: WatchEvent, code_title: Callable[[str], str]) -> tuple[str, str]
 
 WALK_UP = {"likely": "Walk-up likely.", "early": "Go early.", "unlikely": "Walk-up unlikely.",
            "unknown": "No call on walk-ups."}
-PAGE = {"proposed": "/approve", "expiring": "/approve", "blocks": "/today", "leave": "/today",
+PAGE = {"proposed": "/approve", "expiring": "/approve", "offer": "/approve", "new_sessions": "/activity",
+        "blocks": "/today", "leave": "/today",
         "leave_soon": "/today", "briefing": "/today", "wanted_soon": "/today"}   # others open the Week
 
 
 CATEGORY = {
     "proposed": "swaps", "expiring": "swaps", "swap": "swaps",
     "booked": "bookings", "not_booked": "bookings", "unconfirmed": "bookings", "other_sitting": "bookings",
-    "catalog": "bookings",
+    "catalog": "bookings", "offer": "bookings", "new_sessions": "bookings",
     "moved": "schedule", "removed": "schedule", "tight": "schedule", "blocks": "schedule",
     "blocks_done": "schedule",
     "briefing": "on_site", "leave_soon": "on_site", "leave": "on_site", "wanted_soon": "on_site",
@@ -166,6 +176,13 @@ def actions(topic: str, plan_id: str) -> str:
             f"http, Keep, {url}, method=POST, body=skip {plan_id}, clear=true")
 
 
+def book_actions(topic: str, plan_id: str) -> str:
+    """ntfy action buttons for a Book offer. The same reply topic and verbs as a swap."""
+    url = f"{NTFY}/{reply_topic(topic)}"
+    return (f"http, Book, {url}, method=POST, body=approve {plan_id}, clear=true; "
+            f"http, Dismiss, {url}, method=POST, body=skip {plan_id}, clear=true")
+
+
 def update_action(topic: str, token: str) -> str:
     """One Update button for out-of-date leave-now blocks. The token is single use, like a plan id."""
     return f"http, Update, {NTFY}/{reply_topic(topic)}, method=POST, body=update {token}, clear=true"
@@ -177,8 +194,9 @@ class Pusher:
     def __init__(self, topic: str, transport: httpx.BaseTransport | None = None,
                  code_title: Callable[[str], str] = str, click_base: str | None = None,
                  approve: bool = False, quiet: str | None = None, mute: Iterable[str] = (),
+                 book: bool = False,
                  clock: Callable[[], float] = time.time):
-        self.url, self.topic, self.approve = f"{NTFY}/{topic}", topic, approve
+        self.url, self.topic, self.approve, self.book = f"{NTFY}/{topic}", topic, approve, book
         self.quiet, self.mute, self.clock = quiet, set(mute), clock
         self._held: list[str] = []         # titles that waited out quiet hours
         self._held_lock = threading.Lock()  # events come from the watcher, HTTP and reply threads
@@ -210,6 +228,10 @@ class Pusher:
                 buttons = actions(self.topic, ev.data["plan_id"])
                 tap = "Long-press for Swap now or Keep, or approve it in the web app."
                 msg = (msg[0], msg[1].replace("Approve it in the web app.", tap))
+            if self.book and ev.kind == "offer" and ev.data.get("plan_id"):
+                buttons = book_actions(self.topic, ev.data["plan_id"])
+                msg = (msg[0], msg[1].replace("Book it from the web app.",
+                                              "Long-press for Book, or book it in the web app."))
             if self.approve and ev.kind == "blocks" and ev.data.get("token"):
                 buttons = update_action(self.topic, ev.data["token"])
             try:

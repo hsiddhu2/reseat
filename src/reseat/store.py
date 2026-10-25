@@ -359,6 +359,34 @@ class Store:
             "SELECT * FROM catalog_changes WHERE event_id=? AND ts>? ORDER BY ts DESC, rowid DESC LIMIT ?",
             (event_id, after, limit)).fetchall()
 
+    # ------------------------------------------------------------------ findings, read-only
+
+    def sweep_times(self, event_id: str, since: float = 0.0) -> list[float]:
+        return [r["ts"] for r in self.db.execute(
+            "SELECT ts FROM sweeps WHERE event_id=? AND ts>=? ORDER BY ts", (event_id, since))]
+
+    def sweep_sizes(self, event_id: str) -> list[tuple[float, int]]:
+        """(time, sessions in that sweep) for every sweep."""
+        return [(r["ts"], r["count"]) for r in self.db.execute(
+            "SELECT ts, count FROM sweeps WHERE event_id=?", (event_id,))]
+
+    def band_changes(self, event_id: str, since: float = 0.0) -> list[sqlite3.Row]:
+        """Every band change after a first sighting, oldest first."""
+        return self.db.execute(
+            "SELECT session_id, ts, old_band, new_band FROM band_history WHERE event_id=? AND ts>=? "
+            "AND old_band IS NOT NULL ORDER BY ts, rowid", (event_id, since)).fetchall()
+
+    def change_rows(self, event_id: str, since: float = 0.0) -> list[sqlite3.Row]:
+        """Added, removed and moved rows, oldest first."""
+        return self.db.execute(
+            "SELECT session_id, ts, kind FROM catalog_changes WHERE event_id=? AND ts>=? ORDER BY ts, rowid",
+            (event_id, since)).fetchall()
+
+    def session_facts(self, event_id: str) -> dict[str, tuple[str | None, str | None]]:
+        """Session id to (type, band) for every session in the local catalog."""
+        return {r["session_id"]: (r["type"], r["band"]) for r in self.db.execute(
+            "SELECT session_id, type, band FROM sessions WHERE event_id=?", (event_id,))}
+
     def last_sweep(self, event_id: str) -> float | None:
         r = self.db.execute("SELECT MAX(ts) AS ts FROM sweeps WHERE event_id=?",
                             (event_id,)).fetchone()

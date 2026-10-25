@@ -143,7 +143,11 @@ class Rules(BaseModel):
     serve_secret: str | None = Field(default=None, min_length=16, max_length=200)
     ntfy_topic: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{16,64}$")
     ntfy_approve: bool = False   # Swap now and Keep buttons in the push. Sends the proposal's plan id
+    ntfy_book: bool = False      # Book and Dismiss buttons on a Book offer push. Sends the offer's plan id
     probe_session: str | None = None   # a session you can never hold, used to check if writes are open
+    sns_topic_arn: str | None = Field(default=None,
+                                      pattern=r"^arn:aws[a-z-]*:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]{1,256}$")
+    aws_profile: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_.-]{1,64}$")
     notify: Notify = Field(default_factory=Notify)
 
     @field_validator("home_venue")
@@ -392,10 +396,16 @@ home_venue: Venetian # first walk of each day starts here. Any 2026 campus venue
 # ntfy_topic: a random 16 to 64 character name. Push goes to https://ntfy.sh/<topic>.
 # ntfy_approve: true adds Swap now and Keep buttons to a swap proposal push. The tap
 #   comes back through ntfy.sh, carrying the proposal's single-use plan id.
+# ntfy_book: true adds Book and Dismiss to a Book offer push, at most 3 bookings a day
+#   from the notification. Anyone who learns the topic could tap them too.
 # notify: which pushes reach the phone. Optional.
 #   quiet: "22:00-07:00"   Las Vegas time. Pushes wait and arrive as one summary when it ends.
 #   mute: [on_site]        any of swaps, bookings, schedule, on_site, health.
 #   Sign-in needed and a swap that failed always come through.
+# sns_topic_arn: an Amazon SNS topic in your own AWS account. Alerts to act on (Book
+#   offers, bookings, swaps, schedule changes) are also published there. Subscribe your
+#   email, or a phone number once your account can send US texts. Needs pip install
+#   'reseat[aws]'. aws_profile: which AWS profile to use. re:Seat stores no AWS keys.
 # probe_session: id of a session that takes no reservations, so it can never be held.
 #   While writes are closed, re:Seat checks with it once a minute and resumes at once.
 """

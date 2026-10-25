@@ -44,7 +44,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
-from . import __version__, guard, pages
+from . import __version__, guard, offers, pages
 from .campus import EVENT_DAYS, VEGAS
 from .changes import Tracker
 from .client import ApiError
@@ -64,11 +64,12 @@ COOKIE_DAYS = 7
 LINK_TTL = 3600
 LOGIN_TRIES = 5          # failed sign-ins allowed per minute, per device address
 LOGIN_TRIES_ALL = 30     # failed sign-ins allowed per minute from all addresses together
+NTFY_BOOKS_PER_DAY = 3   # bookings from a notification tap per Las Vegas day. The web app has no cap.
 LOGIN_CLIENTS = 256      # addresses tracked at once. Past this, only the shared limit applies.
 APPROVE_WAIT = 120       # seconds an approve may take: check, cancel, reserve, read-backs
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAX_BODY = 2048
-VIEWS = ("/", "/approve", "/today", "/activity", "/demo", "/targets", "/status", "/day")
+VIEWS = ("/", "/approve", "/today", "/activity", "/demo", "/targets", "/status", "/day", "/findings")
 REFRESH_EVERY = 20       # seconds between snapshot refreshes, so leave-now never waits on a sweep
 
 
@@ -125,6 +126,7 @@ class App:
         self._blocks_key: str | None = None
         self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid))
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
+        self._ntfy_books: list[str] = []                    # Las Vegas day of each Book tap that ran
         watcher.subscribe(self._on_event)
 
     # ---- access
@@ -214,7 +216,8 @@ class App:
         self.refresh()
         if result is None:
             return None
-        return {"state": getattr(result, "state", None), "alert": getattr(result, "alert", None),
+        return {"kind": "book" if isinstance(result, offers.BookResult) else "swap",
+                "state": getattr(result, "state", None), "alert": getattr(result, "alert", None),
                 "reasons": getattr(result, "reasons", []),
                 "held_now": [self._code(s) for s in getattr(result, "held_now", [])]}
 
@@ -228,6 +231,11 @@ class App:
         if verb == "update":             # single use: only the live token does anything, and its own
             self.update_blocks(plan_id, wait=False)   # push says how it went; Swap now taps never queue
             return None
+        booking = any(o.plan_id == plan_id for o in self.watcher.pending_offers())
+        if booking and not self.rules.ntfy_book:
+            return None                  # Book buttons are not switched on: a forged tap does nothing
+        if not booking and self.rules.ntfy_book and not self.rules.ntfy_approve:
+            return None                  # only Book buttons are on: a forged swap tap does nothing
         if not self.watcher.is_pending(plan_id):
             return None                  # unknown, used or expired: no push, no work for the watcher
         with self._lock:
@@ -237,17 +245,27 @@ class App:
         if verb == "skip":
             if not self.skip(plan_id):
                 return None
+            if booking:
+                return "Dismissed", "Not booked. Nothing was sent."
             return "Kept your seat", "The swap is dismissed. Nothing was sent."
+        today = vegas(self.clock()).date().isoformat()
+        if booking and self._ntfy_books.count(today) >= NTFY_BOOKS_PER_DAY:
+            with self._lock:
+                self._replied.remove(plan_id)
+            return ("Not booked", f"{NTFY_BOOKS_PER_DAY} bookings from the notification today already. "
+                    "Book it in the web app.")
         out = self.approve(plan_id)
         if out is None:
             return None
+        if booking and out.get("state") == "booked":
+            self._ntfy_books = [d for d in self._ntfy_books if d == today] + [today]
         if out.get("kept") or out.get("busy"):
             with self._lock:             # it did not run and the proposal waits: a later tap may retry
                 if plan_id in self._replied:
                     self._replied.remove(plan_id)
         if out.get("error"):
-            return "Swap not run", str(out["error"])
-        return None                      # the swap event pushes done, rolled back or failed
+            return ("Not booked" if booking else "Swap not run"), str(out["error"])
+        return None                      # the booked, not_booked or swap event pushes the result
 
     def skip(self, plan_id: str) -> bool:
         if not PLAN_ID.match(plan_id):
@@ -494,6 +512,8 @@ def page(app: App, path: str, query: str = "") -> bytes:
         return pages.render_targets(snap, app.demo).encode()
     if path == "/status":
         return pages.render_status(snap, app.demo, version=__version__).encode()
+    if path == "/findings":
+        return pages.render_findings(snap, app.demo).encode()
     if path == "/day":
         d = (parse_qs(query).get("d") or ["0"])[0]
         index = int(d) if d.isascii() and d.isdigit() and len(d) < 3 else 0

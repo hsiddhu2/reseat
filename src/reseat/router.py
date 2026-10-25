@@ -230,6 +230,22 @@ class Router:
                 return f"max_per_day {self.rules.max_per_day} reached on {day}", None
         return None
 
+    def why_not_now(self, s: Session, held: Iterable[str]) -> str | None:
+        """Why `s` cannot be booked next to the held seats, or None. The same checks as a plan:
+        reservable, not full, no second sitting of a held talk, no clash, no meal, the daily cap.
+        No I/O."""
+        held_ids = set(held)
+        if self.missing_held(held_ids):
+            return "held sessions are not in the local catalog. Run reseat sync"
+        held_sessions = [x for x in (self.store.get(self.event_id, i) for i in held_ids) if x]
+        codes = {x.base_code for x in held_sessions if x.base_code}
+        per_day: dict[str, int] = {}
+        for x in held_sessions:
+            if x.session_time and x.session_time.date:
+                per_day[x.session_time.date] = per_day.get(x.session_time.date, 0) + 1
+        why = self._why_not(s, held_sessions, codes, per_day, [m.window() for m in self.rules.meals])
+        return why[0] if why else None
+
     # ---- plan
 
     def plan(self, held: Iterable[str], candidates: Iterable[str] | None = None,

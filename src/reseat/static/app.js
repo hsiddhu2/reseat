@@ -63,10 +63,15 @@
   }
 
   function describe(status, j, approve) {
-    if (!approve) return status === 200 ? "Dismissed. Nothing was sent." : "That proposal is already gone.";
+    if (!approve) return status === 200 ? "Dismissed. Nothing was sent." : "That one is already gone.";
     if (status === 404) return "This proposal expired or was already used. Nothing was sent.";
     if (status === 200) {
       const held = (j.held_now || []).join(", ") || "nothing";
+      if (j.kind === "book") {
+        const said = { booked: "Booked. Read back ok.", already: "You already hold it.", full: "It filled before the reserve.",
+          refused: "Not booked: " + (j.reasons || []).join(", ") + ".", closed: "Writes are closed (409). Nothing was sent." };
+        return (said[j.state] || ("Booking " + String(j.state) + ".")) + (j.alert ? " " + j.alert : "");
+      }
       return "Swap " + String(j.state).replace("_", " ") + "." + (j.alert ? " " + j.alert : "") + " Held now: " + held + ".";
     }
     return j.error || "The laptop did not run it. Check the journal before trying again.";

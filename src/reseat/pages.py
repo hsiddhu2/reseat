@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Any
 
-from . import decisions, guard
+from . import decisions, findings, guard
 from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, overlaps, room_label, walk_minutes
 from .changes import GHOSTS
 from .client import QUOTAS
@@ -115,6 +115,7 @@ def build(app: App, now: float) -> dict[str, Any]:
     return {
         "status": _status(app, now, last_sweep, sweeps, held_ids, wanted),
         "cards": [_card(app, p, held_ids, last_sweep) for p in pending],
+        "offers": [_offer(app, o) for o in w.pending_offers()],
         "changes": _changes(app),
         "log": _journal(app),
         "week": _week(app, held, wanted, pending, now),
@@ -130,7 +131,13 @@ def build(app: App, now: float) -> dict[str, Any]:
         "blocks": dict(app.blocks_state) if app.blocks_state else None,
         "targets": _targets(app, held_ids, pending),
         "health": _health(app, now, last_sweep),
+        "findings": findings.compute(st, ev, now, _target_sittings(app)),
     }
+
+
+def _target_sittings(app: App) -> set[str]:
+    """Every sitting of every target, held or not: the openings the watcher would have acted on."""
+    return {s.session_id for t in app.rules.targets for s, _ in app.watcher.router.tree(t)}
 
 
 def _targets(app: App, held_ids: list[str], pending: list[Any]) -> list[dict[str, Any]]:
@@ -230,6 +237,15 @@ def _wanted(app: App, held: set[str]) -> list[tuple[Any, list[Session]]]:
 def _code(app: App, sid: str) -> str:
     s = app.store.get(app.event_id, sid)
     return (s.abbreviation or "a session") if s else "a session not in the local catalog"
+
+
+def _offer(app: App, o: Any) -> dict[str, Any]:
+    """A Book offer: the session, its band when offered, and why it was offered."""
+    s = app.store.get(app.event_id, o.session_id)
+    why = "Added to the catalog" if o.reason == "added" else "A seat opened on a favorite"
+    return {"plan_id": o.plan_id, "why": why, "band": BAND_LABEL.get((s.seat_availability if s else None)
+                                                                     or "none", "unknown"),
+            "expires": o.expires, **_side(s)}
 
 
 def _side(s: Session | None) -> dict[str, Any]:
@@ -754,7 +770,8 @@ MAIN = [("week", "/", "Week", "Your calendar, and swaps to approve"),
         ("approve", "/approve", "Approve", "One swap at a time"),
         ("activity", "/activity", "Activity", "Every change and every write")]
 MORE = [("targets", "/targets", "Targets", "Your rules, in order, and each sitting"),
-        ("status", "/status", "Status", "Watcher, quota left, push settings")]
+        ("status", "/status", "Status", "Watcher, quota left, push settings"),
+        ("findings", "/findings", "Findings", "What the watcher saw, in numbers")]
 DEMO = ("demo", "/demo", "Demo", "Try every scenario on demo data")
 
 
@@ -923,6 +940,88 @@ def render_status(snap: dict[str, Any], demo: bool = False, version: str = "") -
             "operation per minute, and bulk calls by session. re:Seat never sends more than is left.</p>"
             f'<ul class="quota">{quota}</ul></section>')
     return _page(snap, "Status", "status", demo, body)
+
+
+BAND_LABEL = {"unavailable": "full", "veryLimited": "very limited", "limited": "limited",
+              "available": "available", "none": "no reservations"}
+
+
+def _bars(per_day: list[list[Any]], label: str) -> str:
+    """One bar per day, to scale. Each bar is labelled with its count and its day."""
+    top = max((n for _, n in per_day), default=0) or 1
+
+    def day(i: int, d: str) -> str:              # the month on the first bar and on each 1st only
+        x = datetime.fromisoformat(d)
+        return f"{x.day} {x:%b}" if i == 0 or x.day == 1 else str(x.day)
+    cols = "".join(
+        f'<li><b>{n or ""}</b><i style="height:{round(100 * n / top)}%"></i>'
+        f'<span>{day(i, d)}</span></li>' for i, (d, n) in enumerate(per_day))
+    return f'<ol class="bars" aria-label="{e(label)}">{cols}</ol>'
+
+
+def _split(parts: list[tuple[str, int, str]]) -> str:
+    """A bar split by share, with a legend. Each part: (label, count, css class)."""
+    total = sum(n for _, n, _ in parts) or 1
+    seg = "".join(f'<i class="{e(c)}" style="width:{100 * n / total:.2f}%"></i>' for _, n, c in parts if n)
+    key = "".join(f'<li><i class="{e(c)}"></i>{e(lbl)} <b>{n:,}</b></li>' for lbl, n, c in parts)
+    return f'<div class="split">{seg}</div><ul class="key">{key}</ul>'
+
+
+def findings_body(f: dict[str, Any], note: str = "") -> str:
+    """The Findings page body: counts by type and band only, never a code, title, room or time."""
+    o, c, b, w = f["openings"], f["catalog"], f["bands_now"], f["writes"]
+    sent = sum(n for op, n in w.items() if op != "probe")
+    tiles = [(f'{f["sweeps"]:,}', "sweeps of the whole catalog"),
+             (f'{o["total"]}', f'seats opened on full sessions, on {o["sessions"]} sessions'),
+             (f'{o["refilled"]["under 10 min"]}', "of them full again within 10 minutes"),
+             (f'{c["added"]}', f'sessions added, {c["still_listed"]} still listed'),
+             (f'{f["outages"]["count"]}', "connection drops, each recovered on its own")]
+    tile_html = "".join(f"<li><b>{e(v)}</b><span>{e(t)}</span></li>" for v, t in tiles)
+    fastest = (f' The fastest was full again after {o["fastest_min"]:g} minutes.'
+               if o["fastest_min"] is not None else "")
+    by_type = "".join(f"<tr><td>{e(t)}</td><td>{n}</td><td>{s}</td></tr>" for t, n, s in o["by_type"])
+    refill = _split([(k, v, f"r{i}") for i, (k, v) in enumerate(o["refilled"].items())])
+    added = "".join(f"<tr><td>{e(t)}</td><td>{n}</td></tr>" for t, n in c["added_by_type"])
+    bands = _split([(BAND_LABEL.get(k, k), v, f"b-{k}" if k in BAND_LABEL else "b-other")
+                    for k, v in b["counts"].items()])
+    acted = ("None of these sessions was a target, so the watcher booked nothing." if not o["on_targets"]
+             else f'{o["on_targets"]} of these sessions were targets.')
+    return (
+        '<h1>Findings</h1><p class="intro">What the watcher saw from the live catalog, '
+        f'{e(f["since"])} to {e(f["until"])} Las Vegas time, {f["days"]} days. Counted from the local store. '
+        "Sessions are shown by type and seat band only.</p>"
+        f'{note}<ul class="tiles">{tile_html}</ul>'
+        '<section class="panel"><h2>Seats that opened on full sessions</h2>'
+        f'<p>A full session opened again on {o["days_with"]} of the {f["days"]} days.{fastest} {acted}</p>'
+        f'{_bars(o["per_day"], "Openings per day")}'
+        '<h3>How long until it was full again</h3>'
+        f"{refill}"
+        '<table class="tbl"><thead><tr><th>Type</th><th>Openings</th><th>Sessions</th></tr></thead>'
+        f"<tbody>{by_type}</tbody></table>"
+        '<p class="fine">An opening is a change from full to any other band, seen by a sweep. A seat that '
+        "opened and filled again between two sweeps is not counted.</p></section>"
+        '<section class="panel"><h2>Sessions added to the catalog</h2>'
+        f'<p>{c["added"]} sessions were added, and {c["still_listed"]} are still listed. '
+        f'{c["removed"]} were removed and {c["moved"]} moves were seen.</p>'
+        f'{_bars(c["added_per_day"], "Sessions added per day")}'
+        '<table class="tbl"><thead><tr><th>Type, still listed</th><th>Added</th></tr></thead>'
+        f"<tbody>{added}</tbody></table></section>"
+        '<section class="panel"><h2>Seat bands now</h2>'
+        f'<p>{b["full"]:,} of the {b["reservable"]:,} sessions that take reservations are full.</p>{bands}'
+        "</section>"
+        '<section class="panel"><h2>Sweeps and writes</h2>'
+        f'{_bars(f["sweeps_per_day"], "Sweeps per day")}'
+        f'<p>{f["sweeps"]:,} sweeps while the laptop was awake. {f["outages"]["count"]} times the API or '
+        "the network stopped answering, and each time the watcher recovered on its own. "
+        f"In this window re:Seat sent {sent} writes to the Events API"
+        + (": " + ", ".join(f"{n} {op}" for op, n in w.items() if n and op != "probe") if sent else "")
+        + (f', and {w["probe"]} writes-open probes' if w["probe"] else "") + ".</p></section>")
+
+
+def render_findings(snap: dict[str, Any], demo: bool = False) -> str:
+    f = (snap.get("view") or {}).get("findings")
+    body = findings_body(f) if f else '<h1>Findings</h1><p class="empty">No sweep yet.</p>'
+    return _page(snap, "Findings", "findings", demo, body)
 
 
 def render_day(snap: dict[str, Any], index: int, demo: bool = False) -> str:
@@ -1131,8 +1230,8 @@ def _details_html(w: dict[str, Any]) -> str:
 
 def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False) -> str:
     v = snap.get("view") or {}
-    cards, s = v.get("cards", []), v["status"]
-    plans = [c["plan_id"] for c in cards]
+    cards, s, offered = v.get("cards", []), v["status"], v.get("offers", [])
+    plans = [c["plan_id"] for c in cards] + [o["plan_id"] for o in offered]
     out = [_head("re:Seat approve", "approve", demo, plans, snap["now"], s["last_sweep"]),
            _status_line(s), '<main class="page"><h1>Approve</h1><p class="intro">A swap would cancel a seat '
            "you hold, so it waits here for you, one at a time. Bookings within your rules happen on their "
@@ -1152,8 +1251,21 @@ def render_approve(snap: dict[str, Any], demo: bool = False, push: bool = False)
             out.append(f'<article class="card dim"><div class="kind">{e(c["kind"]).upper()}</div>'
                        f'<div><strong>{e(c["wanted"]["code"])}</strong>, {e(c["wanted"]["when"])}, '
                        f'{e(c["wanted"]["venue"])}</div><div class="mono muted">next</div></article>')
-    if not cards:
+    if not cards and not offered:
         out.append('<p class="empty">Nothing waits for your approval.</p>')
+    if offered:
+        out.append('<h2>Book with one tap</h2><p class="fine">New sessions, and seats that opened on your '
+                   "favorites, outside your rules. Book checks the seat, clashes, meals and your daily "
+                   "cap again first, then reserves and reads your schedule back. Each offer lasts 10 "
+                   "minutes.</p>")
+    for o in offered:
+        out.append(f'<article class="card offer"><div class="kind">{e(o["why"]).upper()}</div>'
+                   f'<div><strong>{e(o["code"])}</strong> {e(o.get("title") or "")}</div>'
+                   f'<div>{e(o["when"])}, {e(o["venue"])} · {e(o["band"])}</div>'
+                   f'<div class="actions"><button class="primary" data-approve="{e(o["plan_id"])}">'
+                   'Book</button>'
+                   f'<button data-skip="{e(o["plan_id"])}">Dismiss</button></div>'
+                   '<p class="result" role="status" aria-live="polite"></p></article>')
     out.append('</div><div class="col"><h2>Booked in the last day</h2>')
     if not v.get("bookings"):
         out.append('<p class="muted">Nothing booked in the last day.</p>')

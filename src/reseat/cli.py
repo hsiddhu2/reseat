@@ -5,6 +5,7 @@ Week one commands. Reads are live today. Writes to reservations open 8 October.
 
 from __future__ import annotations
 
+import json
 import re
 import signal
 import threading
@@ -21,8 +22,10 @@ from rich.table import Column, Table
 from . import auth, config, eventinfo, fixtures
 from . import cancel as cancel_engine
 from . import favorites as favorites_engine
+from . import findings as findings_engine
 from . import guard as guard_engine
 from . import rules as rules_mod
+from . import sns as sns_mod
 from .client import ApiError, AuthRequired, EventsClient, NetworkError, NotRegistered, OperationClosed
 from .router import CODE, WRITES_CLOSED, Execution, Outcome, Plan, Router, run_booking, target_name
 from .router import OP as RESERVE_OP
@@ -264,6 +267,32 @@ def save_fixture(event: str = config.DEFAULT_EVENT,
 
 
 # --------------------------------------------------------------------------- schedule
+
+
+@app.command()
+def findings(event: str = config.DEFAULT_EVENT,
+             out: str = typer.Option("", "--json", help="Also write the counts to this file, as JSON.")):
+    """What the watcher saw: openings on full sessions, sessions added, outages. Counts only."""
+    st = _store()
+    try:
+        wanted = {sid for sid, _ in favorites_engine.wanted_sittings(_rules(), st, event)}
+    except typer.Exit:
+        wanted = set()
+    f = findings_engine.compute(st, event, time.time(), wanted)
+    o, c = f["openings"], f["catalog"]
+    con.print(f"{f['since']} to {f['until']} Las Vegas time, {f['days']} days, {f['sweeps']:,} sweeps.")
+    con.print(f"Seats opened on full sessions: {o['total']} on {o['sessions']} sessions, on {o['days_with']} "
+              f"days. Full again within 10 minutes: {o['refilled']['under 10 min']}. On targets: "
+              f"{o['on_targets']}.")
+    for t, n, k in o["by_type"]:
+        con.print(f"  {_esc(t)}: {n} openings on {k} sessions")
+    con.print(f"Sessions added: {c['added']}, {c['still_listed']} still listed. Removed {c['removed']}, "
+              f"moves {c['moved']}.")
+    con.print(f"Full now: {f['bands_now']['full']:,} of {f['bands_now']['reservable']:,} that take "
+              f"reservations. Connection drops recovered: {f['outages']['count']}.")
+    if out:
+        Path(out).write_text(json.dumps(f, indent=1) + "\n", encoding="utf-8")
+        con.print(f"Wrote {_esc(out)}. It holds counts by type and band only, no session codes.")
 
 
 @app.command()
@@ -688,6 +717,12 @@ def _print_watch_event(ev: WatchEvent, st: Store | None = None,
                   f"plan {d['plan_id']}{' (auto)' if d['auto'] else ''}")
     elif ev.kind == "swap":
         con.print(f"  [cyan]swap {d['state']}[/cyan] plan {d['plan_id']}")
+    elif ev.kind == "offer":
+        why = "new session" if d.get("reason") == "added" else "seat opened on a favorite"
+        con.print(f"  [cyan]offer[/cyan] {_esc(d.get('code') or d['session_id'])}: {why}. Book it on the "
+                  "Approve page")
+    elif ev.kind == "new_sessions":
+        con.print(f"  [cyan]{_esc(d['message'])}[/cyan]")
     elif ev.kind == "moved":
         b, a = d["before"], d["after"]
         con.print(f"  [yellow]moved[/yellow] {_esc(d['code'] or d['session_id'])}: "
@@ -719,6 +754,7 @@ def watch(event: str = config.DEFAULT_EVENT,
 
     try:
         w = Watcher(c, st, r, event, interval=interval, swapper=auto_swap)
+        w.offering = False          # Book offers need reseat serve: its web app or push takes the tap
     except WatchError as e:
         con.print(f"[red]{_esc(e)}[/red]")
         raise typer.Exit(2) from None
@@ -821,6 +857,7 @@ def serve(event: str = config.DEFAULT_EVENT,
             previous[sig] = signal.signal(sig, stop_cleanly)
     worker: threading.Thread | None = None
     listener = None
+    notifier = None
     forwarded = False
     try:
         if tn:
@@ -839,10 +876,11 @@ def serve(event: str = config.DEFAULT_EVENT,
             pusher = push.Pusher(rules_now.ntfy_topic, code_title=code_title,
                                  click_base=f"http://{public}:{a.port}" if reachable else None,
                                  approve=rules_now.ntfy_approve, quiet=rules_now.notify.quiet,
-                                 mute=rules_now.notify.mute, clock=d.clock if demo else time.time)
+                                 mute=rules_now.notify.mute, book=rules_now.ntfy_book,
+                                 clock=d.clock if demo else time.time)
             pusher.start()
             w.subscribe(pusher)
-            if rules_now.ntfy_approve:
+            if rules_now.ntfy_approve or rules_now.ntfy_book:
                 sender = pusher
 
                 def on_reply(verb: str, plan_id: str) -> None:
@@ -851,11 +889,24 @@ def serve(event: str = config.DEFAULT_EVENT,
                         sender.send(*msg)
                 listener = push.ReplyListener(rules_now.ntfy_topic, on_reply)
                 listener.start()
-                con.print("Swap now and Keep buttons are on. A tap comes back through ntfy.sh with the "
-                          "proposal's single-use plan id.")
+                on = " and ".join(x for x, ok in (("Swap now and Keep", rules_now.ntfy_approve),
+                                                    ("Book and Dismiss", rules_now.ntfy_book)) if ok)
+                con.print(f"{on} buttons are on. A tap comes back through ntfy.sh with a single-use plan id.")
             link = f", and a link to http://{public}:{a.port} for a tap to open" if reachable else ""
             con.print(f"Push is on. Session codes, titles and the event type go to ntfy.sh{_esc(link)}. "
                       "Nothing else.")
+        if rules_now.sns_topic_arn:
+            def sns_title(sid: str) -> str:
+                s = store_now.get(event_now, sid)
+                return f"{s.abbreviation} {s.title}" if s else "a session"
+            reach = public not in serve_mod.LOOPBACK
+            notifier = sns_mod.SnsNotifier(rules_now.sns_topic_arn, code_title=sns_title,
+                                           click_base=f"http://{public}:{a.port}" if reach else None,
+                                           profile=rules_now.aws_profile)
+            notifier.start()
+            w.subscribe(notifier)
+            con.print("Email and text alerts are on, through your SNS topic. Session codes and titles go to "
+                      "Amazon SNS in your account. Nothing else.")
         w.subscribe(lambda ev: _print_watch_event(ev, w.store, w.event_id))
         if a.auth_required:
             con.print("Open this once on each device. It works one time:")
@@ -884,7 +935,7 @@ def serve(event: str = config.DEFAULT_EVENT,
     except KeyboardInterrupt:
         con.print("Stopping. A swap in progress finishes first.")
     finally:
-        _shutdown(w, worker, server, pusher, listener)
+        _shutdown(w, worker, server, pusher, listener, notifier)
         if forwarded and tn:
             if tn.stop(a.port):
                 con.print("Tailscale forwarding removed.")
@@ -896,11 +947,12 @@ def serve(event: str = config.DEFAULT_EVENT,
 
 
 def _shutdown(w: Watcher, worker: threading.Thread | None, server: object, pusher: object,
-              listener: object = None) -> None:
+              listener: object = None, notifier: object = None) -> None:
     """Stop everything serve started. Each step runs even if an earlier one fails."""
     steps = [getattr(listener, "stop", lambda: None), w.stop,
              lambda: worker and worker.join(timeout=_approve_wait()),
-             getattr(server, "server_close", lambda: None), getattr(pusher, "stop", lambda: None)]
+             getattr(server, "server_close", lambda: None), getattr(pusher, "stop", lambda: None),
+             getattr(notifier, "stop", lambda: None)]
     for step in steps:
         try:
             step()

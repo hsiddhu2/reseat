@@ -11,6 +11,7 @@ says it is a snapshot of demo data.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from importlib import resources
@@ -44,6 +45,7 @@ def staticize(html: str, now: float, done: str | None = None) -> str:
     html = html.replace('href="/demo"', 'href="demo.html"')
     html = html.replace('href="/targets"', 'href="targets.html"')
     html = html.replace('href="/status"', 'href="status.html"')
+    html = html.replace('href="/findings"', 'href="findings.html"')
     html = re.sub(r'href="/day\?d=(\d)"', r'href="day-\1.html"', html)
     html = html.replace('href="/"', 'href="index.html"')
     html = re.sub(r'<button class="primary" data-approve="[^"]+">([^<]*)</button>',
@@ -69,6 +71,24 @@ def demo_page() -> str:
     d.watcher.tick()
     dict((k, fn) for k, _, _, fn in d.scenarios())["repeat"]()
     return pages.render_demo(d.app.snapshot())
+
+
+FINDINGS = Path(__file__).resolve().parent.parent / "docs" / "findings.json"
+FINDINGS_NOTE = ('<div class="demo live" role="status">Real data, not the demo: what the watcher saw on the '
+                 "live catalog, from one attendee's laptop. Counts by session type and seat band only, "
+                 'exported with <code>reseat findings --json</code>. '
+                 '<a href="index.html">Open the click-through demo</a>.</div>')
+
+
+def findings_page(now: float, path: Path = FINDINGS) -> str | None:
+    """The live Findings page from the committed counts. None when there is no export."""
+    if not path.exists():
+        return None
+    f = json.loads(path.read_text(encoding="utf-8"))
+    html = (pages._head("re:Seat · Findings", "findings", False, [], now)
+            + f'{FINDINGS_NOTE}<main class="page">{pages.findings_body(f)}</main></body></html>')
+    html = html.replace('<script src="/static/app.js" defer></script>', "")
+    return html.replace('href="/static/', 'href="')
 
 
 def build(out: Path) -> list[str]:
@@ -103,6 +123,13 @@ def build(out: Path) -> list[str]:
     written["after.html"] = staticize(pages.render_dashboard(d.app.snapshot(), demo=True), now, done)
     for name in [n for n in written if n != "after.html"]:
         written[name] = staticize(written[name], now)
+    live = findings_page(now)
+    if live:
+        written["findings.html"] = live
+    else:                         # no export: no page, so no menu item pointing at one
+        for name in written:
+            written[name] = re.sub(r'<a[^>]*href="findings\.html"[^>]*>.*?</a>', "", written[name],
+                                   flags=re.S)
     for name, html in written.items():
         (out / name).write_text(html, encoding="utf-8")
     static = resources.files("reseat").joinpath("static")

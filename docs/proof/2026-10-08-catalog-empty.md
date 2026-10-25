@@ -46,7 +46,7 @@ The 14 reservations were made in the AWS portal after seating opened on 6 Octobe
 
 On the evening of 8 October the Events API answered GetSchedule but served no sessions: an empty catalog and 404 for every session tried, including held ones.
 
-The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, GetSession 404 for every id in the reporter's favorites, GetSchedule still returning the reporter's favorites, and the official MCP server returning the same empty list.
+The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, GetSession 404 for every id in the reporter's favorites, GetSchedule still returning the reporter's favorites, and the official MCP server returning the same empty list. It was also raised in a post on [the hackathon's discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
 
 Three re:Seat fixes came from this, each tested against the fake:
 

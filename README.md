@@ -12,6 +12,8 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 
 - **Books what frees up.** Every minute it checks the catalog. A freed seat or a new repeat sitting of a talk you want is booked at once, inside your rules and the API's quota, and read back from your schedule.
 - **Swaps without losing a seat.** When a better sitting opens at the same time as one you hold, it asks you: on the Week page, and with `ntfy_approve: true` as a notification with Swap now and Keep. Swap now cancels only after a fresh read shows the new seat open and a fallback for yours, and books yours again if the new one is refused.
+- **Offers what is new, booked on your tap.** A session added to the catalog, or a seat that opens on one of your favorites, comes as an offer with a **Book** button: on the Approve page, and with `ntfy_book: true` on the notification. Book checks the seat and your day again, reserves, and reads your schedule back. Nothing outside your rules is booked without the tap.
+- **Shows what it saw.** The Findings page counts every opening on a full session, how fast it filled again, sessions added and outages recovered. [Live counts from one attendee's laptop](https://hsiddhu2.github.io/reseat/findings.html).
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
 - **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
@@ -21,7 +23,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
 - **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
 - **All 12 operations of the Events API**, each in a real feature and under the API's own rules: GetEvent checks the event's time zone before any session time is trusted, and DisassociateFavorite removes only favorites re:Seat added for a dropped target. [The table](docs/architecture.md#api-operations-used).
-- **1145 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **1223 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
 - **Seen live:** from 8 to 11 October the API served an empty catalog, and re:Seat refused to act on it. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33). On 12 October the catalog came back with its session ids kept. [The record](docs/proof/2026-10-12-catalog-returned.md). Two reversible bookings, each read back and cancelled, confirmed that writes are open. [The round trips](docs/proof/2026-10-12-round-trip.md).
 - **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
@@ -177,6 +179,7 @@ reseat sync --force                # apply even an empty or much smaller catalog
 reseat search "serverless"
 reseat show <sessionId>            # details, repeats, seat band history
 reseat schedule                    # your reserved, favorites, personal time
+reseat findings                    # what the watcher saw, in counts. --json <file> writes them out
 reseat favorite <id> <id> ...      # add favorites, 10 per call, quota aware
 reseat probe --session-id <id>     # are reservation writes open yet? never changes anything
 reseat save-fixture                # dev: save a catalog pull for tests, no abstracts or speakers
@@ -237,7 +240,7 @@ re:Seat is designed for a laptop left in the hotel room, plugged in and awake, w
 **Set up the phone: notifications.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. Push is off unless the topic is set. The laptop posts to `https://ntfy.sh/<topic>`, each kind once:
 
 - **Swaps:** a swap proposed, 2 minutes from lapsing, done, rolled back or failed.
-- **Bookings:** a seat booked. A seat opened or a new sitting appeared but your rules stopped it, with the reason. The only sitting your rules allow is full while another has seats. A booking the read-back could not confirm. The catalog back after the API served none.
+- **Bookings:** a seat booked. A Book offer: a session just added, or a seat opened on a favorite, that fits your day. More than five new sessions in one sweep come as five offers and one summary. A seat opened or a new sitting appeared but your rules stopped it, with the reason. The only sitting your rules allow is full while another has seats. A booking the read-back could not confirm. The catalog back after the API served none.
 - **Schedule:** a session you hold moved or left the catalog. Two held sessions too far apart to walk between in the gap. The leave-now blocks re:Seat wrote no longer match what you hold, with, under `ntfy_approve: true`, an **Update** button that rewrites them and reads the schedule back (only if you use the blocks).
 - **On site:** a morning briefing between 06:00 and 10:00 on each conference day, leave in 10 minutes, leave now, and a talk you want but hold no seat for starting in 20 minutes, with whether to queue.
 - **Health:** writes paused or resumed, the API unreachable for 10 minutes or back, sign-in needed.
@@ -246,7 +249,7 @@ Each push carries the event, session codes, titles and those status lines, never
 
 **Choose what reaches the phone.** Under `notify:` in the rules file, `quiet: "22:00-07:00"` (Las Vegas time) holds pushes back and sends one summary when the quiet hours end, and `mute: [on_site]` drops a category: swaps, bookings, schedule, on_site, health. Sign in needed and a swap that failed always come through.
 
-**Approve from the notification.** Add `ntfy_approve: true` and a swap proposal, and its 2-minute reminder, arrive with **Swap now** and **Keep** buttons, and out-of-date leave-now blocks with **Update**. Long-press the notification to see them. The tap goes back through ntfy.sh to a second topic derived from yours, and re:Seat reads it over an outgoing connection, so the phone never has to reach the laptop: no Tailscale, no link, no sign-in. It runs the same checked swap as the web app, and a second push tells you the result. The button carries the proposal's plan id, which is random, works once and expires after 10 minutes, so tapping twice runs the swap once. To try it first on demo data: `reseat serve --demo --push <your topic>`.
+**Approve from the notification.** Add `ntfy_approve: true` and a swap proposal, and its 2-minute reminder, arrive with **Swap now** and **Keep** buttons, with `ntfy_book: true` a Book offer with **Book** and **Dismiss** (at most 3 bookings a day from the notification), and out-of-date leave-now blocks with **Update**. Long-press the notification to see them. The tap goes back through ntfy.sh to a second topic derived from yours, and re:Seat reads it over an outgoing connection, so the phone never has to reach the laptop: no Tailscale, no link, no sign-in. It runs the same checked swap as the web app, and a second push tells you the result. The button carries the proposal's plan id, which is random, works once and expires after 10 minutes, so tapping twice runs the swap once. To try it first on demo data: `reseat serve --demo --push <your topic>`.
 
 **Your topic name is the secret.** ntfy.sh topics have no password: anyone who knows the name can read what is posted to it and post to it. So treat `ntfy_topic` like a password. Make it long and random, for example `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`, never reuse it, and do not put it in a screenshot. re:Seat accepts only 16 to 64 letters, digits, `-` and `_`, and on macOS and Linux warns when a rules file holding the topic can be read by other users on the machine.
 
@@ -254,8 +257,19 @@ If the name leaks, this is what someone else could do, and what limits it:
 
 - **Read your pushes.** They hold session codes, titles, times, rooms, venues and status lines. When the web app is reachable from your phone, they also hold its address on your Tailscale network, and with `ntfy_approve` each button's single-use id. Never your token, an abstract, a session id, or anything that signs in to AWS. Knowing the topic gives no access to your schedule or your account.
 - **Post to your topic.** A fake notification could appear on your phone. re:Seat never acts on what is posted there. Check anything odd in the web app or the official app.
-- **With `ntfy_approve: true`, tap your buttons.** They could approve or dismiss a swap that is waiting for you, or run Update on your leave-now blocks. That is all. A button only works on a proposal re:Seat made from your rules, while it waits: its plan id is random, works once and expires after 10 minutes. Swap now runs the same checked swap as the web app: a fresh read of the new seat, a fallback for yours, and your seat booked again if the new one is refused. Update only adds, changes or removes the leave-now blocks re:Seat wrote. Nobody can use the topic to book, cancel or favorite anything else.
-- **What to do.** Put a new random name in `ntfy_topic`, subscribe to it in the ntfy app, unsubscribe from the old one, and restart `reseat serve`. re:Seat no longer posts to or listens on the old name. ntfy.sh keeps past messages for a while, so pushes already sent stay readable on the old name until they expire there. To keep push but drop the buttons, remove `ntfy_approve`.
+- **With `ntfy_approve` or `ntfy_book` on, tap your buttons.** With `ntfy_approve: true` they could approve or dismiss a swap that is waiting for you, or run Update on your leave-now blocks. With `ntfy_book: true` they could book or dismiss a Book offer that is waiting. That is all. A button only works on a proposal or offer re:Seat made, while it waits: its plan id is random, works once and expires after 10 minutes. Each Book tap reserves the one session it offered, after the same checks as the web app: the seat is open, it fits around what you hold, and it is not a second sitting of a talk you hold. Each offer could still become a seat you did not want, which may block a target that opens later at that time, so bookings from the notification stop at 3 a day. Swap now runs the same checked swap as the web app: a fresh read of the new seat, a fallback for yours, and your seat booked again if the new one is refused. Update only adds, changes or removes the leave-now blocks re:Seat wrote. Nobody can use the topic to book, cancel or favorite anything else.
+- **What to do.** Put a new random name in `ntfy_topic`, subscribe to it in the ntfy app, unsubscribe from the old one, and restart `reseat serve`. re:Seat no longer posts to or listens on the old name. ntfy.sh keeps past messages for a while, so pushes already sent stay readable on the old name until they expire there. To keep push but drop the buttons, remove `ntfy_approve` and `ntfy_book`.
+
+
+**Email and text messages, through Amazon SNS.** Alerts to act on (Book offers, bookings, swaps, a session you hold moving, sign-in needed, offline) can also go to an SNS topic in your own AWS account, with a link to the web app when your phone can reach it. re:Seat stores no AWS keys: it uses an AWS profile you already have.
+
+```bash
+pip install "reseat[aws]"
+aws sns create-topic --name reseat-alerts --profile <profile>
+aws sns subscribe --topic-arn <arn> --protocol email --notification-endpoint <your email> --profile <profile>
+```
+
+Confirm the subscription from the email AWS sends, then add `sns_topic_arn: <arn>` and `aws_profile: <profile>` to the rules file and restart `reseat serve`. The profile needs `sns:Publish` on that topic only. For text messages, subscribe a phone number with `--protocol sms`. AWS sends US texts only from a registered origination number in your account, set up in AWS End User Messaging SMS, so email is the quick start. The alert text goes to SNS in your account: session codes, titles and the event type, never your token or a session id.
 
 **When writes are switched off.** A 409 means the API has reservation writes turned off, and retrying will not help until they are back. re:Seat keeps watching and keeps every opening queued, but sends no reserve and runs no swap. It tries once after 15 minutes. With `probe_session` set to a session that takes no reservations, it checks every minute instead and resumes the moment writes open. Push says "Booking paused" and "Booking resumed".
 

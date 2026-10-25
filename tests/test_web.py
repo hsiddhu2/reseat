@@ -447,13 +447,16 @@ def test_static_site_builds_four_pages_with_no_script_and_a_verified_swap(tmp_pa
     site = runpy.run_path(str(script), run_name="site")
     names = site["build"](tmp_path)
     assert names == ["activity.html", "after.html", "approve.html", "day-0.html", "day-1.html", "day-2.html",
-                     "day-3.html", "day-4.html", "demo.html", "index.html", "status.html", "targets.html",
-                     "today.html"]
+                     "day-3.html", "day-4.html", "demo.html", "findings.html", "index.html", "status.html",
+                     "targets.html", "today.html"]
     for n in names:
         html = (tmp_path / n).read_text(encoding="utf-8")
         assert "<script" not in html and "/static/" not in html and "data-approve" not in html
-        assert "data-scenario" not in html
-        assert "Static snapshot of demo data" in html and 'href="app.css"' in html
+        assert "data-scenario" not in html and 'href="app.css"' in html
+        if n == "findings.html":                   # real counts, never presented as demo data
+            assert "Real data, not the demo" in html and "Demo data" not in html
+        else:
+            assert "Static snapshot of demo data" in html and 'href="findings.html"' in html
     assert 'href="after.html">Swap now</a>' in (tmp_path / "index.html").read_text(encoding="utf-8")
     after = (tmp_path / "after.html").read_text(encoding="utf-8")
     assert "proposed → checked → cancelled → reserved → verified" in after and "swaps verified" in after
@@ -1414,6 +1417,8 @@ def test_static_site_pages_each_have_one_menu_with_sibling_links(tmp_path):
     script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
     site = runpy.run_path(str(script), run_name="site")
     for n in site["build"](tmp_path):
+        if n == "findings.html":          # real data: one link back to the demo, not the demo's menu
+            continue
         html = (tmp_path / n).read_text(encoding="utf-8")
         assert html.count('<nav class="tabs"') == 1, n
         nav = html[html.index('<nav class="tabs"'):html.index("</nav>", html.index('<nav class="tabs"'))]
@@ -1985,3 +1990,34 @@ def test_activity_names_no_session_for_a_string_request_that_is_not_a_session_id
     assert all(j["what"] == "" for j in log if j["op"].startswith("watcher."))
     html = pages.render_activity(snap, demo=True)
     assert "not in the local catalog" not in html and "pt-extra" not in html
+
+
+def test_site_has_no_findings_page_without_an_export(tmp_path):
+    import runpy
+    from pathlib import Path
+    script = Path(__file__).resolve().parent.parent / "scripts" / "build_site.py"
+    site = runpy.run_path(str(script), run_name="site")
+    assert site["findings_page"](0.0, tmp_path / "missing.json") is None
+
+
+def test_findings_page_is_served_with_the_menu_and_counts_a_seat_that_opened():
+    d, _, sc = panel()
+    sc["seat"]()
+    d.app.refresh()
+    html = S.page(d.app, "/findings").decode()
+    assert "<h1>Findings</h1>" in html and html.count('<nav class="tabs"') == 1
+    assert 'href="/findings" aria-current=page' in html
+    f = d.app.snapshot()["view"]["findings"]
+    assert f["openings"]["total"] >= 1 and f["sweeps"] >= 2
+
+
+def test_approve_page_shows_book_offers_with_book_and_dismiss():
+    d, _, _ = panel()
+    snap = d.app.snapshot()
+    snap["view"]["offers"] = [{"plan_id": "p" * 22, "why": "Added to the catalog", "band": "available",
+                               "expires": 0, "code": "NEW101", "title": "<b>x</b>", "when": "Wed 12:00",
+                               "venue": "MGM Grand", "day": "Wednesday"}]
+    html = pages.render_approve(snap, demo=True)
+    assert "Book with one tap" in html and f'data-approve="{"p" * 22}">Book</button>' in html
+    assert f'data-skip="{"p" * 22}">Dismiss' in html and "<b>x</b>" not in html
+    assert "p" * 22 in html.split('data-plans="')[1].split('"')[0]

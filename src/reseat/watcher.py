@@ -64,7 +64,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
-from . import cancel
+from . import cancel, offers
 from .auth import AuthError
 from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
@@ -76,6 +76,7 @@ from .store import Store, SweepRefused
 MIN_INTERVAL = 30
 DEFAULT_INTERVAL = 60
 PROPOSAL_TTL = 600   # seconds a proposed plan id stays valid
+OFFERS_PER_TICK = 5  # Book offers pushed one by one per sweep. More are one summary.
 BACKOFF_CAP = 300    # longest wait between sweeps during an outage
 ONSITE_EVERY = 20    # seconds between on-site GetSession polls
 ONSITE_CAP = 40      # sessions polled on site: 40 x 3 a minute stays inside GetSession's 120
@@ -95,7 +96,7 @@ EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
                     "outage", "offline", "back", "signin", "leave", "writes",
                     "catalog", "removed", "unconfirmed", "not_booked",
                     "briefing", "leave_soon", "wanted_soon", "expiring", "tight", "other_sitting",
-                    "blocks", "blocks_done"]
+                    "blocks", "blocks_done", "offer", "new_sessions"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
 
 
@@ -165,6 +166,8 @@ class Watcher:
         self.personal_time: list[PersonalTime] = []   # from the GetSchedule each sweep already reads
         self.router = Router(rules, store, event_id)
         self.proposals: dict[str, Proposal] = {}
+        self.offers: dict[str, offers.Offer] = {}    # Book taps waiting, by plan id
+        self.offering = True       # off under `reseat watch`: no web app or button can take the tap
         self._lock = threading.RLock()
         self._retry: set[str] = set()   # openings a transient failure kept from booking
         self._cap_warned: str | None = None
@@ -224,16 +227,23 @@ class Watcher:
                     self._retry.add(gone.wanted_id)
             return list(self.proposals.values())
 
-    def is_pending(self, plan_id: str) -> bool:
-        """Read-only, safe from any thread: is this plan id a live, unexpired proposal right now?"""
+    def pending_offers(self) -> list[offers.Offer]:
         with self._lock:
-            p = self.proposals.get(plan_id)
+            now = self.clock()
+            for pid in [p for p, x in self.offers.items() if x.expired(now)]:
+                self.offers.pop(pid)
+            return list(self.offers.values())
+
+    def is_pending(self, plan_id: str) -> bool:
+        """Read-only, safe from any thread: is this plan id a live, unexpired proposal or offer?"""
+        with self._lock:
+            p = self.proposals.get(plan_id) or self.offers.get(plan_id)
             return p is not None and not p.expired(self.clock())
 
-    def take(self, plan_id: str) -> Proposal | None:
-        """Remove and return an unexpired proposal. One use only."""
+    def take(self, plan_id: str) -> Proposal | offers.Offer | None:
+        """Remove and return an unexpired proposal or offer. One use only."""
         with self._lock:
-            p = self.proposals.pop(plan_id, None)
+            p = self.proposals.pop(plan_id, None) or self.offers.pop(plan_id, None)
         return p if p and not p.expired(self.clock()) else None
 
     def approve(self, plan_id: str) -> Any:
@@ -242,6 +252,8 @@ class Watcher:
         Returns the swapper's result, or None for an unknown, used or expired plan id.
         """
         p = self.take(plan_id)
+        if isinstance(p, offers.Offer):
+            return self._book(p)
         if p is None or self.swapper is None:
             return None
         if self.read_only:
@@ -258,10 +270,53 @@ class Watcher:
                                  "Try again in a moment.")
         return outcome
 
-    def _keep(self, p: Proposal) -> None:
+    def _keep(self, p: Proposal | offers.Offer) -> None:
         if not p.expired(self.clock()):
             with self._lock:
-                self.proposals[p.plan_id] = p
+                if isinstance(p, offers.Offer):
+                    self.offers[p.plan_id] = p
+                else:
+                    self.proposals[p.plan_id] = p
+
+    def _book(self, o: offers.Offer) -> offers.BookResult:
+        """The attendee tapped Book. Checks first, then one reserve and one read-back. Never untapped."""
+        if self.read_only:
+            self._keep(o)
+            raise ApprovalFailed("Sign in needed on the laptop. Nothing was sent. The offer is kept.")
+        if self._writes_closed():
+            self._keep(o)
+            raise ApprovalFailed("Reservation writes are closed (409) right now. Nothing was sent. "
+                                 "The offer is kept.")
+        try:
+            res = offers.book(self.client, self.store, self.event_id, self.router, o.session_id)
+        except ApiError as e:
+            self._keep(o)
+            raise ApprovalFailed(f"The check before booking failed ({e.status}). Nothing was sent. "
+                                 "The offer is kept.") from None
+        self.last_held = set(res.held_now) or self.last_held
+        s = self.store.get(self.event_id, o.session_id)
+        code, title = (s.abbreviation, s.title) if s else (None, None)
+        if res.state == "booked":
+            self._emit("booked", session_id=o.session_id, target=offers.TAPPED, code=code, title=title)
+        elif res.state == "unconfirmed":
+            self._emit("unconfirmed", session_id=o.session_id, code=code, title=title,
+                       message="re:Seat sent a reserve but could not confirm it. Check the official app.")
+        elif res.state == "already":
+            self._emit("not_booked", session_id=o.session_id, code=code, title=title, reason="already",
+                       new=o.reason == "added", message=f"{code or 'That session'}: you already hold it.")
+        elif res.state == "closed":
+            self._closed(self.clock())
+            self._keep(o)
+        elif res.state == "failed":
+            self._keep(o)                           # the read-back showed nothing landed
+            self._emit("not_booked", session_id=o.session_id, code=code, title=title, reason="failed",
+                       new=o.reason == "added", message=f"{code or 'That session'} not booked: "
+                       f"{'; '.join(res.reasons)}.")
+        else:
+            self._emit("not_booked", session_id=o.session_id, code=code, title=title, reason=res.state,
+                       new=o.reason == "added", message=f"{code or 'That session'} not booked: "
+                       f"{'; '.join(res.reasons) or res.state}.")
+        return res
 
     def stop(self) -> None:
         self._stop.set()
@@ -453,11 +508,47 @@ class Watcher:
         res.added, res.opened, res.moved = sweep.added, sweep.opened, sweep.moved
         self._warn_moved(sweep.moved, held, now)
         self._act(sweep.opened + sweep.added, held, res, now)
+        self._offer(sweep.added, sweep.opened, set(sched.favorites), now)
+
+    def _offer(self, added: list[str], opened: list[str], favorites: set[str], now: float) -> None:
+        """Offer Book for sessions just added and seats that opened on a favorite, outside the rules.
+
+        Targets are left to the rules, which book or propose on their own. An offer only says what
+        is open now. Booking waits for the attendee's tap and checks everything again first.
+        """
+        if not self.offering:
+            return
+        self.pending_offers()                       # drop expired offers before adding more
+        held, prio = self.last_held, self._priorities()
+        picks = [(sid, "added") for sid in added]
+        picks += [(sid, "favorite") for sid in opened if sid in favorites and sid not in added]
+        made: list[offers.Offer] = []
+        new_seen = 0
+        for sid, reason in picks:
+            if sid in prio or sid in held:
+                continue
+            s = self.store.get(self.event_id, sid)
+            if s is None:
+                continue
+            new_seen += reason == "added"
+            why = self.router.why_not_now(s, held)
+            if why or len(made) >= OFFERS_PER_TICK:
+                continue
+            o = offers.Offer(secrets.token_urlsafe(16), sid, reason, now, now + PROPOSAL_TTL)
+            with self._lock:
+                self.offers[o.plan_id] = o
+            made.append(o)
+            self._emit("offer", plan_id=o.plan_id, session_id=sid, reason=reason, code=s.abbreviation,
+                       title=s.title, band=s.seat_availability, expires=o.expires)
+        if new_seen > len([o for o in made if o.reason == "added"]):
+            self._emit("new_sessions", count=new_seen, offered=len([o for o in made if o.reason == "added"]),
+                       message=f"{new_seen} sessions were added to the catalog.")
 
     def _baseline(self, sweep: Any, now: float) -> None:
         if sweep.reason == "rekeyed":
             with self._lock:
                 self.proposals.clear()         # their ids are gone
+                self.offers.clear()
             self.store.journal(self.event_id, "watcher.catalog", None,
                                {"replaced": len(sweep.removed), "new": len(sweep.added)}, "rekeyed")
             self._emit("error", message=f"The catalog was re-keyed: {len(sweep.removed)} sessions replaced. "
