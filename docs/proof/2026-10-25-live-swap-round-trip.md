@@ -52,7 +52,7 @@ The journal, read-only, an excerpt with the start, before and after rows left ou
 
 ## Result
 
-Both swaps verified against the official schedule. Each took 2 to 3 seconds from the cancel to the verified read-back. For that time the attendee held neither seat, and the released seat was free for anyone. The other 16 held sessions were untouched. Before each cancel, re:Seat confirmed the seat being given up still had a way back: its own open band.
+Both swaps verified against the official schedule. Each took under 3 seconds from the cancel to the verified read-back. For that time the attendee held neither seat, and the released seat was free for anyone. The journal times are whole seconds, 2 seconds apart both times. The other 16 held sessions were untouched. Before each cancel, re:Seat confirmed the seat being given up still had a way back: its own open band.
 
 The declined preview was journaled as a failed swap. That was wrong, since nothing failed, and it now journals as declined.
 
