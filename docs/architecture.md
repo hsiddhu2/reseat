@@ -26,7 +26,7 @@ Two things were not found in first-hand reports, so re:Seat does not claim them:
 Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 - **Local only.** OAuth 2.0 code flow with PKCE, callback on localhost ports 8484 to 8489. No hosted redirect.
-- **No search.** re:Seat pulls the whole catalog, about 2,000 sessions in 9 pages, and works locally.
+- **No search.** re:Seat pulls the whole catalog, about 2,300 sessions in 10 pages, and works locally.
 - **Seat bands, not counts.** `available`, `limited`, `veryLimited`, `unavailable`, `walkUp`. A band change is the signal that a seat freed.
 - **Partial success.** Reserve and favorite return 200 with a `failed` list. Unknown failure codes are treated as generic refusals.
 - **No blind retry.** A repeated reserve reports `alreadyScheduled`. Cancel on a seat not held is a 404 in the spec and was a 400 in the live API when checked on 12 October, and the read-back decides. Every write is followed by a `GetSchedule` read-back.

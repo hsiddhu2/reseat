@@ -40,7 +40,7 @@ goes through `approve(plan_id)`, never through raw session ids.
 The CLI prints them. The web app and push subscribe the same way.
 
 API rules this module exists to respect:
-- ListSessions is 120 per minute. A full sweep is about 9 calls, so the
+- ListSessions is 120 per minute. A full sweep is about 10 calls, so the
   interval has a floor of 30 seconds.
 - Watch lists are capped by the rules file. A list over the cap is refused.
 - Booking goes through the router, so every reserve is quota-sized and read back.
@@ -172,7 +172,7 @@ class Watcher:
                  rules_path: Path | None = None):
         if interval < MIN_INTERVAL:
             raise WatchError(f"Interval {interval}s is under the {MIN_INTERVAL}s floor. A full sweep "
-                             "is about 9 ListSessions calls.")
+                             "is about 10 ListSessions calls.")
         if len(rules.targets) > rules.watch_cap:
             raise WatchError(f"{len(rules.targets)} targets, watch_cap is {rules.watch_cap}. "
                              "Trim the rules file.")

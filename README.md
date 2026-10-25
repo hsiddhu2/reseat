@@ -78,7 +78,7 @@ reseat login
 Python 3.11 or newer. `login` opens your AWS Builder ID sign-in. Use the Builder ID your re:Invent registration is under: `reseat whoami` should then say `Registered for reinvent2026`. The tokens stay in your OS keychain and are sent only to `api.awsevents.com`. Then point re:Seat at the sessions you want:
 
 ```bash
-reseat sync                                  # the catalog, about 9 calls
+reseat sync                                  # the catalog, about 10 calls
 reseat rules from-schedule                   # your reserved sessions and favorites from the AWS portal
 reseat favorites sync                        # mirror them into the official app
 reseat book --dry-run                        # see the plan. Nothing is sent
@@ -126,7 +126,7 @@ The Events API signs you in with OAuth and PKCE, using your own Builder ID, thro
 | 429 carries `Retry-After` | Waits that long, once. |
 | 409 means writes are switched off | Stops writing, keeps every opening queued, resumes when writes open. |
 | Seat availability is a band, not a count | Treats a move from `unavailable` to an open band as a freed seat. |
-| There is no search | Pulls the whole catalog, about 9 calls, and works locally. |
+| There is no search | Pulls the whole catalog, about 10 calls, and works locally. |
 | Personal time is UTC in 5-minute steps | Writes leave-now blocks exactly that way. |
 
 ## Seen live
@@ -183,7 +183,7 @@ Every write path runs against an in-process fake of the API that produces each d
 
 ```bash
 reseat events                      # list events, no sign-in needed
-reseat sync                        # pull the whole catalog, about 9 API calls
+reseat sync                        # pull the whole catalog, about 10 API calls
 reseat sync --no-abstracts         # cheap sweep, reports band changes and new sessions
 reseat sync --force                # apply even an empty or much smaller catalog. Exit 4 means a sweep was refused
 reseat search "serverless"
