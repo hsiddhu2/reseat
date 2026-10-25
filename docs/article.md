@@ -38,7 +38,7 @@ Seats free up after opening day, and AWS adds repeat sittings for popular sessio
 | **Asks on your phone** | A swap proposal arrives as a notification with Swap now and Keep. | None. The phone never holds a token. |
 | **Plans with your own AI** | Four MCP tools let the AI app you already use search, find free slots, check a plan and draft your rules. | Local catalog, GetSchedule. The planning tools never reserve or cancel. |
 
-**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,107 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
+**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,145 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
 
 ## It has to be right the first time
 
@@ -104,9 +104,11 @@ The second time I checked the seat in the AWS portal before cancelling. [The rec
 
 ![Today on my phone: when to leave, the walk as an estimate, and walk-up odds for three talks I want. Codes, titles and rooms are covered](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/live-phone-today.png)
 
-**What the watcher saw in eight days.** From 12 to 20 October it swept the whole catalog 3,826 times while my laptop was awake. A full session opened again 25 times, on 19 sessions, and at least once every day. Three of those seats were gone again within 10 minutes, one in about a minute. 36 sessions were added, 28 still listed, among them two sittings of one new talk. Full sessions rose to 1,318 of 1,469. None of the 19 was a talk I asked for, so it booked nothing. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-20-watcher-first-week.md) will be updated up to submission.
+**What the watcher saw in twelve days.** From 12 to 24 October it swept the whole catalog 6,748 times while my laptop was awake. A full session opened again 30 times, on 23 sessions, on 11 of the 13 days. Four of those seats were gone again within 10 minutes, one in about a minute. 62 sessions were added, 51 still listed. Full sessions rose to 1,373 of 1,479. None of the 23 was a talk I asked for, so it booked nothing. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-20-watcher-first-week.md) will be updated up to submission.
 
-**Live and simulated, plainly.** Seen live: the empty catalog, its return, the 400, two booking round trips, the watcher on my week, the phone over Tailscale, 28 connection drops it recovered from on its own. Not yet seen live: a swap, a booking the watcher caught, a seat filling at the moment of booking. Those run against a fake of the API that produces every failure the documentation lists.
+**Favorites in step, both ways.** On 24 October `favorites sync` added one talk to my favorites, and after I dropped it from my rules, removed it again. Each write was read back. My own 25 favorites were never listed for removal. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-favorites-round-trip.md).
+
+**Live and simulated, plainly.** Seen live: the empty catalog, its return, the 400, two booking round trips, a favorite added and removed, the watcher on my week, the phone over Tailscale, 36 connection drops it recovered from on its own. Not yet seen live: a swap, a booking the watcher caught, a seat filling at the moment of booking. Those run against a fake of the API that produces every failure the documentation lists.
 
 ## Getting you to the room before the doors close
 

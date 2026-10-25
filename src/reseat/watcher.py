@@ -29,7 +29,7 @@ Writes closed. A 409 means the API is "intentionally disabled" for writes and
 retrying will not help until it is re-enabled. So after a 409 the watcher keeps
 sweeping and keeps every opening queued, but sends no reserve and runs no swap for
 15 minutes, then tries once. With `probe_session` set it checks every tick with
-EventsClient.writes_open() on that session, which can never be held, and resumes
+cancel.probe() on that session, which can never be held, and resumes
 the moment writes open. It emits one `writes` event when writes close and one when
 they open again.
 
@@ -64,6 +64,7 @@ from typing import Any, Literal
 import httpx
 from pydantic import ValidationError
 
+from . import cancel
 from .auth import AuthError
 from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
@@ -171,6 +172,7 @@ class Watcher:
         self._missing_warned = False
         self.writes_closed_until: float | None = None
         self._closed_announced = False
+        self._probe_last: str | None = None          # the probe journals a change of answer, not each repeat
         self.read_only = False
         self._down_since: float | None = None
         self._down_ticks = 0
@@ -546,10 +548,15 @@ class Watcher:
         if not sid or not self._writes_closed() or sid in held:
             return
         try:
-            if self.client.writes_open(self.event_id, sid):
-                self._opened()
+            self._probe_last = cancel.probe(self.client, self.store, self.event_id, sid, self._probe_last)
         except ApiError:
-            pass                                     # unclear answer: keep the hold
+            self._probe_last = None                  # unclear answer: keep the hold, journal the next one
+            return
+        if self._probe_last == "cancelled":
+            self._emit("error", message=f"The writes probe cancelled a seat you held ({sid}). Reserve it "
+                       "again if you want it, and set probe_session to a session you can never hold.")
+        if self._probe_last != "closed":
+            self._opened()
 
     def _act(self, changed: list[str], held: set[str], res: TickResult, now: float) -> None:
         """Book or propose for target sittings that opened or appeared, plus any retries."""

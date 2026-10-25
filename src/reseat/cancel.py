@@ -85,3 +85,38 @@ def cancel(client: EventsClient, store: Store, event_id: str, session_id: str, *
         "error": err, "readBack": sched.model_dump(by_alias=True) if sched else None}, res.status)
     return res
 
+
+def probe(client: EventsClient, store: Store, event_id: str, session_id: str,
+          last: str | None = None) -> str:
+    """Ask whether writes are open by cancelling a session the attendee does not hold. Journaled.
+
+    Returns "closed", "open" or "cancelled". The probe is a real CancelReservation call, so it is
+    journaled with its answer: 409 is closed, 400 or 404 is open (the live API answered 400 on
+    12 October 2026). A watcher probing every minute through a long hold passes the last answer
+    as `last`, and a repeat of it is not journaled again, so the journal keeps its real writes.
+    A 204 means the session was held and is now cancelled. Callers check the schedule first so
+    that never happens. If it does, it is journaled and read back like any cancel. Any other
+    answer is journaled and raised. Never retried.
+    """
+    try:
+        client.cancel(event_id, session_id)
+    except OperationClosed:
+        if last != "closed":
+            store.journal(event_id, OP, session_id, {"status": 409, "probe": True}, "probe-closed")
+        return "closed"
+    except ApiError as e:
+        if e.status in (400, 404):
+            if last != "open":
+                store.journal(event_id, OP, session_id, {"status": e.status, "probe": True}, "probe-open")
+            return "open"
+        store.journal(event_id, OP, session_id, {"status": e.status, "error": str(e), "probe": True},
+                      "probe-unclear")
+        raise
+    store.journal(event_id, OP, session_id, {"status": 204, "probe": True}, "probe-cancelled")
+    try:
+        after = client.get_schedule(event_id)
+        store.journal(event_id, "GetSchedule", session_id,
+                      {"held": session_id in after.reserved, "probe": True}, "readback-ok")
+    except ApiError as e:
+        store.journal(event_id, "GetSchedule", session_id, {"error": str(e)}, "readback-failed")
+    return "cancelled"

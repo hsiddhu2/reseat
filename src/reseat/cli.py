@@ -49,6 +49,14 @@ def _esc(v: object) -> str:
     return escape(_CONTROL.sub("?", str(v)))
 
 
+def _span(minutes: int) -> str:
+    """An outage length as a person reads it: 45 min, 2 h, 10 h 5 min."""
+    h, m = divmod(max(0, int(minutes)), 60)
+    if not h:
+        return f"{m} min"
+    return f"{h} h" if not m else f"{h} h {m} min"
+
+
 def _row(t: Table, *cells: str) -> None:
     t.add_row(*(_esc(c) for c in cells))
 
@@ -325,7 +333,7 @@ def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
 def probe(event: str = config.DEFAULT_EVENT,
           session_id: str = typer.Option(..., help="A session you will never hold, e.g. a keynote.")):
     """Check whether reservation writes are open. Never changes your schedule."""
-    c = _client()
+    c, st = _client(), _store()
     if session_id in c.get_schedule(event).reserved:
         con.print("[red]You hold that session. Probing would cancel it. Pick one you can never hold, "
                   "such as a keynote.[/red]")
@@ -337,9 +345,7 @@ def probe(event: str = config.DEFAULT_EVENT,
                   "[/red]")
         raise typer.Exit(2) from None
     try:
-        opened = c.writes_open(event, session_id)
-    except OperationClosed:
-        opened = False
+        answer = cancel_engine.probe(c, st, event, session_id)
     except (AuthRequired, NetworkError) as e:
         con.print(f"[yellow]No answer about writes: {_esc(e)}. Your schedule is unchanged.[/yellow]")
         raise typer.Exit(1) from None
@@ -347,8 +353,13 @@ def probe(event: str = config.DEFAULT_EVENT,
         con.print(f"[yellow]Unclear: the API answered {e.status} {_esc(e.message)}. That is not the 409 "
                   "that means closed, nor an answer that shows open. Your schedule is unchanged.[/yellow]")
         raise typer.Exit(1) from None
+    if answer == "cancelled":
+        con.print(f"[red]The probe cancelled a seat you held: {_esc(session_id)}. It was held after the "
+                  "check a moment ago. Writes are open. Reserve it again if you want it, and pick a probe "
+                  "session you can never hold.[/red]")
+        raise typer.Exit(3)
     con.print("[green]Writes look open: the API refused the cancel without a 409. A reversible booking "
-              "confirms it.[/green]" if opened
+              "confirms it.[/green]" if answer == "open"
               else "[yellow]Writes are closed (409).[/yellow]")
 
 
@@ -687,7 +698,7 @@ def _print_watch_event(ev: WatchEvent, st: Store | None = None,
     elif ev.kind in ("outage", "offline"):
         con.print(f"  [yellow]{ev.kind}: {_esc(d['message'])}[/yellow]")
     elif ev.kind == "back":
-        con.print(f"  [green]back after {d['minutes']} min[/green]")
+        con.print(f"  [green]back after {_span(d['minutes'])}[/green]")
     elif ev.kind == "signin":
         con.print(f"  [{'red' if d['state'] == 'needed' else 'green'}]{_esc(d['message'])}[/]")
     elif ev.kind in ("catalog", "removed", "unconfirmed", "not_booked"):

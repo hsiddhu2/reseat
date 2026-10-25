@@ -90,7 +90,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - A web app manifest and icon let the phone add re:Seat to its home screen and open it full screen.
 - On site the laptop checks the day's held and wanted sessions with GetSession every 20 seconds, at most 40 of them, inside the 120 per minute quota. A freed seat is booked the moment it shows.
 - One thread owns the API client and the local store. The web server only reads a snapshot it builds and hands approvals to it. Stopping the server lets a swap in progress finish first.
-- A sign-in lasts 7 days. Sign-ins live only in the running process, so a restart signs every device out. The page is plain HTTP: use it over Tailscale.
+- Wrong secrets at `/login` are limited to 5 a minute per device address and 30 a minute in all. Behind `--tailscale` the device address is the last `X-Forwarded-For` entry, the one the proxy adds, used only when the request comes from loopback. A sign-in lasts 7 days. Sign-ins live only in the running process, so a restart signs every device out. The page is plain HTTP: use it over Tailscale.
 - Demo mode, `reseat serve --demo`: the same server, watcher, router and swap on FakeEventsApi with a week of real sessions from the 1 October catalog and a scripted timeline (a seat opens, a new sitting appears, a room moves). The store is in memory. It never reads the keychain or `~/.reseat`, and every page says "Demo data". A **Demo** page, `/demo`, in demo mode only, has twenty-two scenarios and a guided tour. Each changes the fake API (a seat opens or fills mid-swap, a repeat appears, writes close and reopen through the probe session, the API drops, the catalog empties, sign-in expires) or moves the demo clock forward to an on-site moment, and runs one real sweep. Beside the list it shows what AWS did, what re:Seat did, the week before and after for each day touched (the net change, start against end, so a rolled-back swap is no change), and each notification as the phone shows it. Its endpoint, `POST /demo/<name>`, needs the same cookie and header as Approve and does not exist on a real server. `--push <topic>` turns on the same ntfy push as the real server, with demo codes and titles. `scripts/build_site.py` renders the same views to static HTML, including the Week page after a real swap on the fake, for the click-through demo on GitHub Pages.
 - Designed for a laptop left in the hotel room, plugged in and awake. The phone gets ntfy notifications. Opening the web app on the phone over Tailscale is optional. See "Running it all week" in the README.
 
@@ -126,7 +126,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 ## Key flows
 
 **When writes open** (scheduled for 8 October, first seen open on 12 October)
-1. Probe with `CancelReservation` on a session never held. 409 while closed. Once open, the spec documents 404 and the live API answered 400 on 12 October, so either reads as open. Never changes the schedule.
+1. Probe with `CancelReservation` on a session never held. 409 while closed. Once open, the spec documents 404 and the live API answered 400 on 12 October, so either reads as open. Never changes the schedule. Each probe is a real cancel call, so it is journaled with its answer.
 2. Book in priority order, 10 per call, inside 30 per minute.
 3. On `sessionFull` walk the fallback tree. On `scheduleConflict` record `conflictsWith` and move on.
 4. Read back. Report what landed, what failed and why.

@@ -329,6 +329,33 @@ def test_login_rate_limit_lifts_after_a_minute():
     assert isinstance(st.app.login(SECRET), str)
 
 
+def test_login_limit_is_per_device_so_a_guesser_cannot_lock_out_the_phone():
+    st = phone()
+    for _ in range(S.LOGIN_TRIES):
+        assert st.app.login("wrong", "127.0.0.1>100.64.0.9") is None
+    assert st.app.login(SECRET, "127.0.0.1>100.64.0.9") is False
+    assert isinstance(st.app.login(SECRET, "127.0.0.1>100.64.0.2"), str)
+
+
+def test_login_shared_limit_caps_guesses_spread_over_many_devices():
+    clk = SimpleNamespace(t=1_000_000.0)
+    st = phone(clock=lambda: clk.t)
+    for i in range(S.LOGIN_TRIES_ALL):
+        assert st.app.login("wrong", f"10.0.0.{i}") is None
+    assert st.app.login(SECRET, "10.0.9.9") is False
+    clk.t += 61
+    assert isinstance(st.app.login(SECRET, "10.0.9.9"), str)
+    assert st.app._client_failures == {}
+
+
+def test_login_tracks_a_bounded_number_of_devices():
+    st = phone()
+    for i in range(S.LOGIN_CLIENTS + 5):
+        st.app.login("wrong", f"d{i}")
+        st.app._failures.clear()             # keep the shared limit out of this test
+    assert len(st.app._client_failures) == S.LOGIN_CLIENTS
+
+
 def test_loopback_without_secret_checks_host_and_header_on_writes():
     st = phone(body="targets:\n- code: ARC301\n- code: SEC201\n")
     assert not st.app.auth_required
@@ -644,3 +671,66 @@ def test_push_queue_full_drops_and_counts():
     for _ in range(101):
         p(WatchEvent("back", 0, {"message": "re:Seat back"}))
     assert p.failures == 1
+
+
+def test_login_over_http_counts_per_forwarded_device_and_passes_the_key():
+    """Through Tailscale's proxy every peer is 127.0.0.1. The handler keys on the last
+    X-Forwarded-For entry, the one the proxy adds."""
+    st = phone()
+    seen = []
+    real = st.app.login
+    st.app.login = lambda secret, client="": seen.append(client) or real(secret, client)
+    guesser, phone_ip = {"X-Forwarded-For": "100.64.0.9"}, {"X-Forwarded-For": "100.64.0.2"}
+    with serving(st.app) as http:
+        for _ in range(S.LOGIN_TRIES):
+            assert http.post("/login", data={"secret": "wrong"}, headers=guesser).status_code == 401
+        assert http.post("/login", data={"secret": SECRET}, headers=guesser).status_code == 429
+        assert http.post("/login", data={"secret": SECRET}, headers=phone_ip).status_code == 303
+        http.cookies.clear()
+        assert http.post("/login", data={"secret": SECRET}).status_code == 303
+    assert seen[0] == "127.0.0.1>100.64.0.9"
+    assert seen[-2:] == ["127.0.0.1>100.64.0.2", "127.0.0.1"]
+
+
+def test_login_forged_first_forwarded_entry_cannot_lock_out_the_phone():
+    """A guesser sends "<phone ip>" and the proxy appends its real address. It lands in its own bucket."""
+    st = phone()
+    forged = {"X-Forwarded-For": "100.64.0.2, 100.64.0.9"}
+    with serving(st.app) as http:
+        for _ in range(S.LOGIN_TRIES):
+            assert http.post("/login", data={"secret": "wrong"}, headers=forged).status_code == 401
+        assert http.post("/login", data={"secret": SECRET}, headers=forged).status_code == 429
+        assert http.post("/login", data={"secret": SECRET},
+                         headers={"X-Forwarded-For": "100.64.0.2"}).status_code == 303
+    assert set(st.app._client_failures) == {"127.0.0.1>100.64.0.9"}
+
+
+@pytest.mark.parametrize("peer, fwd, key", [
+    ("127.0.0.1", None, "127.0.0.1"),
+    ("127.0.0.1", "100.64.0.9", "127.0.0.1>100.64.0.9"),
+    ("::1", "1.2.3.4 , 100.64.0.9 ", "::1>100.64.0.9"),          # last entry, the proxy's
+    ("127.0.0.1", "100.64.0.2, 100.64.0.9", "127.0.0.1>100.64.0.9"),
+    ("127.0.0.1", "", "127.0.0.1"),
+    ("127.0.0.1", "100.64.0.9,", "127.0.0.1"),                   # empty last entry: the peer only
+    ("100.64.0.7", "100.64.0.2", "100.64.0.7"),                  # forged header from a real peer is ignored
+    ("100.64.0.7", None, "100.64.0.7"),
+])
+def test_client_key_trusts_forwarded_for_only_from_loopback(peer, fwd, key):
+    from http.client import HTTPMessage
+    handler = S.make_handler(phone().app)
+    h = handler.__new__(handler)
+    h.client_address = (peer, 50000)
+    h.headers = HTTPMessage()
+    if fwd is not None:
+        h.headers["X-Forwarded-For"] = fwd
+    assert h._client_key() == key
+
+
+def test_client_key_caps_a_long_forwarded_header():
+    from http.client import HTTPMessage
+    handler = S.make_handler(phone().app)
+    h = handler.__new__(handler)
+    h.client_address = ("127.0.0.1", 50000)
+    h.headers = HTTPMessage()
+    h.headers["X-Forwarded-For"] = "a" * 5000
+    assert h._client_key() == "127.0.0.1>" + "a" * 64

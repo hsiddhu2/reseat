@@ -62,7 +62,9 @@ DEFAULT_PORT = 8490
 COOKIE = "reseat_session"
 COOKIE_DAYS = 7
 LINK_TTL = 3600
-LOGIN_TRIES = 5          # failed sign-ins allowed per minute
+LOGIN_TRIES = 5          # failed sign-ins allowed per minute, per device address
+LOGIN_TRIES_ALL = 30     # failed sign-ins allowed per minute from all addresses together
+LOGIN_CLIENTS = 256      # addresses tracked at once. Past this, only the shared limit applies.
 APPROVE_WAIT = 120       # seconds an approve may take: check, cancel, reserve, read-backs
 PLAN_ID = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 MAX_BODY = 2048
@@ -72,6 +74,13 @@ REFRESH_EVERY = 20       # seconds between snapshot refreshes, so leave-now neve
 
 class ServeError(Exception):
     """The server cannot start as asked. The message says what to fix."""
+
+
+def _expire(q: deque[float], now: float) -> int:
+    """Drop failures older than a minute. Returns how many are left."""
+    while q and q[0] < now - 60:
+        q.popleft()
+    return len(q)
 
 
 def vegas(ts: float) -> datetime:
@@ -107,7 +116,8 @@ class App:
         self._lock = threading.Lock()
         self._link_code = secrets.token_urlsafe(24)
         self._link_expires = clock() + LINK_TTL
-        self._failures: deque[float] = deque()
+        self._failures: deque[float] = deque()                 # every address together
+        self._client_failures: dict[str, deque[float]] = {}     # one per device address
         self._snapshot: dict[str, Any] = {}
         self._held_known = False
         self.tracker = Tracker()
@@ -132,17 +142,27 @@ class App:
             self._link_code = ""              # spent
             return self._new_token()
 
-    def login(self, secret: str) -> str | None | bool:
-        """Token on success, None on a wrong secret, False when rate limited."""
+    def login(self, secret: str, client: str = "") -> str | None | bool:
+        """Token on success, None on a wrong secret, False when rate limited.
+
+        Wrong guesses count per device address, so one device guessing cannot lock the
+        attendee's phone out. A shared limit across all addresses still caps guessing overall.
+        """
         now = self.clock()
         with self._lock:
-            while self._failures and self._failures[0] < now - 60:
-                self._failures.popleft()
-            if len(self._failures) >= LOGIN_TRIES:
+            _expire(self._failures, now)
+            for key in [k for k, q in self._client_failures.items() if not _expire(q, now)]:
+                del self._client_failures[key]
+            mine = self._client_failures.get(client)
+            if len(self._failures) >= LOGIN_TRIES_ALL or (mine is not None and len(mine) >= LOGIN_TRIES):
                 return False
             if self.secret and hmac.compare_digest(secret.encode(), self.secret.encode()):
                 return self._new_token()
             self._failures.append(now)
+            if mine is None and len(self._client_failures) < LOGIN_CLIENTS:
+                mine = self._client_failures[client] = deque()
+            if mine is not None:
+                mine.append(now)
             return None
 
     def _new_token(self) -> str:
@@ -532,6 +552,18 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
         def _authorized(self) -> bool:
             return app.authorized(self.headers.get("Cookie"), self.headers.get("Host"))
 
+        def _client_key(self) -> str:
+            """The device a sign-in came from, for the per-device limit only, never for access.
+
+            With --tailscale every request arrives from 127.0.0.1 through Tailscale's proxy, so the
+            last X-Forwarded-For address is used, and only when the peer is loopback. The last entry is
+            the one the proxy adds, whether it overwrites the header or appends to one the device sent,
+            so a device cannot claim another device's address. The shared limit still caps every guess.
+            """
+            peer = str(self.client_address[0])
+            fwd = (self.headers.get("X-Forwarded-For") or "").split(",")[-1].strip()[:64]
+            return f"{peer}>{fwd}" if peer in LOOPBACK and fwd else peer
+
         def do_GET(self) -> None:  # noqa: N802
             url = urlsplit(self.path)
             if url.path == "/open" and app.auth_required:
@@ -581,7 +613,7 @@ def make_handler(app: App) -> type[BaseHTTPRequestHandler]:
             body = self.rfile.read(length) if length else b""
             if url.path == "/login" and app.auth_required:
                 secret = parse_qs(body.decode(errors="replace")).get("secret", [""])[0]
-                tok = app.login(secret)
+                tok = app.login(secret, self._client_key())
                 if tok is False:
                     self._send(429, b"Too many tries. Wait a minute.", "text/plain")
                 elif tok is None:

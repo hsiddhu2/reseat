@@ -62,3 +62,27 @@ The journal has 28 outages between 14 and 20 October, each with a start and an e
 ## Result
 
 Seats do open on full sessions, every day, and some close again within minutes. Repeat sittings keep being added. The watcher sees both. It booked nothing, because none of them was a session the attendee asked for. This file will be updated with the counts up to submission.
+
+## Update, 24 October
+
+Counted the same way, read-only, from 2026-10-12 20:12 to 2026-10-24 21:06 PDT, at re:Seat `dd09555`.
+
+- **Sweeps:** 6,748 sweeps of the whole catalog.
+- **Seats that opened on full sessions:** 30 openings on 23 sessions. 29 went to very limited and 1 to available. Chalk talks had 20 openings on 15 sessions, workshops 7 on 6, and code talks 3 on 2. Four were full again within 10 minutes. A full session opened on 11 of the 13 days.
+- **Target talks:** none of the 23 sessions was a sitting the attendee targets, so the watcher booked nothing.
+- **Writes:** the watcher reserved and cancelled nothing. The only reserve and cancel rows in the journal are the two round trips on 12 October.
+- **Sessions added:** 62 sessions were added from 13 October, and 51 of them are still listed. 31 of the 62 were added from 21 October. The 51 by type: 16 chalk talks, 11 breakouts, 9 event services, 5 keynotes, 4 lightning talks, 3 featured experiences, 2 workshops and 1 code talk.
+- **Connection drops:** the journal has 36 outages in all, 8 of them from 21 October. The watcher recovered from each one on its own.
+
+Seat bands now:
+
+```
+unavailable  1373
+veryLimited    56
+limited        35
+available      15
+no band       794
+total        2273
+```
+
+1,373 of the 1,479 sessions that take reservations are full.

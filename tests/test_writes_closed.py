@@ -7,8 +7,10 @@ plus the clash check that decides whether a swap is proposed at all.
 import threading
 import time
 
+import httpx
 import pytest
 
+from reseat import cancel
 from reseat import rules as R
 from reseat import serve as S
 from reseat.client import EventsClient, QuotaTracker
@@ -364,9 +366,109 @@ def test_probe_never_uses_a_session_that_is_held(clock):
     assert "K1" in fake.schedule.reserved
 
 
+def _probe_rows(w):
+    rows = [r for r in reversed(w.store.journal_entries(EV)) if r["op"] == "CancelReservation"]
+    return [r["outcome"] for r in rows]
+
+
+def test_watcher_probe_is_journaled_with_its_answer(clock):
+    fake, w, _ = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()                                    # the reserve gets 409: hold starts
+    clock.sleep(60)
+    w.tick()                                    # probe: 409
+    fake.closed = False
+    clock.sleep(60)
+    assert w.tick().booked == ["A1"]            # probe: 404, open
+    assert _probe_rows(w) == ["probe-closed", "probe-open"]
+
+
+def test_watcher_long_hold_journals_one_probe_closed_then_one_probe_open(clock):
+    """Probing every minute through a long 409 hold journals a change of answer, not each repeat."""
+    fake, w, events = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    for _ in range(20):                         # twenty minutes closed, probed each minute
+        clock.sleep(60)
+        w.tick()
+    assert fake.counts["CancelReservation"] >= 15 and fake.counts["ReserveSessions"] <= 3
+    assert _probe_rows(w) == ["probe-closed"]
+    fake.closed = False
+    clock.sleep(60)
+    assert w.tick().booked == ["A1"]
+    assert _probe_rows(w) == ["probe-closed", "probe-open"]
+    assert [e.data["state"] for e in events if e.kind == "writes"] == ["closed", "open"]
+
+
+def test_watcher_probe_after_an_unclear_answer_journals_the_next_answer_again(clock):
+    fake, w, _ = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    clock.sleep(60)
+    w.tick()                                    # probe-closed
+    fake.fail_next("CancelReservation", 503)
+    clock.sleep(60)
+    w.tick()                                    # probe-unclear
+    clock.sleep(60)
+    w.tick()                                    # 409 again: journaled again after the gap
+    assert _probe_rows(w) == ["probe-closed", "probe-unclear", "probe-closed"]
+    assert fake.schedule.reserved == set()
+
+
+def _drop_cancel(fake):
+    def handle(req):
+        if req.method == "DELETE":
+            raise httpx.ConnectError("Connection reset", request=req)
+        return fake._handle(req)
+    return httpx.MockTransport(handle)
+
+
+@pytest.mark.parametrize("fault", ["429", "503", "401", "dropped"])
+def test_watcher_probe_without_a_clear_answer_keeps_the_hold_and_journals_it(clock, fault):
+    """429 twice, 5xx, expired sign-in or a dropped connection: no answer, so the hold stays and
+    nothing is reserved. The probe is journaled as unclear and never retried beyond the one 429 wait."""
+    fake, w, events = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    assert w.writes_closed_until is not None
+    fake.closed = False
+    if fault == "429":
+        fake.fail_next("CancelReservation", 429, times=2)
+    elif fault == "dropped":
+        w.client.http = httpx.Client(base_url=w.client.base_url, transport=_drop_cancel(fake))
+    else:
+        fake.fail_next("CancelReservation", int(fault))
+    clock.sleep(60)
+    res = w.tick()
+    assert res.booked == [] and fake.counts["ReserveSessions"] == 1
+    assert w.writes_closed_until is not None
+    assert _probe_rows(w) == ["probe-unclear"]
+    sent = {"429": 2, "dropped": 0}.get(fault, 1)            # a dropped DELETE never reaches the fake
+    assert fake.counts.get("CancelReservation", 0) == sent
+    assert [e.data["state"] for e in events if e.kind == "writes"] == ["closed"]
+    assert fake.schedule.reserved == set()
+
+
 def test_paused_and_resumed_are_pushed():
     from reseat import push
     from reseat.watcher import WatchEvent
     def title(state):
         return push.message(WatchEvent("writes", 0, {"state": state, "message": "m"}), str)[0]
     assert title("closed") == "Booking paused" and title("open") == "Booking resumed"
+
+
+def test_watcher_probe_that_cancels_a_held_seat_says_so(clock, monkeypatch):
+    """A seat held after the schedule check, then cancelled by the probe: the attendee is told."""
+    fake, w, events = probe_env(clock)
+    fake.closed = True
+    fake.set_band("A1", "available")
+    w.tick()
+    monkeypatch.setattr(cancel, "probe", lambda *a, **k: "cancelled")
+    clock.sleep(60)
+    w.tick()
+    errors = [e.data["message"] for e in events if e.kind == "error"]
+    assert any("cancelled a seat you held" in m for m in errors)

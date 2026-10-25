@@ -311,11 +311,54 @@ def test_probe_refuses_a_session_it_cannot_read_and_sends_nothing(cli_env):
     AuthRequired(401, "sign in again", "CancelReservation"),
 ])
 def test_probe_without_an_answer_says_so(cli_env, monkeypatch, client, err):
+    _, store, _ = cli_env
     def boom(*_a):
         raise err
-    monkeypatch.setattr(client, "writes_open", boom)
+    monkeypatch.setattr(client, "cancel", boom)
     r = runner.invoke(cli.app, ["probe", "--session-id", "S-KEY1"])
     assert r.exit_code == 1 and "No answer about writes" in r.output and "answered 0" not in r.output
+    row = store.journal_entries(EV)[0]
+    assert (row["op"], row["outcome"]) == ("CancelReservation", "probe-unclear")    # sent, no answer
+
+
+@pytest.mark.parametrize("setup, outcome", [
+    (lambda f: setattr(f, "closed", True), "probe-closed"),
+    (lambda f: f.fail_next("CancelReservation", 400), "probe-open"),
+    (lambda f: None, "probe-open"),                       # the fake answers 404 for a session not held
+    (lambda f: f.fail_next("CancelReservation", 503), "probe-unclear"),
+])
+def test_probe_cancel_is_journaled_with_its_answer(cli_env, setup, outcome):
+    fake, store, _ = cli_env
+    setup(fake)
+    runner.invoke(cli.app, ["probe", "--session-id", "S-KEY1"])
+    rows = [r for r in store.journal_entries(EV) if r["op"] == "CancelReservation"]
+    assert [r["outcome"] for r in rows] == [outcome]
+    assert json.loads(rows[0]["request"]) == "S-KEY1" and json.loads(rows[0]["response"])["probe"] is True
+
+
+def test_probe_that_cancels_a_held_seat_is_journaled_as_a_cancel(fake, client, tmp_path):
+    """A 204 means the session was held. The callers check first, but the record must show it."""
+    st = Store(tmp_path / "db.sqlite")
+    fake.schedule.reserved.add("S-KEY1")
+    assert C.probe(client, st, EV, "S-KEY1") == "cancelled"
+    rows = st.journal_entries(EV)                                   # newest first
+    assert [(r["op"], r["outcome"]) for r in rows] == [("GetSchedule", "readback-ok"),
+                                                       ("CancelReservation", "probe-cancelled")]
+    assert json.loads(rows[0]["response"])["held"] is False
+    assert "S-KEY1" not in fake.schedule.reserved
+
+
+def test_probe_journals_a_change_of_answer_not_each_repeat(fake, client, tmp_path):
+    """A watcher probing every minute through a long 409 hold must not bury the real writes."""
+    st = Store(tmp_path / "db.sqlite")
+    fake.closed = True
+    last = None
+    for _ in range(5):
+        last = C.probe(client, st, EV, "S-KEY1", last)
+    assert last == "closed" and fake.counts["CancelReservation"] == 5
+    fake.closed = False
+    assert C.probe(client, st, EV, "S-KEY1", last) == "open"
+    assert [r["outcome"] for r in st.journal_entries(EV)] == ["probe-open", "probe-closed"]
 
 
 # ---------------------------------------------------------------------- a code changed under the same id
@@ -395,3 +438,48 @@ def test_rules_check_on_an_over_cap_file_reads_as_one_plain_problem(cli_env):
     assert "has problems:\n  3 targets, watch_cap is 2. Remove targets, or raise watch_cap" in r.output
     assert "Value error" not in r.output and "rules: " not in r.output
     assert sum(fake.counts.values()) == 0          # a bad file stops before any call
+
+
+@pytest.mark.parametrize("minutes, shown", [(0, "0 min"), (45, "45 min"), (60, "1 h"), (600, "10 h"),
+                                            (605, "10 h 5 min"), (-3, "0 min")])
+def test_outage_length_reads_in_hours_past_an_hour(minutes, shown, capsys):
+    from reseat.watcher import WatchEvent
+    assert cli._span(minutes) == shown
+    cli._print_watch_event(WatchEvent("back", 0, {"minutes": minutes, "message": "re:Seat back"}))
+    assert f"back after {shown}" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("fault", ["401", "dropped"])
+def test_probe_expired_sign_in_or_dropped_connection_through_the_fake(cli_env, client, fault):
+    """The same no-answer paths, produced at the HTTP layer rather than by patching the client."""
+    import httpx
+    fake, store, _ = cli_env
+    if fault == "401":
+        fake.fail_next("CancelReservation", 401)
+    else:
+        def handle(req):
+            if req.method == "DELETE":
+                raise httpx.ConnectError("Connection reset", request=req)
+            return fake._handle(req)
+        client.http = httpx.Client(base_url=client.base_url, transport=httpx.MockTransport(handle))
+    r = runner.invoke(cli.app, ["probe", "--session-id", "S-KEY1"])
+    assert r.exit_code == 1 and "No answer about writes" in r.output and "Traceback" not in r.output
+    rows = [x for x in store.journal_entries(EV) if x["op"] == "CancelReservation"]
+    assert [x["outcome"] for x in rows] == ["probe-unclear"] and fake.schedule.reserved == set()
+
+
+def test_probe_that_cancels_a_held_seat_journals_a_failed_read_back(fake, client, tmp_path):
+    st = Store(tmp_path / "db.sqlite")
+    fake.schedule.reserved.add("S-KEY1")
+    fake.fail_next("GetSchedule", 503, times=2)
+    assert C.probe(client, st, EV, "S-KEY1") == "cancelled"
+    assert [(r["op"], r["outcome"]) for r in st.journal_entries(EV)] == [
+        ("GetSchedule", "readback-failed"), ("CancelReservation", "probe-cancelled")]
+    assert fake.counts["CancelReservation"] == 1                    # never retried
+
+
+def test_probe_cli_says_loudly_when_it_cancelled_a_held_seat(cli_env, monkeypatch):
+    """Held between the schedule check and the probe: never report that as 'writes look open'."""
+    monkeypatch.setattr(C, "probe", lambda *a, **k: "cancelled")
+    r = runner.invoke(cli.app, ["probe", "--session-id", "S-KEY1"])
+    assert r.exit_code == 3 and "cancelled a seat you held" in r.output and "look open" not in r.output
