@@ -290,3 +290,34 @@ def test_stale_blocks_push_has_one_update_button_and_counts():
     title, body = push.message(ev, str)
     assert title == "Leave-now blocks out of date" and "1 to add, 2 to change." in body
     assert "Tok_" not in body and push.page_for(ev) == "/today"
+
+
+def test_a_restart_never_repeats_a_reminder_already_sent():
+    """Each restart of reseat serve used to push every tight-walk warning again."""
+    from reseat.store import Store
+    st = Store(":memory:")
+    warnings = ["2026-12-02: SVS401 to ARC301, about 35 min walk in a 15 min gap"]
+
+    def fresh(log):
+        return Reminders(lambda kind, **d: log.append(kind), sent=st.reminders_sent("ev"),
+                         remember=lambda key: st.remember_reminder("ev", key))
+    first, second = [], []
+    fresh(first).tight(at("2026-11-25", "09:00"), warnings)
+    fresh(second).tight(at("2026-11-25", "09:05"), warnings)      # the restart
+    assert first == ["tight"] and second == []
+    other = ["2026-12-03: SEC201 to DOP302, about 20 min walk in a 5 min gap"]
+    fresh(second).tight(at("2026-11-25", "09:10"), other)          # a new tight walk still goes out
+    assert second == ["tight"]
+
+
+def test_saved_reminder_keys_expire_and_plan_ids_are_never_saved():
+    from reseat.store import Store
+    clock = {"t": 1_796_000_000.0}
+    st = Store(":memory:", clock=lambda: clock["t"])
+    st.remember_reminder("ev", "tight:old")
+    clock["t"] += 15 * 86400
+    st.remember_reminder("ev", "tight:new")
+    assert st.reminders_sent("ev") == {"tight:new"}
+    rem = Reminders(lambda kind, **d: None, remember=lambda key: st.remember_reminder("ev", key))
+    rem._once("expiring:" + "p" * 22)
+    assert not any(k.startswith("expiring:") for k in st.reminders_sent("ev"))

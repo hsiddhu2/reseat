@@ -39,7 +39,7 @@ Seats free up after opening day, and AWS adds repeat sittings for popular sessio
 | **Asks on your phone** | A swap proposal arrives as a notification with Swap now and Keep. Alerts can also go by email or text through an SNS topic in your own AWS account. | None from the phone. It never holds a token. Amazon SNS for email and text. |
 | **Plans with your own AI** | Four MCP tools let the AI app you already use search, find free slots, check a plan and draft your rules. | Local catalog, GetSchedule. The planning tools never reserve or cancel. |
 
-**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,225 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
+**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,228 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
 
 ## It has to be right the first time
 

@@ -66,6 +66,13 @@ CREATE TABLE IF NOT EXISTS sweeps (
     with_abstracts INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS reminders_sent (
+    event_id TEXT NOT NULL,
+    key      TEXT NOT NULL,
+    ts       REAL NOT NULL,
+    PRIMARY KEY (event_id, key)
+);
+
 CREATE TABLE IF NOT EXISTS locks (
     name  TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
@@ -391,6 +398,26 @@ class Store:
         r = self.db.execute("SELECT MAX(ts) AS ts FROM sweeps WHERE event_id=?",
                             (event_id,)).fetchone()
         return r["ts"] if r and r["ts"] else None
+
+    # ------------------------------------------------------------------ reminders
+
+    def reminders_sent(self, event_id: str, keep_days: float = 14) -> set[str]:
+        """Keys of reminders already pushed, so a restart of reseat serve never sends one twice.
+        Keys older than `keep_days` are dropped: every reminder is about one day or one session."""
+        with self.db:
+            self.db.execute("DELETE FROM reminders_sent WHERE event_id=? AND ts<?",
+                            (event_id, self.clock() - keep_days * 86400))
+        return {r["key"] for r in self.db.execute(
+            "SELECT key FROM reminders_sent WHERE event_id=?", (event_id,))}
+
+    def remember_reminder(self, event_id: str, key: str) -> None:
+        """Best effort: a busy database must not stop the web app's refresh."""
+        try:
+            with self.db:
+                self.db.execute("INSERT OR IGNORE INTO reminders_sent VALUES (?,?,?)",
+                                (event_id, key, self.clock()))
+        except sqlite3.Error:
+            pass
 
     # ------------------------------------------------------------------ locks
 

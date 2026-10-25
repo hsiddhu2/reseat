@@ -522,3 +522,66 @@ def test_every_response_carries_the_same_origin_referrer_policy(served):
     signed_in(app, http)
     for path in ("/login", "/", "/today", "/api/state", "/static/app.js", "/no-such-page"):
         assert http.get(path).headers["Referrer-Policy"] == "same-origin", path
+
+
+# ---------------------------------------------------------------------- a restart of reseat serve
+
+
+RESTART_CATALOG = [
+    mk("H1-session-id", "SEC201-R", "2026-12-01", "10:00"),                        # MGM Grand
+    mk("H3-session-id", "DOP302", "2026-12-01", "11:05").model_copy(update={"venue": "Wynn"}),
+    mk("P1-session-id", "ARC306", "2026-12-02", "08:30", band="unavailable"),     # the pinned sitting
+    mk("O1-session-id", "ARC306-R1", "2026-12-03", "14:00"),                      # another, with seats
+]
+RESTART_RULES = 'home_venue: Wynn\ntargets:\n- {session_id: "P1-session-id", repeats: false}\n'
+
+
+def _serve_once(path, now):
+    """One run of reseat serve over the store file at `path`: a sweep, then a refresh at `now`."""
+    fake = FakeEventsApi(sessions=[s.model_copy() for s in RESTART_CATALOG])
+    fake.schedule.reserved.update({"H1-session-id", "H3-session-id"})
+    client = EventsClient(token_provider=lambda: fake.token, quota=QuotaTracker(),
+                          transport=fake.transport())
+    store = Store(path)
+    rules = R.parse(RESTART_RULES)
+    w = Watcher(client, store, rules, EV)
+    clock = {"t": now}
+    app = S.App(w, store, rules, EV, port=0, clock=lambda: clock["t"])
+    pushed = []
+    w.subscribe(lambda ev: ev.kind in ("tight", "briefing", "leave_soon", "leave", "other_sitting")
+                and pushed.append(ev))
+    w.tick()
+    return app, store, clock, pushed
+
+
+def test_a_restart_of_serve_never_repeats_a_reminder_already_pushed(tmp_path):
+    """Sent reminder keys live in the store file, so a second App over it pushes none of them again."""
+    from datetime import UTC, datetime
+
+    from reseat import guard
+    from reseat.campus import VEGAS
+
+    def vegas_at(hm, d="2026-12-01"):
+        return datetime.fromisoformat(f"{d}T{hm}").replace(tzinfo=VEGAS).timestamp()
+    db = tmp_path / "reseat.db"
+    # H1 10:00 at MGM Grand from home at Wynn: leave at 08:44 PST, so leave in 10 minutes from 08:34.
+    app, store, clock, first = _serve_once(db, vegas_at("08:40"))
+    clock["t"] = vegas_at("08:45")
+    app.refresh()
+    assert sorted(e.kind for e in first) == ["briefing", "leave", "leave_soon", "other_sitting", "tight"]
+    store.close()
+
+    app, store, clock, second = _serve_once(db, vegas_at("08:41"))     # the restart, inside every window
+    clock["t"] = vegas_at("08:46")
+    app.refresh()
+    assert second == []
+
+    blocks, _ = guard.leave_blocks(guard.held_sessions(store, EV, ["H1-session-id", "H3-session-id"]),
+                                     app.rules)
+    h3 = next(b for b in blocks if b.code == "DOP302")
+    clock["t"] = datetime.fromisoformat(h3.start).replace(tzinfo=UTC).timestamp()
+    app.refresh()                                       # a new key, the leave for DOP302, still goes out
+    clock["t"] = vegas_at("07:00", "2026-12-02")
+    app.refresh()                                       # and the next day's briefing
+    assert [e.kind for e in second] == ["leave", "briefing"] and second[0].data["code"] == "DOP302"
+    store.close()

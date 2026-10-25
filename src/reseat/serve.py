@@ -124,7 +124,9 @@ class App:
         self.tracker = Tracker()
         self.blocks_state: dict[str, Any] | None = None     # leave-now blocks out of date, with a token
         self._blocks_key: str | None = None
-        self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid))
+        self.reminders = Reminders(watcher.emit, lambda sid: store.band_history(event_id, sid),
+                                   sent=store.reminders_sent(event_id),
+                                   remember=lambda key: store.remember_reminder(event_id, key))
         self._replied: deque[str] = deque(maxlen=200)     # live plan ids already tapped
         self._ntfy_books: list[str] = []                    # Las Vegas day of each Book tap that ran
         watcher.subscribe(self._on_event)

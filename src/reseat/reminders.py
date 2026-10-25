@@ -5,7 +5,8 @@ are reads of the local store only: nothing here calls the Events API or writes a
 
 Rules this module exists to respect:
 - Once each. A reminder is keyed by what it is about, so a second refresh never sends it twice.
-  The keys live in memory: a restart inside a reminder's window can send that one again.
+  The web app saves each key in the local store, so a restart of reseat serve never sends one
+  again. A plan id is never saved: proposals die with the process.
 - Codes and titles only. Session ids stay on the laptop.
 - Session times are Las Vegas local time, leave-now blocks are UTC. Both go through campus helpers.
 """
@@ -55,6 +56,7 @@ class Reminders:
     history: History = lambda sid: []
     sent: set[str] = field(default_factory=set)
     wanted_at: dict[str, float] = field(default_factory=dict)
+    remember: Callable[[str], None] = lambda key: None   # saves a sent key, so a restart never repeats it
 
     def check(self, now: float, held: list[Session], blocks: list[guard.Block],
               wanted: Iterable[Session], waiting: int, fresh: bool = True) -> None:
@@ -96,6 +98,8 @@ class Reminders:
         if len(self.sent) >= MAX_SENT:
             self.sent.clear()          # a week holds a few hundred keys; this only bounds a runaway
         self.sent.add(key)
+        if not key.startswith("expiring:"):     # a plan id never goes to disk. Proposals die with the process
+            self.remember(key)
         return True
 
     def _briefing(self, now: float, held: list[Session], blocks: list[guard.Block], waiting: int) -> None:
@@ -140,6 +144,7 @@ class Reminders:
                 self.emit("leave_soon", code=b.code, at=f"{vegas(at):%H:%M}", message=how(b))
             if at <= now < start and self._once(key):
                 self.sent.add(left)                     # a leave time that later moves never reads backwards
+                self.remember(left)
                 self.emit("leave", code=b.code, message=how(b))
 
     def _wanted(self, now: float, held: list[Session], wanted: Iterable[Session]) -> None:
