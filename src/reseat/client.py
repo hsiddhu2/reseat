@@ -3,7 +3,7 @@
 Design rules, all from the developer guide:
 - Every operation has its own per-minute quota. Reserve and favorite count sessions,
   not requests. We keep a token bucket per operation and never send more than we have.
-- 429 carries Retry-After. We wait that long, once, then retry. A refused request
+- 429 carries Retry-After. We wait that long, at most 60 seconds,, once, then retry. A refused request
   spends no quota.
 - 401 means refresh once and retry once. A second 401 means sign in again.
 - 409 means the operation is closed. Retrying will not help. We surface it.
@@ -186,7 +186,7 @@ class EventsClient:
             except AuthError as e:
                 raise AuthRequired(401, str(e), op) from None
             if r.status_code == 429:
-                retry_after = float(r.headers.get("Retry-After", "60"))
+                retry_after = _retry_after(r.headers.get("Retry-After"))
                 if _attempt == 0:
                     self.sleep(retry_after)
                     continue
@@ -340,6 +340,16 @@ def _check_batch(ids: list[str]) -> list[str]:
     if len(set(clean)) != len(clean):
         raise ValueError("Duplicate session IDs in one call.")
     return clean
+
+
+def _retry_after(value: str | None) -> float:
+    """Seconds to wait after a 429. The API sends whole seconds. Anything else waits 60, the longest a
+    per-minute quota can need, so an odd header never turns into an error that skips the read-back."""
+    try:
+        seconds = float(value) if value is not None else 60.0
+    except ValueError:
+        return 60.0
+    return seconds if 0 <= seconds <= 60 else 60.0
 
 
 def _msg(r: httpx.Response) -> str:

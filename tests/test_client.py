@@ -208,3 +208,13 @@ def test_an_error_body_that_is_not_an_object_still_raises_api_error(fake, client
     with pytest.raises(ApiError) as e:
         client2.cancel("reinvent2026", "S-KEY1")
     assert e.value.status == 400
+
+
+def test_retry_after_that_is_not_seconds_waits_a_minute_instead_of_raising():
+    """A 429 applies nothing. An odd header must not become an error that skips the read-back."""
+    from reseat.client import _retry_after
+    assert _retry_after("7") == 7
+    assert _retry_after(None) == 60
+    assert _retry_after("Wed, 21 Oct 2026 07:28:00 GMT") == 60
+    assert _retry_after("-5") == 60
+    assert _retry_after("3600") == 60
