@@ -110,7 +110,7 @@ Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). 
 - On the evening of 8 October, the day writes were scheduled to open through the API, ListSessions answered 200 with `totalCount` 0 and no items, and GetSession answered 404 for every session tried, including held ones. GetSchedule, GetEvent and ListEvents still worked.
 - Reservations made after seating opened carry ids from the same ranges as the rest of the catalog. An earlier version of this page said they all begin `17842318` and that no 1 October id did. Both were wrong, see the 12 October section.
 - GetSchedule lists `reserved` and `favorites` as arrays of unique ids. The spec does not define their order.
-- The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, 404 on GetSession, GetSchedule still answering, and the official MCP server returning the same empty list. It was also raised in a post on [the hackathon's discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
+- The same condition was reported publicly on 3 October by another developer: `totalCount` 0, 404 on GetSession, GetSchedule still answering, and the official MCP server returning the same empty list. It was also raised in a post on [an AWS Builder Center discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
 - re:Seat therefore refuses a sweep that comes back empty or loses most of the catalog without bringing back one of about the same size, checks each walk against `totalCount`, records a re-keyed catalog as a new baseline rather than as news, and books nothing while a held session is missing from its local catalog.
 
 ## Observed in the live API, 12 October 2026
@@ -138,7 +138,7 @@ Source: `PersonalTimeInput` schema.
 - `startDateTime` and `endDateTime`: `YYYY-MM-DDTHH:MM:SS`. "Always UTC, so a trailing Z or an offset such as +01:00 is rejected rather than converted. A block is stored to the minute, so the seconds must be 00."
 - End after start. "The length between the two must be a whole number of 5-minute increments."
 - `title` 1 to 128 chars, `description` 1 to 250 chars, both required. `location` 1 to 255, optional.
-- Observed live on 25 October 2026, not in the spec: CreatePersonalTime answered 400 "The personal time entry could not be applied" for a description holding `:` `(` `)` `[` or `]`. The same title, times and words without those characters were accepted. A location was not the cause. re:Seat keeps descriptions to letters, digits, spaces, commas and full stops.
+- Observed live on 25 October 2026, not in the spec: CreatePersonalTime answered 400 "The personal time entry could not be applied" for a description that held `:`, `(`, `)`, `[` and `]`. The same title, times and words with all five removed were accepted. Which of the five causes the refusal was not tested one by one. A location was not the cause. re:Seat keeps descriptions to letters, digits, spaces, commas and full stops.
 - Also seen live on 25 October 2026: titles holding a hyphen, from repeat codes, were accepted, and so were blocks that fall inside a held session.
 
 ## Authentication

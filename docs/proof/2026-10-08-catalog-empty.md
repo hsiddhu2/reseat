@@ -46,13 +46,15 @@ The 14 reservations were made in the AWS portal after seating opened on 6 Octobe
 
 On the evening of 8 October the Events API answered GetSchedule but served no sessions: an empty catalog and 404 for every session tried, including held ones.
 
-The same condition was reported publicly on 3 October in [a public GitHub issue](https://github.com/jasonwadsworth/reinvent-scout/issues/17): `totalCount` 0, GetSession 404 for every id in the reporter's favorites, GetSchedule still returning the reporter's favorites, and the official MCP server returning the same empty list. It was also raised in a post on [the hackathon's discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
+The same condition was reported publicly on 3 October by another developer: `totalCount` 0, GetSession 404 for every id in the reporter's favorites, GetSchedule still returning the reporter's favorites, and the official MCP server returning the same empty list. It was also raised in a post on [an AWS Builder Center discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
 
 Three re:Seat fixes came from this, each tested against the fake:
 
 - A sweep that comes back empty, or would drop more than half the catalog without bringing back a catalog of about the same size, is refused. The local catalog is kept and the watcher reports the API as unusable, while on-site polling of single sessions carries on.
 - A sweep of about the same size whose ids are mostly new is recorded as a new baseline. New ids are not reported as new sessions, so the watcher does not act on a re-keyed catalog as if it were 2,000 new sessions. A session that kept its id can still open.
 - While any held session is missing from the local catalog, nothing is booked: re:Seat cannot tell which talks those are, and could otherwise book a second sitting of one. The 14 held sessions here are in exactly that state until the catalog returns.
+
+The empty-catalog guard was added the same evening, in commit `e842128` at 20:39 PDT. The first refused sync below is at 21:07 PDT.
 
 ## What it does not prove
 

@@ -4,7 +4,7 @@ re:Seat manages an attendee's AWS re:Invent seats after the plan is made. It wat
 
 It runs on the attendee's own machine against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). It keeps a journal of every write and its result. The CLI, a web app served from the laptop (Week, Approve, Today and Activity), and a local MCP server all drive the same engine.
 
-Status as of 2 October 2026 is marked on each part below: **built** means it is in this repo and tested against the fake API, **planned** means it is not written yet.
+Each part below is marked **built**: it is in this repo and tested against the fake API. Checks run against the real API are in [proof/](proof/).
 
 ## The problem, in attendees' words
 
@@ -73,7 +73,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 **Guard** (built)
 - `reseat guard sync` writes a 5-minute leave-now block into personal time for each held session, from venue walking times, an 11-minute cutoff and the attendee's buffer. The first walk of a day starts at `home_venue` from the rules file.
-- Creates, updates or deletes blocks to match current holds. A second run sends nothing. It only touches its own entries, whose description starts "Leave now by reseat." and ends "Set by reseat". Entries in the earlier `[reseat]` form are still recognised. Descriptions avoid `: ( ) [ ]`, which the live API refuses.
+- Creates, updates or deletes blocks to match current holds. A second run sends nothing. It only touches its own entries, whose description starts "Leave now by reseat." and ends "Set by reseat". Entries in the earlier `[reseat]` form are still recognised. Descriptions avoid `: ( ) [ ]`. The live API refused a description holding all five and accepted it without them.
 - Warns when the walk between two held sessions is longer than the gap.
 - Queue or go: for a session not held, advice from session type, overridden by that session's band history once it has three changes. Presented as a heuristic with its basis, never a prediction. The web app's Today view shows it.
 
@@ -142,7 +142,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 ## How it is tested
 
-Every test runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409 while writes are closed, 429 with `Retry-After`, 5xx, dropped connections, expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real per-operation quotas enforced. It checks that no request exceeds a quota, no state holds two sittings of one talk, only sessions the rules ask for are held, and every reservation write is read back. Checks run against the real API are in [proof/](proof/).
+Every test runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409 while writes are closed, 429 with `Retry-After`, 5xx, dropped connections, expired sign-in. A fault storm runs the whole flow for a simulated hour against the fake API, on a saved copy of the real 2026 catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real per-operation quotas enforced. It checks that no request exceeds a quota, no state holds two sittings of one talk, only sessions the rules ask for are held, and every reservation write is read back. Checks run against the real API are in [proof/](proof/).
 
 ## API operations used
 

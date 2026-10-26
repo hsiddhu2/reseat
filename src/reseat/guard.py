@@ -14,9 +14,10 @@ API rules this module exists to respect:
   create applied nothing, so the guard journals it and goes on to the next,
   different block. Any other failure stops the run. One read-back after all
   writes confirms the result. DeletePersonalTime is the only idempotent write.
-- The live API refuses a description that holds any of : ( ) [ ] with 400
-  "The personal time entry could not be applied" (seen 25 October 2026, not in
-  the spec). Descriptions keep letters, digits, spaces, commas and full stops.
+- The live API refused a description holding all of : ( ) [ ] with 400
+  "The personal time entry could not be applied" and accepted it with them
+  removed (25 October 2026, not in the spec). Which one causes it is untested.
+  Descriptions keep letters, digits, spaces, commas and full stops.
 - The guard only ever touches its own entries: description starts with
   "Leave now by reseat." and ends with "Set by reseat". Entries written in the
   earlier "re:Seat leave-now. ... [reseat]" form are also recognised.

@@ -403,8 +403,9 @@ def _validate_pt(body: dict) -> str | None:
     if int((b - a).total_seconds()) % 300:
         return "Length must be a whole number of 5-minute increments."
     if any(ch in body["description"] for ch in PT_REFUSED_CHARS):
-        # Seen live on 25 October 2026: a description with any of these was refused with this
-        # message, and the same words without them were accepted. Not in the spec.
+        # Seen live on 25 October 2026: a description holding all of these was refused with this
+        # message, and the same words without them were accepted. Not in the spec. Which one causes
+        # it was not tested, so the fake refuses any of them.
         return "The personal time entry could not be applied"
     return None
 

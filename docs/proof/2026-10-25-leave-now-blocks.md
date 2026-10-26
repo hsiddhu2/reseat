@@ -30,7 +30,7 @@ Four single requests, each read back, with any block that was created deleted at
 | 3 | as sent | as sent | none | refused |
 | 4 | as sent | same words without `:` `(` `)` `[` `]` | none | accepted, then deleted |
 
-The description as sent was `re:Seat leave-now. Walk ... allowed (estimate). [reseat]`. The API refuses a description that holds any of those five characters. The spec does not say so. The start minute and the location were not the cause. The finding is in [the API facts](../api-facts.md).
+The description as sent was `re:Seat leave-now. Walk ... allowed (estimate). [reseat]`. The API refused that description and accepted the same words with all five characters removed. Which of the five causes it was not tested one by one. The spec does not say so. The start minute and the location were not the cause. The finding is in [the API facts](../api-facts.md).
 
 ## The fix, and the second run
 
@@ -58,7 +58,7 @@ The journal, read-only, counts by operation:
 
 ## Result
 
-15 leave-now blocks are in the attendee's official schedule, confirmed by one read-back. A second run sends nothing. 13 of the titles hold a hyphen, from repeat codes, and were accepted. 3 blocks fall inside the session before them, on a change with no gap, and were accepted.
+15 leave-now blocks are in the attendee's official schedule, confirmed by one read-back. A second run sends nothing. Titles holding a hyphen were accepted, and so were blocks that fall inside a held session.
 
 ## What it does not prove
 

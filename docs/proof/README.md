@@ -31,12 +31,13 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
+| Leave-now blocks written to the official schedule, after a refused first run, 25 October | [`2026-10-25-leave-now-blocks.md`](2026-10-25-leave-now-blocks.md) | done |
 | A safe swap on the live API, there and back, 25 October | [`2026-10-25-live-swap-round-trip.md`](2026-10-25-live-swap-round-trip.md) | done |
 | Autopilot books two ranked targets on its own, read back and emailed, 25 October | [`2026-10-25-autopilot-first-booking.md`](2026-10-25-autopilot-first-booking.md) | done |
 | An email alert through the attendee's own SNS topic, 24 October | [`2026-10-24-email-alert.md`](2026-10-24-email-alert.md) | done |
 | Favorites sync adds a favorite, then removes it when its target is dropped, 24 October | [`2026-10-24-favorites-round-trip.md`](2026-10-24-favorites-round-trip.md) | done |
 | The planning tools on the real schedule, 17 and 20 October | [`2026-10-21-check-plan.md`](2026-10-21-check-plan.md) | done |
-| What the watcher saw, 12 to 20 October, updated 24 October | [`2026-10-20-watcher-first-week.md`](2026-10-20-watcher-first-week.md) | done, to be updated to submission |
+| What the watcher saw, 12 to 20 October, updated 24 October | [`2026-10-20-watcher-first-week.md`](2026-10-20-watcher-first-week.md) | done, updated as the watcher runs |
 | The web app on a phone over Tailscale, 14 October | [`2026-10-14-tailscale.md`](2026-10-14-tailscale.md) | done |
 | Seat bands after reserved seating opens | in [`2026-10-12-catalog-returned.md`](2026-10-12-catalog-returned.md) | done |
 | Booking the attendee's real targets with `reseat book` | none | not run: those seats were booked in the AWS portal after seating opened on 6 October |

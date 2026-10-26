@@ -1,17 +1,32 @@
 # re:Seat
 
-re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the catalog all day, books a seat the moment one frees up or a new repeat sitting appears, swaps a held seat for the sitting your rules put first without losing either, and tells you when to leave and whether to queue. It runs on your laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html), and it can ask you on your phone, as a notification you approve with one tap.
+re:Seat keeps your AWS re:Invent seats after the plan is made. You rank the talks you want in a rules file. It watches the whole catalog, books a target when a seat frees or a new repeat sitting appears, swaps a held seat for one you rank higher only after checking a way back, and writes when to leave into your official schedule. It runs on your own laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). Alerts reach your phone, and email through your own Amazon SNS topic.
 
 ![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
-**Read the story:** [re:Seat: the seats you missed, booked while you sleep](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep) on AWS Builder Center.
+**Three ways in:**
 
-**Try it without installing anything:** [the click-through demo](https://hsiddhu2.github.io/reseat/) is the web app on demo data, built from this code. **Run it live in two minutes:** `pip install reseat` then `reseat serve --demo`. See [Try it in two minutes](#try-it-in-two-minutes).
+1. **No install:** [the click-through demo](https://hsiddhu2.github.io/reseat/), the web app on demo data, built from this code.
+2. **Two minutes, no sign-in:** `uvx reseat serve --demo`, or `pip install reseat` then `reseat serve --demo`. Open `http://127.0.0.1:8491/`. `pip install "reseat[mcp]"` then `reseat mcp --demo` serves the MCP tools on the same demo data. See [Try it in two minutes](#try-it-in-two-minutes).
+3. **What it did on the real API:** each dated line below links to its record. All records are in [docs/proof](docs/proof/).
+
+**Seen live, on one attendee's schedule:**
+
+- **8 October:** the API served an empty catalog. The first sync emptied re:Seat's local copy and sent no write. A guard added that day refused every later empty answer until the catalog returned on 12 October. [The record](docs/proof/2026-10-08-catalog-empty.md), [the guard's test](tests/test_sweep_guards.py#L33), [the return](docs/proof/2026-10-12-catalog-returned.md).
+- **12 October:** two reversible bookings, each read back and cancelled. [The record](docs/proof/2026-10-12-round-trip.md).
+- **12 to 24 October:** 6,892 sweeps of the whole catalog. 30 openings on 23 full sessions, and 62 sessions added. [The record](docs/proof/2026-10-20-watcher-first-week.md), [the Findings page](https://hsiddhu2.github.io/reseat/findings.html).
+- **24 October:** a favorite added, then removed when its target was dropped, each read back. [The record](docs/proof/2026-10-24-favorites-round-trip.md). A test message by email through re:Seat's notifier and the attendee's own SNS topic. [The record](docs/proof/2026-10-24-email-alert.md).
+- **25 October:** the rules file booked two ranked targets on its own, read back and emailed. Both seats were already open. [The record](docs/proof/2026-10-25-autopilot-first-booking.md).
+- **25 October:** a swap run with `reseat swap`, there and back, each verified by a read of the official schedule. [The record](docs/proof/2026-10-25-live-swap-round-trip.md).
+- **25 October:** 15 leave-now blocks written to the official schedule, after finding that the API refuses some characters in a description. [The record](docs/proof/2026-10-25-leave-now-blocks.md).
+- **Not yet seen live:** a seat caught as it frees, and a swap started by the watcher on its own.
+
+**Read the story** on [AWS Builder Center](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep).
 
 **What re:Seat does:**
 
-- **Books what frees up.** Every minute it checks the catalog. A freed seat or a new repeat sitting of a talk you want is booked at once, inside your rules and the API's quota, and read back from your schedule.
-- **Swaps without losing a seat.** When a better sitting opens at the same time as one you hold, it asks you: on the Week page, and with `ntfy_approve: true` as a notification with Swap now and Keep. Swap now cancels only after a fresh read shows the new seat open and a fallback for yours, and books yours again if the new one is refused.
+- **Books what frees up.** Every minute by default it checks the whole catalog. A freed seat or a new repeat sitting of a talk you want is booked at once, inside your rules and the API's quota, and read back from your schedule.
+- **Swaps without losing a seat.** When a better sitting opens at the same time as one you hold, it asks you: on the Week page, and with `ntfy_approve: true` as a notification with Swap now and Keep. Swap now cancels only after a fresh read shows the new seat open and a fallback for yours, and books yours again if the new one is refused. A target marked `auto_swap: true` swaps on its own after the same checks, and tells you.
 - **Offers what is new, booked on your tap.** A session added to the catalog, or a seat that opens on one of your favorites, comes as an offer with a **Book** button: on the Approve page, and with `ntfy_book: true` on the notification. Book checks the seat and your day again, reserves, and reads your schedule back. Nothing outside your rules is booked without the tap.
 - **Shows what it saw.** The Findings page counts every opening on a full session, how fast it filled again, sessions added and outages recovered. [Live counts from one attendee's laptop](https://hsiddhu2.github.io/reseat/findings.html).
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
@@ -21,12 +36,10 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. It watches the ca
 
 - **Never sends a booking twice.** Reserve and cancel are never retried. A timeout or a server error is settled by reading your schedule back. Tests: [5xx on a booking](tests/test_router.py#L262), [5xx on a cancel](tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](tests/test_swap.py#L318).
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](tests/test_router.py#L155), [through a whole fault storm](tests/test_fault_storm.py#L149).
-- **Tested under a fault storm:** an hour on the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
+- **Tested under a fault storm:** a simulated hour against the fake API on a saved copy of the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](tests/test_fault_storm.py).
 - **All 12 operations of the Events API**, each in a real feature and under the API's own rules: GetEvent checks the event's time zone before any session time is trusted, and DisassociateFavorite removes only favorites re:Seat added for a dropped target. [The table](docs/architecture.md#api-operations-used).
-- **1262 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
+- **Over 1,200 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](src/reseat/campus.py#L18).
-- **Seen live:** from 8 to 11 October the API served an empty catalog, and re:Seat refused to act on it. [The record](docs/proof/2026-10-08-catalog-empty.md), [the test](tests/test_sweep_guards.py#L33). On 12 October the catalog came back with its session ids kept. [The record](docs/proof/2026-10-12-catalog-returned.md). Two reversible bookings, each read back and cancelled, confirmed that writes are open. [The round trips](docs/proof/2026-10-12-round-trip.md).
-- **Try it in two minutes, no sign-in:** `pip install reseat`, then `reseat serve --demo`. [PyPI](https://pypi.org/project/reseat/), [click-through demo](https://hsiddhu2.github.io/reseat/).
 
 ## The problem
 
@@ -152,11 +165,11 @@ The same evening, two reversible round trips on a repeat sitting the attendee di
 22:47:16 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
 ```
 
-The rest of the schedule was the same before and after. The commands and output are in [docs/proof/2026-10-12-round-trip.md](docs/proof/2026-10-12-round-trip.md). A swap, a booking caught by the watcher, and a full or clashing session have not yet been seen live. They are tested against the fake.
+The rest of the schedule was the same before and after. The commands and output are in [docs/proof/2026-10-12-round-trip.md](docs/proof/2026-10-12-round-trip.md). On 25 October a swap run with `reseat swap` and a booking made by the rules file were seen live, linked above. A seat caught as it frees, a swap started by the watcher on its own, and a full or clashing session have not yet been seen live. They are tested against the fake.
 
 ### On the real catalog
 
-Since 13 October the watcher has run against the live API on the attendee's own schedule, on the attendee's laptop. On 14 October the attendee opened the web app on a phone over Tailscale. [The record](docs/proof/2026-10-14-tailscale.md). From 12 to 24 October the watcher swept the catalog 6,892 times. A full session opened again 30 times on 23 sessions, on 11 of the 13 days, and four of those seats were gone within 10 minutes. 62 sessions were added, 51 still listed. None was a talk the attendee asked for, so nothing was booked. [The record](docs/proof/2026-10-20-watcher-first-week.md). On 24 October `favorites sync` added a favorite and removed it again after its target was dropped, each write read back. [The record](docs/proof/2026-10-24-favorites-round-trip.md). In these screenshots the session codes, titles and rooms of the attendee's sessions are covered. Times and everything re:Seat adds are not.
+Since 12 October the watcher has run against the live API on the attendee's own schedule, on the attendee's laptop. On 14 October the attendee opened the web app on a phone over Tailscale. [The record](docs/proof/2026-10-14-tailscale.md). From 12 to 24 October the watcher swept the catalog 6,892 times. A full session opened again 30 times on 23 sessions, on 11 of the 13 days, and four of those openings were full again within 10 minutes. 62 sessions were added, 51 still listed. None was a talk the attendee asked for, so nothing was booked. [The record](docs/proof/2026-10-20-watcher-first-week.md). On 24 October `favorites sync` added a favorite and removed it again after its target was dropped, each write read back. [The record](docs/proof/2026-10-24-favorites-round-trip.md). In these screenshots the session codes, titles and rooms of the attendee's sessions are covered. Times and everything re:Seat adds are not.
 
 ![The Week page on the live catalog: held sessions coloured by type, a leave time on each, wanted talks in a strip beside them, and the watcher's last sweep of 2,240 sessions in the top bar. Session codes, titles and rooms are covered](docs/screenshots/live-week.png)
 
@@ -175,7 +188,7 @@ Since 13 October the watcher has run against the live API on the attendee's own 
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for an hour on the real 2026 catalog with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. 1107 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for a simulated hour against the fake API, on a saved copy of the real 2026 catalog, with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. Over 1,200 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](docs/architecture.md).
 
 ## Reference
 
@@ -362,7 +375,7 @@ pytest
 ruff check .
 ```
 
-A fault storm runs the whole flow for an hour on the real catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, quotas enforced. Tests run against an in-process fake of the API that produces every documented failure: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
+A fault storm runs the whole flow for a simulated hour on a saved copy of the real catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, quotas enforced. Tests run against an in-process fake of the API that produces each documented failure re:Seat handles: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
 
 `tests/fixtures/catalog-2026-10-01.json` is a real catalog pull (no abstracts, no speaker names). `FakeEventsApi.from_fixture(path)` serves it, so tests see the real venue, room and type strings.
 
