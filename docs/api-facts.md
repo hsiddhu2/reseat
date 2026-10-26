@@ -139,7 +139,7 @@ Source: `PersonalTimeInput` schema.
 - End after start. "The length between the two must be a whole number of 5-minute increments."
 - `title` 1 to 128 chars, `description` 1 to 250 chars, both required. `location` 1 to 255, optional.
 - Observed live on 25 October 2026, not in the spec: CreatePersonalTime answered 400 "The personal time entry could not be applied" for a description holding `:` `(` `)` `[` or `]`. The same title, times and words without those characters were accepted. A location was not the cause. re:Seat keeps descriptions to letters, digits, spaces, commas and full stops.
-- Not yet tested live: whether a title holding a hyphen, such as a repeat code like `ABC123-R1`, is accepted. A title without one was accepted.
+- Also seen live on 25 October 2026: titles holding a hyphen, from repeat codes, were accepted, and so were blocks that fall inside a held session.
 
 ## Authentication
 
