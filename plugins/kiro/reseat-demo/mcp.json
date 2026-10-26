@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "reseat-demo": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "reseat[mcp]==0.8.0",
+        "reseat",
+        "mcp",
+        "--demo"
+      ]
+    }
+  }
+}

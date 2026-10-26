@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "reseat-demo": {
+      "command": "uvx",
+      "args": [
+        "--python",
+        "3.12",
+        "--from",
+        "reseat[mcp]==0.8.0",
+        "reseat",
+        "mcp",
+        "--demo"
+      ]
+    }
+  }
+}

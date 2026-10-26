@@ -1,0 +1,19 @@
+{
+  "name": "reseat",
+  "owner": {
+    "name": "Harpreet S. Siddhu"
+  },
+  "description": "re:Seat MCP tools for AWS re:Invent seats",
+  "plugins": [
+    {
+      "name": "reseat-demo",
+      "source": "./plugins/reseat-demo",
+      "description": "re:Seat on demo data: the same MCP tools on a fake Events API. No sign-in, nothing reaches AWS."
+    },
+    {
+      "name": "reseat",
+      "source": "./plugins/reseat",
+      "description": "Keeps your AWS re:Invent seats: books freed seats and new repeats within your rules, swaps without losing a seat, says when to leave. Needs reseat login and a rules file first."
+    }
+  ]
+}

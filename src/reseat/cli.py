@@ -975,12 +975,25 @@ def mcp_cmd(event: str = config.DEFAULT_EVENT,
     from . import mcp_server
     try:
         tools = (mcp_server.Tools(*demo_mod.mcp_parts(), rules_path=demo_mod.mcp_rules_file()) if demo
-                 else mcp_server.Tools(_client(), _store(), _rules(), event, rules_path=config.RULES_PATH))
+                 else mcp_server.Tools(_client(), _store(), _mcp_rules(), event,
+                                       rules_path=config.RULES_PATH))
         server = mcp_server.build_server(tools)
     except ImportError:
         typer.echo('The MCP server needs the extra: pip install "reseat[mcp]"', err=True)
         raise typer.Exit(2) from None
     server.run("stdio")
+
+
+def _mcp_rules() -> rules_mod.Rules:
+    """Rules for the MCP server. On stdio, stdout is the protocol, so problems go to stderr."""
+    try:
+        r = rules_mod.load(config.RULES_PATH)
+    except rules_mod.RulesError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(2) from None
+    if warning := rules_mod.exposure_warning(config.RULES_PATH, r):
+        typer.echo(warning, err=True)
+    return r
 
 
 @app.command()

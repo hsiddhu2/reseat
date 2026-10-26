@@ -1,0 +1,11 @@
+{
+  "name": "reseat-demo",
+  "version": "0.8.0",
+  "description": "re:Seat on demo data: the same MCP tools on a fake Events API. No sign-in, nothing reaches AWS.",
+  "author": {
+    "name": "Harpreet S. Siddhu"
+  },
+  "homepage": "https://github.com/hsiddhu2/reseat",
+  "repository": "https://github.com/hsiddhu2/reseat",
+  "license": "MIT"
+}

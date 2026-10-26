@@ -1,0 +1,20 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "reseat",
+  "version": "0.8.0",
+  "description": "Keeps your AWS re:Invent seats: books freed seats and new repeats within your rules, swaps without losing a seat, says when to leave. Needs reseat login and a rules file first.",
+  "author": {
+    "name": "Harpreet S. Siddhu"
+  },
+  "keywords": [
+    "reinvent",
+    "re:invent",
+    "session",
+    "seat",
+    "reservation",
+    "schedule"
+  ],
+  "homepage": "https://github.com/hsiddhu2/reseat",
+  "repository": "https://github.com/hsiddhu2/reseat",
+  "license": "MIT"
+}

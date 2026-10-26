@@ -125,7 +125,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 | Change tracker | built | `changes.py`: compares held and proposed sessions at each refresh and labels what changed on the week. The first look is a baseline. |
 | Push | built | `push.py`: ntfy pushes with codes and titles only, quiet hours and muted categories, Swap now, Keep, Book, Dismiss and Update buttons read back over a derived reply topic. `sns.py`: the same alerts to an SNS topic for email and text. |
 | Findings | built | `findings.py`: read-only counts from the store. Baseline sweeps are left out. |
-| MCP server | built | Eleven tools: `search_sessions`, `open_slots`, `check_plan` and `draft_rules` to plan, with no ranking, `list_targets`, `explain_drift` and `queue_or_go` to explain, `propose_changes`, `propose_swap` and `guard_sync` to propose, and `approve_changes` by plan id. Optional extra `reseat[mcp]`. `reseat mcp --demo` serves the same tools on demo data. |
+| MCP server | built | Eleven tools: `search_sessions`, `open_slots`, `check_plan` and `draft_rules` to plan, with no ranking, `list_targets`, `explain_drift` and `queue_or_go` to explain, `propose_changes`, `propose_swap` and `guard_sync` to propose, and `approve_changes` by plan id. Optional extra `reseat[mcp]`. `reseat mcp --demo` serves the same tools on demo data. Packaged as a Claude Code plugin marketplace (`.claude-plugin/`, `plugins/reseat`, `plugins/reseat-demo`) and as two Kiro Powers (`plugins/kiro/`). Each runs the pinned release through `uvx` and holds no code of its own. |
 
 ## Key flows
 

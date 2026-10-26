@@ -1,0 +1,11 @@
+{
+  "name": "reseat",
+  "version": "0.8.0",
+  "description": "Keeps your AWS re:Invent seats: books freed seats and new repeats within your rules, swaps without losing a seat, says when to leave. Needs reseat login and a rules file first.",
+  "author": {
+    "name": "Harpreet S. Siddhu"
+  },
+  "homepage": "https://github.com/hsiddhu2/reseat",
+  "repository": "https://github.com/hsiddhu2/reseat",
+  "license": "MIT"
+}

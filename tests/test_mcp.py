@@ -364,3 +364,18 @@ async def test_readme_names_the_tools_the_server_lists(tools):
     count = int(re.search(r"with (\d+) tools", readme).group(1))
     listed = sorted(t.name for t in await M.build_server(tools).list_tools())
     assert sorted(named) == listed and count == len(listed) == 11
+
+
+def test_cli_mcp_without_rules_keeps_stdout_clean(monkeypatch, tmp_path):
+    """On stdio, stdout is the MCP protocol. A missing rules file is reported on stderr only."""
+    from typer.testing import CliRunner
+
+    from reseat import cli, config
+    monkeypatch.setattr(config, "RULES_PATH", tmp_path / "rules.yaml")
+    monkeypatch.setattr(cli, "_client", lambda: object())
+    monkeypatch.setattr(cli, "_store", lambda: object())
+    monkeypatch.setattr(M, "build_server", lambda tools: pytest.fail("no server without rules"))
+    r = CliRunner().invoke(cli.app, ["mcp"])
+    assert r.exit_code == 2
+    assert r.stdout == ""
+    assert "No rules file" in r.stderr
