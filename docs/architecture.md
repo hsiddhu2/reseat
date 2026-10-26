@@ -73,7 +73,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 **Guard** (built)
 - `reseat guard sync` writes a 5-minute leave-now block into personal time for each held session, from venue walking times, an 11-minute cutoff and the attendee's buffer. The first walk of a day starts at `home_venue` from the rules file.
-- Creates, updates or deletes blocks to match current holds. A second run sends nothing. It only touches entries tagged `[reseat]`.
+- Creates, updates or deletes blocks to match current holds. A second run sends nothing. It only touches its own entries, whose description starts "Leave now by reseat." and ends "Set by reseat". Entries in the earlier `[reseat]` form are still recognised. Descriptions avoid `: ( ) [ ]`, which the live API refuses.
 - Warns when the walk between two held sessions is longer than the gap.
 - Queue or go: for a session not held, advice from session type, overridden by that session's band history once it has three changes. Presented as a heuristic with its basis, never a prediction. The web app's Today view shows it.
 

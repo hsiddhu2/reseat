@@ -72,7 +72,8 @@ def test_blocks_are_utc_seconds_zero_five_minutes_and_tagged(held, client, store
         assert (b - a).total_seconds() == 300
         assert p["description"].endswith(G.TAG) and len(p["description"]) <= 250
     assert blocks_by_code(held)["ARC301"]["description"] == (
-        "re:Seat leave-now. Walk MGM Grand to The Venetian, about 50 min, 59 allowed (estimate). [reseat]")
+        "Leave now by reseat. Walk MGM Grand to The Venetian, about 50 min, 59 allowed, estimate. "
+        "Set by reseat")
 
 
 def test_sync_is_idempotent(held, client, store):
@@ -138,6 +139,8 @@ def test_5xx_on_create_stops_and_read_back_reports_missing(held, client, store):
     assert any("503" in p for p in res.problems)
     assert any("3 missing" in p for p in res.problems)
     assert store.journal_entries(EV)[0]["outcome"] == "readback-disagreement"
+    (row,) = store.journal_ops(EV, ("CreatePersonalTime",))
+    assert row["outcome"] == "error" and '"status": 503' in row["response"]   # may have landed
 
 
 def test_409_stops_cleanly(held, client, store):
@@ -149,7 +152,7 @@ def test_409_stops_cleanly(held, client, store):
 def test_no_home_venue_says_when_to_be_there(held, store):
     blocks, _ = G.leave_blocks(G.held_sessions(store, EV, ["G1"]), rules("targets: []\n"))
     assert blocks[0].start == "2026-12-01T17:49:00"                   # 10:00 - 11 min
-    assert "Be at MGM Grand by 09:49." in blocks[0].description
+    assert "Be at MGM Grand by 09.49." in blocks[0].description
 
 
 def test_home_venue_must_be_on_campus():
@@ -242,13 +245,13 @@ def test_longest_venue_pair_fits_the_spec_limit_and_says_estimate(store):
     s = mk("L2", "LNG200", "2026-12-01", "10:00", dest)
     blocks, _ = G.leave_blocks([s], rules(f"home_venue: {origin}\ntargets: []\n"))
     d = blocks[0].description
-    assert len(d) <= limit and "(estimate)" in d and d.endswith(G.TAG)
+    assert len(d) <= limit and ", estimate." in d and d.endswith(G.TAG)
 
 
 def test_old_wording_is_updated_in_place_once(held, client, store):
     G.sync(client, store, EV, rules())
     for p in held.schedule.personal_time.values():
-        p["description"] = p["description"].replace(" (estimate)", "")
+        p["description"] = p["description"].replace(", estimate", "")
     res = G.sync(client, store, EV, rules())
     assert len(res.plan.update) == 3 and not res.plan.create and not res.plan.delete
     assert G.sync(client, store, EV, rules()).plan.empty
@@ -290,7 +293,7 @@ def test_longest_walk_at_the_highest_confidence_keeps_the_whole_description(stor
     for b in blocks:
         assert b.walk == 60 and b.allow == 94
         assert len(b.description) <= 250 and b.description.endswith(G.TAG)
-        assert "about 60 min, 94 allowed (estimate)." in b.description
+        assert "about 60 min, 94 allowed, estimate." in b.description
 
 
 def test_queue_or_go_push_text_shows_the_odds_and_basis():
@@ -332,3 +335,139 @@ def test_mcp_queue_or_go_gives_odds_per_sitting(fake, client, store, clock):
         assert re.search(r": (likely|early)\. Walk-up about \d+% \(\d+ to \d+%\)\. Session type rule\.", line)
         assert "S-ARC" not in line
     assert re.search(r"SVS401 .*: \w+\. Walk-up about \d+% \(", tools.queue_or_go("SVS401"))
+
+
+# ---- Live 25 October 2026: CreatePersonalTime refused a description holding : ( ) [ ]
+
+
+def test_descriptions_never_hold_characters_the_live_api_refuses(held, client, store):
+    from reseat.fakeapi import PT_REFUSED_CHARS
+    res = G.sync(client, store, EV, rules())
+    assert len(res.done) == 3 and not res.problems
+    for p in held.schedule.personal_time.values():
+        assert not any(ch in p["description"] for ch in PT_REFUSED_CHARS)
+    assert G._safe("Be at Wynn/Encore by 08:19 (estimate) [x]") == "Be at Wynn Encore by 08.19 estimate x"
+
+
+def test_blocks_in_the_old_tagged_form_are_still_ours_and_rewritten(held, client, store):
+    G.sync(client, store, EV, rules())
+    for p in held.schedule.personal_time.values():
+        p["description"] = "re:Seat leave-now. Walk. [reseat]"
+    res = G.sync(client, store, EV, rules())
+    assert len(res.plan.update) == 3 and not res.plan.create and not res.plan.delete and not res.problems
+    assert all(p["description"].endswith(G.TAG) for p in held.schedule.personal_time.values())
+    assert G.sync(client, store, EV, rules()).plan.empty
+
+
+def test_each_refused_create_is_journaled_once_and_the_next_block_is_tried(held, client, store, monkeypatch):
+    monkeypatch.setattr(G, "_safe", lambda t: t + " (estimate)")
+    res = G.sync(client, store, EV, rules())
+    assert not res.done and sum("could not be applied" in x for x in res.problems) == 3
+    rows = store.journal_ops(EV, ("CreatePersonalTime",))
+    assert len(rows) == 3 and all(r["outcome"] == "refused" for r in rows)
+    assert len({r["request"] for r in rows}) == 3      # three different blocks, none sent twice
+    assert store.journal_entries(EV)[0]["outcome"] == "readback-disagreement"   # one read-back at the end
+    assert "(estimate)" in rows[0]["request"] and '"status": 400' in rows[0]["response"]
+    assert not held.schedule.personal_time
+
+
+
+def _rows(store, op):
+    return [(r["outcome"], r["response"]) for r in store.journal_ops(EV, (op,))]
+
+
+def test_409_on_create_is_journaled_refused_and_read_back(held, client, store):
+    held.closed = True
+    res = G.sync(client, store, EV, rules())
+    assert res.closed and not res.done
+    assert held.counts["CreatePersonalTime"] == 1                    # stopped at the first refusal
+    assert [o for o, _ in _rows(store, "CreatePersonalTime")] == ["refused"]
+    assert "409" in _rows(store, "CreatePersonalTime")[0][1]
+    assert [o for o, _ in _rows(store, "GetSchedule")] == ["readback-disagreement"]
+
+
+def test_refusal_mid_batch_keeps_the_creates_that_landed(held, client, store, monkeypatch):
+    """Two creates land, the third is refused with 400. Nothing retried. Read-back finds one missing."""
+    safe = G._safe
+    monkeypatch.setattr(G, "_safe", lambda t: safe(t) + (" (x)" if "Caesars Forum" in t else ""))
+    res = G.sync(client, store, EV, rules())
+    assert len(res.done) == 2 and len(held.schedule.personal_time) == 2
+    assert held.counts["CreatePersonalTime"] == 3
+    assert [o for o, _ in _rows(store, "CreatePersonalTime")] == ["sent", "sent", "refused"]
+    assert "could not be applied" in _rows(store, "CreatePersonalTime")[2][1]
+    assert any("1 missing" in p for p in res.problems)
+    assert [o for o, _ in _rows(store, "GetSchedule")] == ["readback-disagreement"]
+    monkeypatch.setattr(G, "_safe", safe)                            # fixed: next run creates the one
+    res = G.sync(client, store, EV, rules())
+    assert len(res.plan.create) == 1 and not res.problems and held.counts["CreatePersonalTime"] == 4
+
+
+def test_refused_update_keeps_the_old_entry_and_is_journaled(held, client, store, monkeypatch):
+    G.sync(client, store, EV, rules())
+    for p in held.schedule.personal_time.values():
+        p["description"] = "re:Seat leave-now. Walk. [reseat]"
+    before = {k: dict(v) for k, v in held.schedule.personal_time.items()}
+    safe = G._safe
+    monkeypatch.setattr(G, "_safe", lambda t: safe(t) + " (x)")
+    res = G.sync(client, store, EV, rules())
+    assert held.counts["UpdatePersonalTime"] == 1 and not res.done
+    assert held.schedule.personal_time == before                     # nothing lost, nothing deleted
+    assert [o for o, _ in _rows(store, "UpdatePersonalTime")] == ["refused"]
+    assert any("3 stale" in p for p in res.problems)
+
+
+def test_409_on_update_stops_and_is_journaled(held, client, store):
+    G.sync(client, store, EV, rules())
+    for p in held.schedule.personal_time.values():
+        p["description"] = "re:Seat leave-now. Walk. [reseat]"
+    held.closed = True
+    res = G.sync(client, store, EV, rules())
+    assert res.closed and held.counts["UpdatePersonalTime"] == 1
+    assert [o for o, _ in _rows(store, "UpdatePersonalTime")] == ["refused"]
+    assert _rows(store, "GetSchedule")[-1][0] == "readback-disagreement"
+
+
+def test_refused_delete_stops_before_updates_and_creates(held, client, store):
+    G.sync(client, store, EV, rules())
+    held.schedule.reserved.discard("G3")
+    held.fail_next("DeletePersonalTime", 400)
+    res = G.sync(client, store, EV, rules())
+    assert not res.done and "DOP302" in blocks_by_code(held)
+    assert [o for o, _ in _rows(store, "DeletePersonalTime")] == ["refused"]
+    assert any("1 extra" in p for p in res.problems)
+    assert held.counts.get("UpdatePersonalTime", 0) == 0
+
+
+def test_409_on_delete_stops_and_is_journaled(held, client, store):
+    G.sync(client, store, EV, rules())
+    held.schedule.reserved.discard("G3")
+    held.closed = True
+    res = G.sync(client, store, EV, rules())
+    assert res.closed and "DOP302" in blocks_by_code(held)
+    assert [o for o, _ in _rows(store, "DeletePersonalTime")] == ["refused"]
+    assert _rows(store, "GetSchedule")[-1][0] == "readback-disagreement"
+
+
+def test_every_successful_write_is_followed_by_one_read_back(held, client, store):
+    G.sync(client, store, EV, rules())
+    held.schedule.reserved.discard("G3")
+    G.sync(client, store, EV, rules())
+    assert [o for o, _ in _rows(store, "GetSchedule")] == ["readback-ok", "readback-ok"]
+    assert [o for o, _ in _rows(store, "CreatePersonalTime")] == ["sent"] * 3
+    assert [o for o, _ in _rows(store, "DeletePersonalTime")] == ["sent"]
+
+
+def test_a_new_entry_in_the_old_form_with_a_hand_written_middle_is_still_ours(held, client, store):
+    """The old form is recognised only with both the old prefix and the old tag."""
+    G.sync(client, store, EV, rules())
+    held.schedule.personal_time["pt-x"] = {
+        "personalTimeId": "pt-x", "startDateTime": "2026-12-03T20:00:00",
+        "endDateTime": "2026-12-03T20:05:00", "title": "Leave for OLD1",
+        "description": "re:Seat leave-now. Walk. [reseat]"}
+    held.schedule.personal_time["pt-y"] = {
+        "personalTimeId": "pt-y", "startDateTime": "2026-12-03T20:00:00",
+        "endDateTime": "2026-12-03T20:05:00", "title": "Leave for OLD2",
+        "description": "re:Seat leave-now. Walk. Set by reseat"}
+    G.sync(client, store, EV, rules())
+    assert "pt-x" not in held.schedule.personal_time                 # ours, no held session, deleted
+    assert "pt-y" in held.schedule.personal_time                     # mixed form, not ours, untouched

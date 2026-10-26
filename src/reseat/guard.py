@@ -10,11 +10,16 @@ API rules this module exists to respect:
   5-minute steps. campus.to_personal_time formats it. Never by hand.
 - Title 1 to 128 characters, description 1 to 250, location up to 255.
 - UpdatePersonalTime is a full replacement, so every field is sent.
-- CreatePersonalTime is not idempotent. Each create is sent once. One read-back
-  after all writes confirms the result. DeletePersonalTime is the only
-  idempotent write.
+- CreatePersonalTime is not idempotent. Each create is sent once. A 400 on one
+  create applied nothing, so the guard journals it and goes on to the next,
+  different block. Any other failure stops the run. One read-back after all
+  writes confirms the result. DeletePersonalTime is the only idempotent write.
+- The live API refuses a description that holds any of : ( ) [ ] with 400
+  "The personal time entry could not be applied" (seen 25 October 2026, not in
+  the spec). Descriptions keep letters, digits, spaces, commas and full stops.
 - The guard only ever touches its own entries: description starts with
-  "re:Seat leave-now." and ends with the [reseat] tag.
+  "Leave now by reseat." and ends with "Set by reseat". Entries written in the
+  earlier "re:Seat leave-now. ... [reseat]" form are also recognised.
 - A held session missing from the local catalog blocks every delete, so a stale
   store never wipes the attendee's leave-now blocks.
 """
@@ -31,9 +36,17 @@ from .models import PersonalTime, PersonalTimeInput, Session
 from .rules import Rules
 from .store import Store
 
-TAG = "[reseat]"
-PREFIX = "re:Seat leave-now."
+TAG = "Set by reseat"
+PREFIX = "Leave now by reseat."
+OLD_TAG, OLD_PREFIX = "[reseat]", "re:Seat leave-now."     # the form written before 25 October 2026
 BLOCK_MINUTES = 5
+
+
+def _safe(text: str) -> str:
+    """Keep only characters the live API accepts in a description. A time such as 08:19 becomes 08.19."""
+    text = text.replace(":", ".").replace("/", " ")
+    kept = "".join(ch for ch in text if ch.isascii() and (ch.isalnum() or ch in " .,"))
+    return " ".join(kept.split())
 
 
 @dataclass
@@ -135,7 +148,8 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
         if walk is None:
             how = f"Be at {dest or 'the venue'} by {_local(start - timedelta(minutes=CUTOFF_MINUTES))}."
         else:
-            how = f"Walk {origin} to {dest}, about {walk} min, {allow} allowed (estimate)."   # never official
+            how = f"Walk {origin} to {dest}, about {walk} min, {allow} allowed, estimate."   # never official
+        how = _safe(how)
         blocks.append(Block(
             code=code, session_id=s.session_id,
             start=to_personal_time(leave), end=to_personal_time(leave + timedelta(minutes=BLOCK_MINUTES)),
@@ -156,7 +170,7 @@ def _local(dt: datetime) -> str:
 
 def is_mine(p: PersonalTime) -> bool:
     d = p.description or ""
-    return d.startswith(PREFIX) and d.endswith(TAG)
+    return (d.startswith(PREFIX) and d.endswith(TAG)) or (d.startswith(OLD_PREFIX) and d.endswith(OLD_TAG))
 
 
 def plan(blocks: list[Block], existing: list[PersonalTime], allow_delete: bool = True) -> GuardPlan:
@@ -202,24 +216,40 @@ def sync(client: EventsClient, store: Store, event_id: str, rules: Rules,
     res = GuardResult(gp)
     if dry_run or gp.empty:
         return res
+    op, req = "", None    # the write in flight, so a refusal is journaled too
     try:
         for p in gp.delete:
+            op, req = "DeletePersonalTime", p.personal_time_id
             client.delete_personal_time(event_id, p.personal_time_id)
-            store.journal(event_id, "DeletePersonalTime", p.personal_time_id, None, "sent")
+            store.journal(event_id, op, req, None, "sent")
             res.done.append(f"deleted {p.title}")
         for pid, b in gp.update:
+            op, req = "UpdatePersonalTime", {"id": pid, **b.body().payload()}
             client.update_personal_time(event_id, pid, b.body())
-            store.journal(event_id, "UpdatePersonalTime", {"id": pid, **b.body().payload()}, None, "sent")
+            store.journal(event_id, op, req, None, "sent")
             res.done.append(f"updated {b.title}")
         for b in gp.create:
-            client.create_personal_time(event_id, b.body())
-            store.journal(event_id, "CreatePersonalTime", b.body().payload(), None, "sent")
+            op, req = "CreatePersonalTime", b.body().payload()
+            try:
+                client.create_personal_time(event_id, b.body())
+            except ApiError as e:
+                if e.status != 400:
+                    raise
+                # A 400 applied nothing, so the next, different block is not a retry. Each is sent once.
+                store.journal(event_id, op, req, {"status": 400, "error": str(e)}, "refused")
+                res.problems.append(f"{b.title} refused: {e}")
+                continue
+            store.journal(event_id, op, req, None, "sent")
             res.done.append(f"created {b.title}")
     except OperationClosed:
         res.closed = True
         res.problems.append("Personal time writes are closed (409). Stopped.")
+        store.journal(event_id, op, req, {"status": 409, "error": "writes closed"}, "refused")
     except ApiError as e:
         res.problems.append(f"{e}. Stopped. Read back below.")
+        # A 4xx was refused. A 5xx or a dropped connection may have landed, and the read-back settles it.
+        store.journal(event_id, op, req, {"status": e.status, "error": str(e)},
+                      "refused" if 400 <= e.status < 500 else "error")
     _read_back(client, store, event_id, rules, res)
     return res
 

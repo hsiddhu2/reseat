@@ -138,6 +138,8 @@ Source: `PersonalTimeInput` schema.
 - `startDateTime` and `endDateTime`: `YYYY-MM-DDTHH:MM:SS`. "Always UTC, so a trailing Z or an offset such as +01:00 is rejected rather than converted. A block is stored to the minute, so the seconds must be 00."
 - End after start. "The length between the two must be a whole number of 5-minute increments."
 - `title` 1 to 128 chars, `description` 1 to 250 chars, both required. `location` 1 to 255, optional.
+- Observed live on 25 October 2026, not in the spec: CreatePersonalTime answered 400 "The personal time entry could not be applied" for a description holding `:` `(` `)` `[` or `]`. The same title, times and words without those characters were accepted. A location was not the cause. re:Seat keeps descriptions to letters, digits, spaces, commas and full stops.
+- Not yet tested live: whether a title holding a hyphen, such as a repeat code like `ABC123-R1`, is accepted. A title without one was accepted.
 
 ## Authentication
 
