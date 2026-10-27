@@ -357,3 +357,26 @@ def test_open_targets_in_different_slots_go_in_one_reserve_call(clock, tmp_path)
     assert fake.schedule.reserved == {"O1", "O2"} and fake.counts["ReserveSessions"] == 1
     assert fake.counts["GetSchedule"] - reads == 2                     # the sweep's read, then the read-back
     assert sorted(e.data["session_id"] for e in events if e.kind == "booked") == ["O1", "O2"]
+
+
+def test_a_rules_edit_while_running_starts_an_auto_swap_there_and_back(clock, tmp_path):
+    """The 26 October live proof: no seat frees. A reload ranks an open auto_swap target above a held
+    overlapping one, the catch-up proposes, the swap runs with its checks and reads back. Then back."""
+    sessions = [mk("B1", "INV508-R1", "2026-12-04", "09:00"), mk("A1", "INV510-R1", "2026-12-04", "09:00")]
+    fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: INV510-R1\n", sessions, held=("A1",))
+    w.tick()
+    assert fake.schedule.reserved == {"A1"} and fake.counts.get("CancelReservation", 0) == 0
+    rewrite(path, "targets:\n- {code: INV508-R1, auto_swap: true}\n- code: INV510-R1\n")
+    clock.sleep(60)
+    w.tick()
+    assert fake.schedule.reserved == {"B1"} and fake.counts["CancelReservation"] == 1
+    rewrite(path, "targets:\n- {code: INV510-R1, auto_swap: true}\n- {code: INV508-R1, auto_swap: true}\n")
+    clock.sleep(60)
+    w.tick()
+    assert fake.schedule.reserved == {"A1"} and fake.counts["CancelReservation"] == 2
+    assert fake.counts["ReserveSessions"] == 2                         # one reserve per swap, nothing resent
+    assert [e.data["state"] for e in events if e.kind == "swap"] == ["verified", "verified"]
+    rows = [(r["op"], r["outcome"]) for r in reversed(w.store.journal_entries(EV))]   # oldest first
+    swaps = [o for o, _ in rows if o.startswith(("swap.", "watcher.rules"))]
+    assert swaps.count("watcher.rules") == 2 and swaps.count("swap.verified") == 2
+    assert swaps.index("swap.checked") < swaps.index("swap.cancel")    # fallback checked before the cancel

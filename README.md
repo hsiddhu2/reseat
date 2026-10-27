@@ -19,7 +19,8 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. You rank the talk
 - **25 October:** the rules file booked two ranked targets on its own, read back and emailed. Both seats were already open. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-autopilot-first-booking.md).
 - **25 October:** a swap run with `reseat swap`, there and back, each verified by a read of the official schedule. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-live-swap-round-trip.md).
 - **25 October:** 15 leave-now blocks written to the official schedule, after finding that the API refuses some characters in a description. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-leave-now-blocks.md).
-- **Not yet seen live:** a seat caught as it frees, and a swap started by the watcher on its own.
+- **26 October:** a swap run by the watcher on its own, there and back, each verified by a read of the official schedule. A rules edit started it, not a seat freeing. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-26-watcher-swap.md).
+- **Not yet seen live:** a seat caught as it frees.
 
 **Read the story** on [AWS Builder Center](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep).
 
@@ -167,7 +168,7 @@ The same evening, two reversible round trips on a repeat sitting the attendee di
 22:47:16 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
 ```
 
-The rest of the schedule was the same before and after. The commands and output are in [docs/proof/2026-10-12-round-trip.md](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-12-round-trip.md). On 25 October a swap run with `reseat swap` and a booking made by the rules file were seen live, linked above. A seat caught as it frees, a swap started by the watcher on its own, and a full or clashing session have not yet been seen live. They are tested against the fake.
+The rest of the schedule was the same before and after. The commands and output are in [docs/proof/2026-10-12-round-trip.md](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-12-round-trip.md). On 25 October a swap run with `reseat swap` and a booking made by the rules file were seen live, and on 26 October a swap run by the watcher on its own, linked above. A seat caught as it frees and a full or clashing session have not yet been seen live. They are tested against the fake.
 
 ### On the real catalog
 
