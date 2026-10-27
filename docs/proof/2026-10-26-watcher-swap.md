@@ -1,7 +1,7 @@
 # A swap started by the watcher on its own, there and back
 
-- **Date and time:** 2026-10-26, 16:43 to 16:45 PDT
-- **re:Seat version:** the running watcher, `reseat serve --tailscale --interval 30`, started on 25 October at 20:57 PDT, when the last commit was `4292044`
+- **Date and time:** 2026-10-26, 13:43 to 13:45 PDT. The journal output below is in the laptop's local time, EDT, three hours ahead
+- **re:Seat version:** the running watcher, `reseat serve --tailscale --interval 30`, started on 25 October at 17:57 PDT, when the last commit was `4292044`
 - **Where:** the attendee's laptop, signed in with the Builder ID registered for re:Invent 2026
 
 ## What was checked

@@ -36,7 +36,7 @@ Source: operation descriptions in the spec.
 - CancelReservation on a session not held is 404, "so this is not a safe blind retry." Same for DisassociateFavorite. When checked on 12 October 2026 the live API answered 400 for this instead, see below.
 - DeletePersonalTime on an entry already gone succeeds. "A retry is safe." It is the only idempotent write.
 - UpdatePersonalTime is a full replacement. Every field is required and an omitted optional field is cleared.
-- Reserving a session that overlaps a held one fails per session with `scheduleConflict` and `conflictsWith`, the list of the caller's held sessions that overlap. There is no swap or replace operation.
+- Reserving a session that overlaps a held one fails per session with `scheduleConflict` and `conflictsWith`, the list of the caller's held sessions that overlap. There is no swap or replace operation. Seen live on 26 October 2026: one reserve that overlapped a held session came back with `successful` empty and that session in `failed` with `scheduleConflict` and `conflictsWith` naming the held one ([the record](proof/2026-10-26-clash-refused.md)).
 
 ## Failure codes on bulk results
 
