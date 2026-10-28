@@ -379,3 +379,142 @@ def test_cli_mcp_without_rules_keeps_stdout_clean(monkeypatch, tmp_path):
     assert r.exit_code == 2
     assert r.stdout == ""
     assert "No rules file" in r.stderr
+
+
+@pytest.fixture
+def on_disk(fake, client, store, clock, tmp_path):
+    """Tools over a rules file on disk, as `reseat mcp` runs them."""
+    store.apply_sweep(EV, sample_sessions(), with_abstracts=False)
+    path = tmp_path / "rules.yaml"
+    path.write_text(RULES)
+    path.chmod(0o600)
+    return M.Tools(client, store, R.load(path), EV, clock=clock, rules_path=path), path
+
+
+def _rewrite(path, text):
+    path.write_text(text)
+    path.chmod(0o600)
+
+
+async def test_a_long_running_server_answers_from_the_rules_file_as_it_is_now(on_disk):
+    tools, path = on_disk
+    server = M.build_server(tools)
+    assert "DOP302" not in (await server.call_tool("list_targets", {})).content[0].text
+    _rewrite(path, RULES + "- code: DOP302\n")
+    assert "DOP302" in (await server.call_tool("list_targets", {})).content[0].text
+
+
+async def test_a_plan_made_under_old_rules_is_refused_after_the_file_changes(fake, on_disk):
+    tools, path = on_disk
+    server = M.build_server(tools)
+    pid = plan_id((await server.call_tool("propose_changes", {})).content[0].text)
+    _rewrite(path, "targets:\n- code: SEC201\n")                  # SVS401 no longer wanted
+    out = (await server.call_tool("approve_changes", {"plan_id": pid})).content[0].text
+    assert out.startswith("Refused") and fake.counts.get("ReserveSessions", 0) == 0
+
+
+@pytest.mark.parametrize("bad", ["targets: [unclosed\n",
+                                 "watch_cap: 1\ntargets:\n- code: SVS401\n- code: SEC201\n- code: DOP302\n"])
+def test_a_rules_file_that_does_not_load_keeps_the_old_rules(on_disk, bad):
+    tools, path = on_disk
+    _rewrite(path, bad)
+    tools.refresh()
+    assert [t.label for t in tools.rules.targets] == ["SVS401", "SEC201"]
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "getuid"), reason="POSIX permissions")
+def test_a_rules_file_others_can_change_keeps_the_old_rules(on_disk):
+    tools, path = on_disk
+    path.write_text(RULES + "- code: DOP302\n")
+    path.chmod(0o666)
+    tools.refresh()
+    assert len(tools.rules.targets) == 2
+
+
+def test_its_own_rules_write_does_not_drop_a_plan_made_after_it(fake, on_disk):
+    tools, path = on_disk
+    tools.approve_changes(plan_id(tools.draft_rules(["DOP302"])))
+    pid = plan_id(tools.propose_changes())
+    tools.refresh()
+    assert "Read back" in tools.approve_changes(pid)
+
+
+def test_a_rules_file_that_is_a_link_keeps_the_old_rules(on_disk, tmp_path):
+    tools, path = on_disk
+    other = tmp_path / "other.yaml"
+    _rewrite(other, RULES + "- code: DOP302\n")
+    path.unlink()
+    path.symlink_to(other)
+    tools.refresh()
+    assert len(tools.rules.targets) == 2
+
+
+def test_a_missing_rules_file_keeps_the_old_rules_and_a_restored_one_is_read(on_disk):
+    tools, path = on_disk
+    pid = plan_id(tools.propose_changes())
+    path.unlink()
+    tools.refresh()
+    assert len(tools.rules.targets) == 2
+    _rewrite(path, RULES + "- code: DOP302\n")
+    tools.refresh()
+    assert len(tools.rules.targets) == 3
+    assert tools.approve_changes(pid).startswith("Refused")
+
+
+def test_a_guard_plan_made_under_old_rules_is_dropped(fake, on_disk):
+    tools, path = on_disk
+    fake.schedule.reserved.add("S-SVS1")
+    pid = plan_id(tools.guard_sync())
+    _rewrite(path, "targets:\n- code: SEC201\n")
+    tools.refresh()
+    assert tools.approve_changes(pid).startswith("Refused")
+    assert fake.counts.get("CreatePersonalTime", 0) == 0
+
+
+@pytest.fixture
+def swapper_on_disk(swapper, tmp_path):
+    fake, store, tools = swapper
+    path = tmp_path / "rules.yaml"
+    _rewrite(path, "targets:\n- code: SVS401\n")
+    tools.rules_path = path
+    tools._stamp = tools._rules_stamp()
+    return fake, store, tools, path
+
+
+async def test_a_swap_plan_made_under_old_rules_cancels_nothing(swapper_on_disk):
+    fake, store, tools, path = swapper_on_disk
+    _open_a1(fake, store)
+    server = M.build_server(tools)
+    pid = plan_id((await server.call_tool("propose_swap", {"held_code": "SVS401-R1"})).content[0].text)
+    _rewrite(path, "targets:\n- code: SVS401-R1\n")               # the attendee now wants the held sitting
+    out = (await server.call_tool("approve_changes", {"plan_id": pid})).content[0].text
+    assert out.startswith("Refused") and writes(fake) == 0 and fake.schedule.reserved == {"A2"}
+
+
+def test_a_swap_plan_is_dropped_when_draft_rules_removes_its_target(swapper_on_disk):
+    fake, store, tools, path = swapper_on_disk
+    _open_a1(fake, store)
+    swap_pid = plan_id(tools.propose_swap("SVS401-R1"))
+    tools.approve_changes(plan_id(tools.draft_rules([], ["SVS401"])))
+    assert tools.approve_changes(swap_pid).startswith("Refused")
+    assert writes(fake) == 0 and fake.schedule.reserved == {"A2"}
+
+
+async def test_a_refused_change_is_said_once_and_a_fixed_file_is_read(on_disk):
+    tools, path = on_disk
+    server = M.build_server(tools)
+    _rewrite(path, "targets: [unclosed\n")
+    first = (await server.call_tool("list_targets", {})).content[0].text
+    assert first.startswith("The rules file changed but has a problem, so the old rules stay")
+    assert str(path) not in first and "SVS401" in first
+    assert not (await server.call_tool("list_targets", {})).content[0].text.startswith("The rules")
+    _rewrite(path, RULES + "- code: DOP302\n")
+    assert "DOP302" in (await server.call_tool("list_targets", {})).content[0].text
+
+
+def test_a_rules_draft_is_dropped_by_an_edit_made_after_it(on_disk):
+    tools, path = on_disk
+    pid = plan_id(tools.draft_rules(["DOP302"]))
+    _rewrite(path, "targets:\n- code: SVS401\n")
+    assert tools.refresh() is None
+    assert tools.approve_changes(pid).startswith("Refused") and "DOP302" not in path.read_text()

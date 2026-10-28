@@ -68,6 +68,37 @@ class Tools:
         self._plans: dict[str, Plan] = {}
         self._lock = threading.Lock()
         self.serial = threading.RLock()     # every tool call holds this: one at a time
+        self._stamp = self._rules_stamp()
+
+    def _rules_stamp(self) -> tuple[int, int, int, int] | None:
+        try:
+            st = self.rules_path.stat() if self.rules_path else None
+        except OSError:
+            return None
+        return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_mode) if st else None
+
+    def refresh(self) -> str | None:
+        """An MCP server can run for days. The rules file is the attendee's instructions, so when it
+        changes on disk every tool answers from the new file. Any change drops pending plans: a swap
+        for a target no longer wanted could cancel a seat. A link, a file others can change, or a file
+        that does not load keeps the old rules, as the watcher does, and the next answer says why."""
+        stamp = self._rules_stamp()
+        if stamp is None or stamp == self._stamp or self.rules_path is None:
+            return None
+        self._stamp = stamp
+        with self._lock:
+            self._plans = {}
+        path = self.rules_path
+        if unsafe := R.unsafe_file(path):
+            return f"The rules file changed but {unsafe}, so the old rules stay."
+        try:
+            new = R.parse(R.read_nofollow(path), str(path))
+        except (R.RulesError, OSError, ValueError) as e:
+            return (f"The rules file changed but has a problem, so the old rules stay: "
+                    f"{planning._plain(e, path)}")
+        self.rules, self.router = new, Router(new, self.store, self.event_id)
+        warn = R.exposure_warning(path, new)
+        return planning._plain(ValueError(warn), path) if warn else None
 
     def _new_plan(self, kind: str, sessions: list[str], summary: str,
                   shown: tuple[tuple[str, ...], ...] = ()) -> Plan:
@@ -318,6 +349,9 @@ class Tools:
             R.write_new(backup, now, replace=True)
             R.write_new(path, d.text, replace=True)
             self.rules = R.parse(d.text)
+            self._stamp = self._rules_stamp()   # our own write: nothing to reload
+            with self._lock:
+                self._plans = {}                 # made under the old rules, like any change
         except Exception as e:      # noqa: BLE001  any failure: say so, never with a path or a trace
             msg = planning._plain(e, path) if isinstance(e, R.RulesError) else "the file could not be written"
             return f"Not written: {msg}. The rules file is as it was, or check rules.yaml.bak."
@@ -364,6 +398,11 @@ def _diff(gp: guard.GuardPlan) -> tuple[tuple[str, ...], ...]:
             + tuple(f"-{p.personal_time_id}" for p in gp.delete),)
 
 
+def _noted(note: str | None, answer: str) -> str:
+    """A refused or exposed rules file is said before the answer, once per change."""
+    return f"{note}\n{answer}" if note else answer
+
+
 def build_server(tools: Tools) -> Any:
     """The MCP server. Imports the SDK here so the core install does not need it."""
     from mcp.server.mcpserver import MCPServer
@@ -380,13 +419,15 @@ def build_server(tools: Tools) -> Any:
     def list_targets() -> str:
         """The attendee's targets in priority order and which are held now."""
         with tools.serial:
-            return tools.list_targets()
+            note = tools.refresh()
+            return _noted(note, tools.list_targets())
 
     @server.tool()
     def propose_changes() -> str:
         """Plan the reservations the rules ask for. Returns a plan id. Sends nothing."""
         with tools.serial:
-            return tools.propose_changes()
+            note = tools.refresh()
+            return _noted(note, tools.propose_changes())
 
     @server.tool()
     def propose_swap(held_code: str) -> str:
@@ -394,26 +435,30 @@ def build_server(tools: Tools) -> Any:
         earlier, by the rules' order (earliest or latest sitting first). Returns a plan id and the
         checks. Sends nothing."""
         with tools.serial:
-            return tools.propose_swap(held_code)
+            note = tools.refresh()
+            return _noted(note, tools.propose_swap(held_code))
 
     @server.tool()
     def approve_changes(plan_id: str) -> str:
         """Carry out a plan from propose_changes, propose_swap, guard_sync or draft_rules, once, within
         10 minutes. Ask the attendee first."""
         with tools.serial:
-            return tools.approve_changes(plan_id)
+            note = tools.refresh()
+            return _noted(note, tools.approve_changes(plan_id))
 
     @server.tool()
     def explain_drift(hours: int = 0) -> str:
         """What changed in the catalog since the last sweep, or over the last `hours` if given."""
         with tools.serial:
-            return tools.explain_drift(hours)
+            note = tools.refresh()
+            return _noted(note, tools.explain_drift(hours))
 
     @server.tool()
     def guard_sync() -> str:
         """Plan leave-now block changes. Returns a plan id. Sends nothing."""
         with tools.serial:
-            return tools.guard_sync()
+            note = tools.refresh()
+            return _noted(note, tools.guard_sync())
 
     @server.tool()
     def search_sessions(text: str = "", type: str = "", day: str = "", venue: str = "", band: str = "",
@@ -422,7 +467,9 @@ def build_server(tools: Tools) -> Any:
         text matches title, code, abstract, speakers, topics and services. band is a seat band or
         "open". day is a weekday name or YYYY-MM-DD. Reads the local catalog only."""
         with tools.serial:
-            return tools.search_sessions(text, type, day, venue, band, level, topic, service, limit)
+            note = tools.refresh()
+            return _noted(note, tools.search_sessions(text, type, day, venue, band, level, topic, service,
+                                                      limit))
 
     @server.tool()
     def open_slots(day: str, type: str = "", text: str = "", band: str = "open", level: str = "",
@@ -431,7 +478,8 @@ def build_server(tools: Tools) -> Any:
         sessions that fit each gap with the walk in and out, in start-time order. Reads the
         schedule once. Writes nothing."""
         with tools.serial:
-            return tools.open_slots(day, type, text, band, level, topic, service, venue)
+            note = tools.refresh()
+            return _noted(note, tools.open_slots(day, type, text, band, level, topic, service, venue))
 
     @server.tool()
     def check_plan(codes: list[str]) -> str:
@@ -440,7 +488,8 @@ def build_server(tools: Tools) -> Any:
         meals, max_per_day and watch_cap. A base code such as AIM341 checks every sitting. An exact
         code such as AIM341-R1 checks that sitting. Reads the schedule once. Writes nothing."""
         with tools.serial:
-            return tools.check_plan(codes)
+            note = tools.refresh()
+            return _noted(note, tools.check_plan(codes))
 
     @server.tool()
     def draft_rules(add: list[str], remove: list[str] | None = None,
@@ -455,12 +504,14 @@ def build_server(tools: Tools) -> Any:
         for an earlier target after a fresh read shows the new seat open and a way back. Ask the attendee
         before setting it, and name each code. Any other code in `autopilot` is refused."""
         with tools.serial:
-            return tools.draft_rules(add, remove, autopilot)
+            note = tools.refresh()
+            return _noted(note, tools.draft_rules(add, remove, autopilot))
 
     @server.tool()
     def queue_or_go(code: str) -> str:
         """Whether to queue for a session code, by session type and band history. A heuristic."""
         with tools.serial:
-            return tools.queue_or_go(code)
+            note = tools.refresh()
+            return _noted(note, tools.queue_or_go(code))
 
     return server

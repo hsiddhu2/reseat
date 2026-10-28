@@ -334,6 +334,21 @@ def test_a_symlinked_or_group_writable_rules_file_is_refused_on_reload(clock, tm
     assert [t.code for t in w.rules.targets] == ["ARC301"] and "X1" not in fake.schedule.reserved
 
 
+@POSIX_ONLY
+def test_a_refused_rules_file_is_read_once_only_its_mode_is_fixed(clock, tmp_path):
+    fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: ARC301\n")
+    w.tick()
+    rewrite(path, "targets:\n- code: ARC301\n- code: SEC201\n")
+    os.chmod(path, 0o666)
+    clock.sleep(60)
+    w.tick()
+    assert "X1" not in fake.schedule.reserved                          # others can write it: refused
+    os.chmod(path, 0o600)                                              # same content, size and time
+    clock.sleep(60)
+    w.tick()
+    assert "X1" in fake.schedule.reserved
+
+
 def test_a_rules_change_is_pushed_and_emailed_with_the_autopilot_count(clock, tmp_path):
     from reseat import push, sns
     fake, w, events, path = stack(clock, tmp_path, "targets:\n- code: ARC301\n")

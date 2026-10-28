@@ -1180,7 +1180,7 @@ def test_a_second_draft_is_refused_after_the_first_was_approved(drafting):
     first = _pid(tools.draft_rules(["AIM310"]))
     second = _pid(tools.draft_rules(["STG201"]))
     assert "written" in tools.approve_changes(first)
-    assert "changed after this draft" in tools.approve_changes(second)
+    assert tools.approve_changes(second).startswith("Refused")      # dropped with the old rules
     assert "AIM310" in path.read_text() and "STG201" not in path.read_text()
 
 

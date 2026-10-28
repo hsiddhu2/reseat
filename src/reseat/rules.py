@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -297,6 +298,20 @@ def read_nofollow(path: Path) -> str:
                          "Replace it with a regular file.") from None
     with os.fdopen(fd, encoding="utf-8") as f:
         return f.read()
+
+
+def unsafe_file(path: Path) -> str | None:
+    """Why a rules file may not be trusted for a reload, or None. It decides what is booked and
+    cancelled, so a link, another owner, or write access for others is refused."""
+    try:
+        st = path.lstat()
+    except OSError:
+        return "it cannot be read"
+    if stat.S_ISLNK(st.st_mode):                     # from the same lstat: no second look
+        return "it is a symbolic link"
+    if os.name == "posix" and (st.st_uid != os.getuid() or st.st_mode & 0o022):
+        return "other users can change it or it belongs to another user"
+    return None
 
 
 def refuse_symlink(path: Path) -> None:

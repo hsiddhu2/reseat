@@ -51,10 +51,8 @@ API rules this module exists to respect:
 from __future__ import annotations
 
 import json
-import os
 import queue
 import secrets
-import stat
 import threading
 import time
 from collections import deque
@@ -73,8 +71,8 @@ from .campus import overlaps
 from .client import ApiError, AuthRequired, EventsClient, IncompleteCatalog, NetworkError, Throttled
 from .models import PersonalTime
 from .router import FULL_SKIP, Router, run_booking
-from .rules import Rules, RulesError, exposure_warning, unresolved
-from .rules import load as load_rules
+from .rules import Rules, RulesError, exposure_warning, read_nofollow, unresolved, unsafe_file
+from .rules import parse as parse_rules
 from .store import Store, SweepRefused
 
 MIN_INTERVAL = 30
@@ -102,20 +100,6 @@ EventKind = Literal["sweep", "booked", "proposed", "swap", "moved", "error",
                     "briefing", "leave_soon", "wanted_soon", "expiring", "tight", "other_sitting",
                     "blocks", "blocks_done", "offer", "new_sessions", "rules"]
 _ERRORS = (ApiError, httpx.HTTPError, ValidationError)
-
-
-def _unsafe_file(path: Path) -> str | None:
-    """Why a rules file may not be trusted for a reload, or None. It decides what is booked and
-    cancelled, so a link, another owner, or write access for others is refused."""
-    try:
-        st = path.lstat()
-    except OSError:
-        return "it cannot be read"
-    if stat.S_ISLNK(st.st_mode):                     # from the same lstat: no second look
-        return "it is a symbolic link"
-    if os.name == "posix" and (st.st_uid != os.getuid() or st.st_mode & 0o022):
-        return "other users can change it or it belongs to another user"
-    return None
 
 
 @dataclass
@@ -501,12 +485,12 @@ class Watcher:
         res.error = f"{res.error}; {message}" if res.error else message
         self._emit("error", message=message)
 
-    def _stamp(self) -> tuple[int, int, int] | None:
+    def _stamp(self) -> tuple[int, int, int, int] | None:
         try:
             st = self.rules_path.stat() if self.rules_path else None
         except OSError:
             return None
-        return (st.st_mtime_ns, st.st_size, st.st_ino) if st else None
+        return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_mode) if st else None
 
     def _reload_rules(self) -> None:
         """The rulebook is the attendee's instructions. When it changes on disk, through draft_rules or
@@ -516,12 +500,12 @@ class Watcher:
         if stamp is None or stamp == self._rules_stamp or self.rules_path is None:
             return
         self._rules_stamp = stamp
-        unsafe = _unsafe_file(self.rules_path)
+        unsafe = unsafe_file(self.rules_path)
         if unsafe:
             self._emit("error", message=f"The rules file changed but {unsafe}, so the old rules stay.")
             return
         try:
-            new = load_rules(self.rules_path)
+            new = parse_rules(read_nofollow(self.rules_path), str(self.rules_path))
             if len(new.targets) > new.watch_cap:
                 raise RulesError(f"{len(new.targets)} targets, watch_cap is {new.watch_cap}")
         except (RulesError, OSError, ValueError) as e:
