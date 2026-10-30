@@ -397,14 +397,16 @@ A fault storm runs the whole flow for a simulated hour on a saved copy of the re
 ### Docs
 
 - [How re:Seat works](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md): the design, each part marked built or planned, and how it is tested.
+- [Design decisions](https://github.com/hsiddhu2/reseat/blob/main/docs/adr/README.md): each architecture decision, why it was made and what it costs.
 - [AWS Events API facts](https://github.com/hsiddhu2/reseat/blob/main/docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
+- [Changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md), [Security](https://github.com/hsiddhu2/reseat/blob/main/SECURITY.md), [Contributing](https://github.com/hsiddhu2/reseat/blob/main/CONTRIBUTING.md) and [Code of conduct](https://github.com/hsiddhu2/reseat/blob/main/CODE_OF_CONDUCT.md).
 - [Live proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof/): checks run against the real API.
 - [Demo scripts](https://github.com/hsiddhu2/reseat/tree/main/demo/): demos against the fake API, no sign-in. `reseat serve --demo` is the web app version.
 - [Click-through demo](https://hsiddhu2.github.io/reseat/): the web app on demo data, rebuilt from `scripts/build_site.py` on every push to main.
 
 ## Release history
 
-The main releases. Dates are UTC. Each line gives the PyPI version, then the commit. [PyPI's release history](https://pypi.org/project/reseat/#history) shows when each version was published.
+The main releases. Every release is in the [changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md). Dates are UTC. Each line gives the PyPI version, then the commit. [PyPI's release history](https://pypi.org/project/reseat/#history) shows when each version was published.
 
 - **0.5.1, 10 October:** the first release on PyPI. The watcher, which books a freed seat or a new repeat sitting of a target. The safe swap, which cancels a held seat only after a fresh read shows the new seat open and a way back to that talk, your own seat or another open sitting of it, and books yours again if the new one is refused. Leave-now blocks in the official schedule. Committed 2 October, [ee7655a](https://github.com/hsiddhu2/reseat/commit/ee7655a). The MCP server for your AI app. It writes only by approving a plan id it proposed, never from a list of session ids. Committed 2 October, [2e85cac](https://github.com/hsiddhu2/reseat/commit/2e85cac).
 - **0.5.2, 11 October:** Swap now and Keep on the phone notification. [37bf396](https://github.com/hsiddhu2/reseat/commit/37bf396).

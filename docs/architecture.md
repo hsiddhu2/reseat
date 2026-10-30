@@ -104,6 +104,8 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 
 ## Architecture
 
+Each design decision, with its context and its cost, is recorded in [the decision records](adr/README.md).
+
 ![re:Seat architecture](architecture.png)
 
 | Component | Status | Responsibility |

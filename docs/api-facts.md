@@ -2,6 +2,8 @@
 
 What re:Seat relies on about the AWS Events API. Every fact was read from the OpenAPI spec or an AWS developer guide page on 29 or 30 September 2026, or observed in the live catalog where marked. The source is beside each section. If [`openapi.json`](openapi.json) disagrees with this file, the spec wins.
 
+[`openapi.json`](openapi.json) is AWS's spec, copied unchanged from https://api.awsevents.com/v1/openapi.json so the code can be checked against it. It belongs to AWS.
+
 ## Endpoints
 
 Source: https://docs.aws.amazon.com/events/latest/devguide/rest-api.html and https://api.awsevents.com/v1/openapi.json
