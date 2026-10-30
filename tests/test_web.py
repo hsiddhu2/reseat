@@ -2058,3 +2058,12 @@ def test_status_page_push_and_email_rows_for_each_flag_alone():
     assert rows(ntfy_topic="t" * 20, ntfy_approve=True, ntfy_book=True)["Push"] == \
         "On, Swap now and Keep in the notification, Book and Dismiss in the notification"
     assert rows(ntfy_topic="t" * 20)["Email and text"].startswith("Off")
+
+
+def test_a_wanted_heading_is_not_clipped_by_the_share_bar_rule():
+    """The share bar and the wanted row's heading both use the class split. The bar rule
+    is 14px tall with overflow hidden. The wanted row must undo both, or its heading is cut."""
+    css = (pathlib.Path(pages.__file__).parent / "static" / "app.css").read_text()
+    bar, fix = css.index(".split { display: flex; height: 14px"), css.index(".want > .split {")
+    rule = css[fix:css.index("}", fix)]
+    assert fix > bar and "height: auto" in rule and "overflow: visible" in rule
