@@ -34,6 +34,8 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. You rank the talk
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
 - **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
+Booking freed seats, the safe swap and leave-now blocks were committed on 2 October ([ee7655a](https://github.com/hsiddhu2/reseat/commit/ee7655a)) and released on PyPI in 0.5.1 on 10 October. When each feature landed: [Release history](#release-history).
+
 **At a glance.** Each line links to its evidence. The research each decision rests on is in [The models behind re:Seat](https://github.com/hsiddhu2/reseat/blob/main/docs/models.md).
 
 - **Never resends a booking on a guess.** A timeout or a server error on a reserve or cancel is settled by reading your schedule back, never by sending it again. A write is resent in two cases only: once after a 429, when its `Retry-After` has passed, and once after a 401, when the sign-in is refreshed. Tests: [each resend case](https://github.com/hsiddhu2/reseat/blob/main/tests/test_write_resends.py), [5xx on a booking](https://github.com/hsiddhu2/reseat/blob/main/tests/test_router.py#L262), [5xx on a cancel](https://github.com/hsiddhu2/reseat/blob/main/tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](https://github.com/hsiddhu2/reseat/blob/main/tests/test_swap.py#L318).
@@ -92,7 +94,11 @@ pipx install reseat        # or: pip install reseat
 reseat login
 ```
 
-Python 3.11 or newer. `login` opens your AWS Builder ID sign-in. Use the Builder ID your re:Invent registration is under: `reseat whoami` should then say `Registered for reinvent2026`. The tokens stay in your OS keychain and are sent only to `api.awsevents.com`. Then point re:Seat at the sessions you want:
+Python 3.11 or newer. `login` opens your AWS Builder ID sign-in. Use the Builder ID your re:Invent registration is under: `reseat whoami` should then say `Registered for reinvent2026`. The tokens stay in your OS keychain and are sent only to `api.awsevents.com`.
+
+**Dependencies**, installed with it: httpx, pydantic, typer, keyring, rich and PyYAML, plus tzdata on Windows. Optional extras: `pip install "reseat[mcp]"` adds the MCP SDK for `reseat mcp`, and `pip install "reseat[aws]"` adds boto3 for email and text alerts through your own Amazon SNS topic.
+
+Then point re:Seat at the sessions you want:
 
 ```bash
 reseat sync                                  # the catalog, about 10 calls
@@ -395,6 +401,15 @@ A fault storm runs the whole flow for a simulated hour on a saved copy of the re
 - [Live proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof/): checks run against the real API.
 - [Demo scripts](https://github.com/hsiddhu2/reseat/tree/main/demo/): demos against the fake API, no sign-in. `reseat serve --demo` is the web app version.
 - [Click-through demo](https://hsiddhu2.github.io/reseat/): the web app on demo data, rebuilt from `scripts/build_site.py` on every push to main.
+
+## Release history
+
+The main releases. Dates are UTC. Each line gives the PyPI version, then the commit. [PyPI's release history](https://pypi.org/project/reseat/#history) shows when each version was published.
+
+- **0.5.1, 10 October:** the first release on PyPI. The watcher, which books a freed seat or a new repeat sitting of a target. The safe swap, which cancels a held seat only after a fresh read shows the new seat open and a way back to that talk, your own seat or another open sitting of it, and books yours again if the new one is refused. Leave-now blocks in the official schedule. Committed 2 October, [ee7655a](https://github.com/hsiddhu2/reseat/commit/ee7655a). The MCP server for your AI app. It writes only by approving a plan id it proposed, never from a list of session ids. Committed 2 October, [2e85cac](https://github.com/hsiddhu2/reseat/commit/2e85cac).
+- **0.5.2, 11 October:** Swap now and Keep on the phone notification. [37bf396](https://github.com/hsiddhu2/reseat/commit/37bf396).
+- **0.7.0, 19 October:** walk-up odds with a range, and leave times with a chosen confidence, committed 13 October, [636e665](https://github.com/hsiddhu2/reseat/commit/636e665). Planning tools for your AI app, with no ranking, committed 15 October, [7dc6421](https://github.com/hsiddhu2/reseat/commit/7dc6421).
+- **0.8.0, 26 October:** the Findings page, Book offers on a tap, and email and text alerts through your own Amazon SNS topic. Committed 25 October, [86e5740](https://github.com/hsiddhu2/reseat/commit/86e5740).
 
 ## License
 
