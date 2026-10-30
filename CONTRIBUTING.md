@@ -12,7 +12,7 @@ pip install -e ".[dev]"
 ruff check . && pytest -q
 ```
 
-No test touches the network. Tests use `reseat.fakeapi.FakeEventsApi` as an httpx transport ([ADR-0017](docs/adr/0017-fake-api.md)). CI runs ruff and pytest. mypy is in the dev extras but is not yet required.
+No test touches the network. Tests use `reseat.fakeapi.FakeEventsApi` as an httpx transport ([ADR-0017](docs/adr/0017-fake-api.md)). CI runs ruff and pytest, and both must pass. CI also runs `mypy src` in strict mode and shows the errors, but does not fail on them yet. Strict typing is a goal, not yet enforced.
 
 ## Workflow
 

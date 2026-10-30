@@ -10,6 +10,10 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 - Architecture decision records in `docs/adr/`, plus SECURITY.md, CONTRIBUTING.md and this changelog.
 - README: dependencies, release history, and uvx commands pinned to Python 3.12.
 
+### Changed
+
+- CI runs mypy on src and shows the errors. Strict typing is not yet enforced.
+
 ### Fixed
 
 - The MCP server re-reads the rules file before each tool call, and any change drops pending plans.
@@ -17,6 +21,7 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ### Security
 
+- CI: every GitHub Action pinned by commit SHA, Dependabot for pip and Actions, CodeQL for Python, and pip-audit of the installed dependencies.
 - A Retry-After that is not a number, or is outside 0 to 60, now waits 60 seconds instead of skipping the write's read-back and journal.
 
 ## [0.8.0] - 2026-10-26

@@ -53,6 +53,8 @@ select = ["E", "F", "I", "B", "UP"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+# Strict typing is a goal, not yet enforced. CI runs mypy on src and shows
+# the errors, but a failure does not fail the build.
 [tool.mypy]
 strict = true
 python_version = "3.11"
