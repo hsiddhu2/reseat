@@ -12,7 +12,7 @@ from reseat.fakeapi import FakeEventsApi
 from reseat.models import Session
 from reseat.store import Store
 from reseat.swap import Swap
-from reseat.watcher import ONSITE_CAP, Watcher, WatchEvent
+from reseat.watcher import ONSITE_CAP, ONSITE_EVERY, Watcher, WatchEvent
 
 EV = "reinvent2026"
 SECRET = "correct-horse-battery-staple"
@@ -280,7 +280,7 @@ def test_push_failure_never_raises():
 # ---------------------------------------------------------------------- on site
 
 
-def test_onsite_cap_of_40_is_enforced(clock):
+def test_onsite_cap_is_enforced(clock):
     sessions = [mk(f"S{i:02d}", f"X{i:02d}", "2026-12-01", "10:00", band="unavailable") for i in range(55)]
     fake = FakeEventsApi(sessions=sessions)
     client = EventsClient(token_provider=lambda: fake.token, quota=QuotaTracker(clock=clock),
@@ -294,7 +294,38 @@ def test_onsite_cap_of_40_is_enforced(clock):
     w.subscribe(events.append)
     res = w.onsite_tick("2026-12-01")
     assert res.count == ONSITE_CAP and fake.counts["GetSession"] == ONSITE_CAP
-    assert any("polling the first 40" in e.data.get("message", "") for e in events if e.kind == "error")
+    assert any(f"polling the first {ONSITE_CAP}" in e.data.get("message", "")
+               for e in events if e.kind == "error")
+
+
+def test_onsite_polling_leaves_get_session_quota_for_reads_before_writes(clock):
+    """GetSession allows 120 a minute. A full on-site list polled every ONSITE_EVERY seconds must
+    leave room for the fresh reads a swap or a booking makes before it writes, so they never wait."""
+    day = "2026-12-01"
+    sessions = [mk(f"S{i:02d}", f"X{i:02d}", day, "10:00", band="unavailable") for i in range(55)]
+    sessions += [mk("HA", "SEC201", "2026-12-02", "10:00"), mk("WB", "ARC301", "2026-12-02", "13:00")]
+    fake = FakeEventsApi(sessions=sessions)
+    fake.schedule.reserved.add("HA")
+    quota = QuotaTracker(clock=clock)
+    client = EventsClient(token_provider=lambda: fake.token, quota=quota, sleep=clock.sleep,
+                          transport=fake.transport())
+    store = Store(":memory:")
+    store.apply_sweep(EV, sessions, with_abstracts=False)
+    rules = R.parse("watch_cap: 60\nmax_per_day: 20\ntargets:\n"
+                    + "".join(f"- code: X{i:02d}\n" for i in range(55)))
+    w = Watcher(client, store, rules, EV, clock=clock, sleep=clock.sleep)
+    polls = 60 // ONSITE_EVERY
+    for n in range(polls):                       # one minute of on-site polling, as run() paces it
+        if n:
+            clock.sleep(ONSITE_EVERY)
+        assert w.onsite_tick(day).count == ONSITE_CAP
+    spent = quota.quotas["GetSession"] - quota.remaining("GetSession")
+    assert spent == ONSITE_CAP * polls <= 105
+    t0 = clock.t
+    res = Swap(client, store, rules, EV).check("HA", "WB", approved=True)   # GetSession on B and on A
+    assert res.reasons == [] and clock.t == t0                               # neither read waited
+    client.get_session(EV, "WB")                                             # a booking's fresh read
+    assert clock.t == t0
 
 
 def test_onsite_band_flip_books_the_seat(clock):
@@ -431,7 +462,7 @@ def test_onsite_cap_warning_fires_once_a_day(clock):
     w.subscribe(events.append)
     for _ in range(3):
         w.onsite_tick("2026-12-01")
-    assert len([e for e in events if e.kind == "error" and "first 40" in e.data["message"]]) == 1
+    assert len([e for e in events if e.kind == "error" and f"first {ONSITE_CAP}" in e.data["message"]]) == 1
 
 
 # ---------------------------------------------------------------------- Origin on every POST route
