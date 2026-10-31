@@ -12,6 +12,7 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ### Changed
 
+- README trimmed to an overview. The rules file reference, running it all week, email and text alerts, and the MCP server setup moved to `docs/guide/`, with a short summary and a link left in the README.
 - CI runs mypy on src and shows the errors. Strict typing is not yet enforced.
 
 ### Fixed

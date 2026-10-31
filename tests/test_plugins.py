@@ -71,6 +71,16 @@ def test_readme_pins_this_version_wherever_it_names_a_release():
     assert pins and set(pins) == {reseat.__version__}
 
 
+def test_guide_pages_pin_this_version_wherever_they_name_a_release():
+    """The guides in docs/guide/ must name the same release as README, or a bump misses them."""
+    import re
+    pages = sorted((ROOT / "docs" / "guide").glob("*.md"))
+    pins = {p.name: re.findall(r"reseat\[mcp\]==([0-9][0-9A-Za-z.]*)", p.read_text()) for p in pages}
+    assert pages and pins.get("mcp.md"), "the MCP guide names the release it installs"
+    for name, found in pins.items():
+        assert set(found) <= {reseat.__version__}, name
+
+
 def test_sdist_ships_the_plugin_files_this_test_reads():
     """tests/ ships in the sdist, so the files it reads must ship too."""
     import tomllib

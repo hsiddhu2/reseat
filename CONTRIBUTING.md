@@ -37,7 +37,7 @@ These are recorded as [architecture decisions](docs/adr/README.md). A change tha
 
 ## Releases
 
-1. Bump `version` in `pyproject.toml` and `__version__` in `src/reseat/__init__.py`, the `version` in each `plugins/**/plugin.json`, the `reseat[mcp]==` pin in each `plugins/**/.mcp.json` and `mcp.json`, and the uvx pins in README. `tests/test_version.py` and `tests/test_plugins.py` check them.
+1. Bump `version` in `pyproject.toml` and `__version__` in `src/reseat/__init__.py`, the `version` in each `plugins/**/plugin.json`, the `reseat[mcp]==` pin in each `plugins/**/.mcp.json` and `mcp.json`, and the uvx pins in README and `docs/guide/`. `tests/test_version.py` and `tests/test_plugins.py` check them.
 2. Move the Unreleased entries in CHANGELOG.md under the new version and date.
 3. Merge to `main`, then push a tag `vX.Y.Z`. The release workflow publishes to PyPI by trusted publishing ([ADR-0018](docs/adr/0018-release.md)).
 
