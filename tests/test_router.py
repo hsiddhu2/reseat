@@ -20,7 +20,7 @@ from reseat.router import (
 from reseat.store import Store
 
 EV = "reinvent2026"
-FIXTURE = Path(__file__).parent / "fixtures" / "catalog-2026-10-01.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "catalog-sample-2026-10-01.json"
 
 
 def mk(sid, abbr, typ="Breakout session", date="2026-12-01", time_="10:00", mins=60,

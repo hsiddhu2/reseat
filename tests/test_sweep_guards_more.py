@@ -311,7 +311,7 @@ def test_cli_sync_help_lists_force():
 
 def test_first_sweep_of_the_1_october_catalog_stores_no_band():
     """A first sweep now clears band_changes, so check the stored bands directly."""
-    fixture = Path(__file__).parent / "fixtures" / "catalog-2026-10-01.json"
+    fixture = Path(__file__).parent / "fixtures" / "catalog-sample-2026-10-01.json"
     fake = FakeEventsApi.from_fixture(fixture)
     client = EventsClient(token_provider=lambda: fake.token, quota=QuotaTracker(),
                           transport=fake.transport())
