@@ -407,3 +407,26 @@ def test_no_batch_is_larger_than_the_quota_left(fake, client, store, tools, monk
     tools.approve_changes(pid)
     sizes = [len(json.loads(r["request"])) for r in store.journal_entries(EV) if r["op"] == F.OP]
     assert sorted(sizes) == [1, 2] and fake.counts[F.OP] == 2 and len(fake.schedule.favorites) == 3
+
+
+
+def test_a_404_then_no_quota_says_stopped_not_unread(fake, client, store, tools, monkeypatch):
+    """Nothing landed, so no read-back was due. The answer must not claim one failed."""
+    _mirror_then_drop(tools, store)
+    out = tools.propose_favorites(prune=True)
+    real, calls = client.unfavorite, []
+
+    def gone(ev, sid):
+        calls.append(sid)
+        fake.schedule.favorites.discard(sid)                            # already gone, answers 404
+        return real(ev, sid)
+
+    client.unfavorite = gone
+    left = client.quota.remaining
+    monkeypatch.setattr(client.quota, "remaining", lambda op: 0 if op == F.UNOP and calls else left(op))
+    monkeypatch.setattr(client.quota, "seconds_until", lambda op, n: 1.0)
+    reads = fake.counts["GetSchedule"]
+    done = tools.approve_changes(plan_id(out))
+    assert len(calls) == 1 and fake.counts["GetSchedule"] == reads + 1  # the fresh read, no read-back
+    assert done.startswith("Stopped before every planned change was sent:")
+    assert "could not be read back" not in done and "quota" in done

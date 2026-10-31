@@ -59,6 +59,7 @@ class FavoritesSync:
     error: str | None = None
     wrote: bool = False            # an AssociateFavorites or DisassociateFavorite request went out
     read_back: bool = False        # GetSchedule was read back after the writes
+    landed: bool = False           # a write may have changed favorites, so a read-back was due
 
     def count(self, status: str) -> int:
         return sum(1 for o in self.outcomes if o.status == status)
@@ -155,6 +156,7 @@ def sync(client: EventsClient, store: Store, event_id: str, rules: Rules,
     if not res.closed and not res.error:
         removed = _remove(client, store, event_id, res)
     if sent or removed:
+        res.landed = True
         _read_back(client, store, event_id, res, sent, removed)
     return res
 

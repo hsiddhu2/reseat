@@ -393,8 +393,10 @@ class Tools:
             out.append("Nothing was sent: the fresh read showed nothing left to change.")
         elif res.read_back:
             out.append("Done. Read back from the schedule:")
-        elif res.error:
+        elif res.error and res.landed:
             out.append("Sent, but the schedule could not be read back, so nothing is confirmed:")
+        elif res.error:
+            out.append("Stopped before every planned change was sent:")
         else:
             out.append("Nothing changed. Already gone:")
         out += lines + [head]
