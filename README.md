@@ -40,7 +40,7 @@ Booking freed seats, the safe swap and leave-now blocks were committed on 2 Octo
 
 - **Never resends a booking on a guess.** A timeout or a server error on a reserve or cancel is settled by reading your schedule back, never by sending it again. A write is resent in two cases only: once after a 429, when its `Retry-After` has passed, and once after a 401, when the sign-in is refreshed. Tests: [each resend case](https://github.com/hsiddhu2/reseat/blob/main/tests/test_write_resends.py), [5xx on a booking](https://github.com/hsiddhu2/reseat/blob/main/tests/test_router.py#L262), [5xx on a cancel](https://github.com/hsiddhu2/reseat/blob/main/tests/test_cancel_and_cli.py#L58), [a timeout mid-swap](https://github.com/hsiddhu2/reseat/blob/main/tests/test_swap.py#L318).
 - **Every booking and cancel is read back** from your official schedule. Tests: [after a booking](https://github.com/hsiddhu2/reseat/blob/main/tests/test_router.py#L155), [through a whole fault storm](https://github.com/hsiddhu2/reseat/blob/main/tests/test_fault_storm.py#L150).
-- **Tested under a fault storm:** a simulated hour against the fake API on a saved copy of the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](https://github.com/hsiddhu2/reseat/blob/main/tests/test_fault_storm.py).
+- **Tested under a fault storm:** a simulated hour against the fake API on a 200-session sample of the real 2026 catalog, with 30 percent of bookings full, a 429 every minute, a server error, fifteen minutes of writes switched off, and the API's quotas enforced. [The test](https://github.com/hsiddhu2/reseat/blob/main/tests/test_fault_storm.py).
 - **All 12 operations of the Events API**, each in a real feature and under the API's own rules: GetEvent checks the event's time zone before any session time is trusted, and DisassociateFavorite removes only favorites re:Seat added for a dropped target. [The table](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md#api-operations-used).
 - **Over 1,200 tests**, run on Linux, macOS and Windows with Python 3.11 and 3.13 on every push. [CI](https://github.com/hsiddhu2/reseat/actions/workflows/ci.yml).
 - **The 2026 campus:** Caesars Forum, Caesars Palace, Encore, MGM Grand, The Venetian, Wynn. [The venue table](https://github.com/hsiddhu2/reseat/blob/main/src/reseat/campus.py#L18).
@@ -198,7 +198,7 @@ Since 12 October the watcher has run against the live API on the attendee's own 
 
 ## How it is tested
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for a simulated hour against the fake API, on a saved copy of the real 2026 catalog, with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. Over 1,200 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md).
+Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `sessionFull`, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and expired sign-in. A fault storm runs the whole flow for a simulated hour against the fake API, on a 200-session sample of the real 2026 catalog, with 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, and the real quotas enforced, and checks that no quota is exceeded, no talk is held twice and every write is read back. Over 1,200 tests. CI runs them on Linux, macOS and Windows, on Python 3.11 and 3.13. Details in [How re:Seat works](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md).
 
 ## Reference
 
@@ -390,9 +390,9 @@ pytest
 ruff check .
 ```
 
-A fault storm runs the whole flow for a simulated hour on a saved copy of the real catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, quotas enforced. Tests run against an in-process fake of the API that produces each documented failure re:Seat handles: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
+A fault storm runs the whole flow for a simulated hour on a 200-session sample of the real catalog: 30 percent of reserves full, a 429 every minute, a 503, fifteen minutes of 409, quotas enforced. Tests run against an in-process fake of the API that produces each documented failure re:Seat handles: `sessionFull`, `scheduleConflict` with `conflictsWith`, `alreadyScheduled`, 409 while writes are closed, 429 with `Retry-After`, and partial batch results. No network needed.
 
-`tests/fixtures/catalog-2026-10-01.json` is a real catalog pull (no abstracts, no speaker names). `FakeEventsApi.from_fixture(path)` serves it, so tests see the real venue, room and type strings.
+`tests/fixtures/catalog-sample-2026-10-01.json` is a 200-session sample of the 1 October 2026 catalog pull (no abstracts, no speaker names), not the whole catalog. It keeps every session type and venue, and each sampled talk with all its sittings. `FakeEventsApi.from_fixture(path)` serves it, so tests see the real venue, room and type strings.
 
 ### Docs
 

@@ -2,7 +2,7 @@
 
 Each demo runs the real re:Seat CLI and engine against FakeEventsApi, an in-process
 fake of the AWS Events API, with a throwaway home folder. Session codes and titles
-come from the real 1 October 2026 catalog. Nothing is sent to AWS, no sign-in is
+come from a sample of the real 1 October 2026 catalog. Nothing is sent to AWS, no sign-in is
 used, and nothing outside the temporary folder is touched.
 """
 
@@ -26,7 +26,7 @@ from reseat.fixtures import load_catalog
 from reseat.models import Session
 from reseat.store import Store
 
-FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "catalog-2026-10-01.json"
+FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "catalog-sample-2026-10-01.json"
 EV = "reinvent2026"
 con = Console(emoji=False)
 
@@ -50,7 +50,7 @@ def step(text: str, wait: float = 1.2) -> None:
 
 
 def catalog(bands: dict[str, str | None]) -> list[Session]:
-    """Real sessions from the 1 October catalog, reservable, with the bands given by code."""
+    """Real sessions from the 1 October catalog sample, reservable, with the bands given by code."""
     out = []
     for s in load_catalog(FIXTURE):
         if s.abbreviation in bands:

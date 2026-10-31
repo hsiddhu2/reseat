@@ -37,7 +37,7 @@ Six days after reserved seating opened, three in four reservable sessions were f
 
 ## The catalog was not re-keyed
 
-The local copy of the 1 October catalog ([tests/fixtures/catalog-2026-10-01.json](../../tests/fixtures/catalog-2026-10-01.json)) compared with the 12 October catalog:
+The local copy of the 1 October catalog (the test fixture `catalog-2026-10-01.json`, since replaced in the repo by a sample) compared with the 12 October catalog:
 
 ```
 1 October    2068 sessions
