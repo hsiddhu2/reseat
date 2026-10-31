@@ -4,6 +4,8 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-31
+
 ### Added
 
 - Plugin packages for the MCP server.
@@ -103,7 +105,8 @@ First release on PyPI.
 - The MCP server, which writes only by approving a plan id it proposed.
 - The local web app and ntfy pushes.
 
-[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/hsiddhu2/reseat/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/hsiddhu2/reseat/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hsiddhu2/reseat/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/hsiddhu2/reseat/compare/v0.6.0...v0.6.1
