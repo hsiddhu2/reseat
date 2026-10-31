@@ -111,7 +111,7 @@ reseat book --dry-run                        # see the plan. Nothing is sent
 
 | When | What re:Seat does |
 |---|---|
-| While you plan | Your own AI app plans with you through re:Seat's MCP server: it searches the catalog, finds the free gaps in a day with the walks counted, checks a list of sessions against what you hold, and drafts the rules file. You approve the draft. re:Seat lists and checks, and the choosing stays with you. See [MCP server](#mcp-server). |
+| While you plan | Your own AI app plans with you through re:Seat's MCP server: it searches the catalog, finds the free gaps in a day with the walks counted, checks a list of sessions against what you hold, and drafts the rules file. You approve the draft. re:Seat lists and checks, and the choosing stays with you. See [MCP server](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md). |
 | Before writes open | Takes your targets from the schedule you built in the AWS portal, or from a [reinvent-planner.cloud](https://reinvent-planner.cloud) export, and mirrors them into your favorites. |
 | The day API writes open | `reseat book` reserves your targets, scarcest formats first and then in your order, 10 per call, inside the quota. A full session falls back to its next sitting in the same run. Every write is read back. |
 | Every day until the event | `reseat serve` sweeps the catalog every minute. A freed seat or a new repeat of a target is booked at once. A sitting your rules put first that clashes with a lower-priority hold becomes a swap proposal: a card on the Week page, and a push, with Swap now and Keep if you opt in. Leave-now reminders go into your official schedule. |
