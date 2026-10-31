@@ -14,7 +14,8 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 - The MCP server re-reads the rules file before each tool call, and any change drops pending plans.
 - Today page: headings in "Wanted today, not held" are no longer cut off.
-- The test fixture is now a 200-session sample of the 1 October catalog, not the whole catalog, so the repo and sdist no longer carry it.
+- The test fixture is now a 200-session sample of the 1 October catalog, not the whole catalog, so the working tree and the sdist no longer carry it. Git history still holds the old file.
+- On site, the watcher polls at most 35 sessions, not 40. That spends 105 of GetSession's 120 a minute and leaves 15 for the fresh reads before a swap or booking, which no longer wait on the quota.
 
 ### Security
 

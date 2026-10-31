@@ -306,7 +306,7 @@ Confirm the subscription from the email AWS sends, then add `sns_topic_arn: <arn
 
 **When writes are switched off.** A 409 means the API has reservation writes turned off, and retrying will not help until they are back. re:Seat keeps watching and keeps every opening queued, but sends no reserve and runs no swap. It tries once after 15 minutes. With `probe_session` set to a session that takes no reservations, it checks every minute instead and resumes the moment writes open. Push says "Booking paused" and "Booking resumed".
 
-**On site.** During the event days the laptop also checks the day's held and wanted sessions every 20 seconds, at most 40 of them, so a seat freed by a no-show is booked while you are in the walk-up line.
+**On site.** During the event days the laptop also checks the day's held and wanted sessions every 20 seconds, at most 35 of them, so a seat freed by a no-show is booked while you are in the walk-up line.
 
 **When the hotel Wi-Fi drops.** The watcher keeps running. It retries with a growing wait, up to 5 minutes between tries, and goes back to its normal pace as soon as a sweep works. A sweep that fails halfway is not saved, so a seat that opened during the outage is still caught afterwards. Each outage goes in the journal. Your reserved seats stay reserved, because they live in your AWS schedule, not on the laptop. While the laptop is offline it cannot book anything and the phone cannot reach it, so use the official app until it is back. If the AWS API is down but the internet is up, push tells you "re:Seat offline since HH:MM" after 10 minutes and "re:Seat back" when it recovers.
 
