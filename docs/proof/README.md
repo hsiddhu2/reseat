@@ -31,6 +31,7 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
+| What the watcher saw, 12 to 30 October: openings, catalog changes, outages and blind spells | [`2026-10-30-watcher-to-30-oct.md`](2026-10-30-watcher-to-30-oct.md) | done |
 | A reserve that clashes with a held seat, refused with scheduleConflict, 26 October | [`2026-10-26-clash-refused.md`](2026-10-26-clash-refused.md) | done |
 | A swap run by the watcher on its own, there and back, started by a rules edit, 26 October | [`2026-10-26-watcher-swap.md`](2026-10-26-watcher-swap.md) | done |
 | Leave-now blocks written to the official schedule, after a refused first run, 25 October | [`2026-10-25-leave-now-blocks.md`](2026-10-25-leave-now-blocks.md) | done |
