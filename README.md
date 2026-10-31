@@ -133,7 +133,7 @@ The rules file is the whole instruction set. Write it by hand, from your schedul
 
 ## The phone remote
 
-Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. The phone gets notifications through the free ntfy app. With `ntfy_approve: true`, a swap proposal carries **Swap now** and **Keep** buttons: the tap goes back through ntfy.sh to the laptop, which only makes outgoing connections, so the phone never has to reach it. The topic name is the secret: see [what a leaked topic allows](#running-it-all-week). Opening the web app itself on the phone is optional, over [Tailscale](https://tailscale.com). Designed for a laptop left in the hotel room.
+Sign-in only works on your own machine, so the token stays on the laptop and the laptop makes every call. The phone gets notifications through the free ntfy app. With `ntfy_approve: true`, a swap proposal carries **Swap now** and **Keep** buttons: the tap goes back through ntfy.sh to the laptop, which only makes outgoing connections, so the phone never has to reach it. The topic name is the secret: see [what a leaked topic allows](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/phone.md). Opening the web app itself on the phone is optional, over [Tailscale](https://tailscale.com). Designed for a laptop left in the hotel room.
 
 ## Why re:Seat runs on your machine
 
@@ -238,144 +238,27 @@ Data lives in `~/.reseat/reseat.db`. Set `RESEAT_HOME` to move it. On macOS and 
 
 ### Rules file
 
-`~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else. re:Seat writes it readable by you only, because it can hold `serve_secret`, and refuses to write through a symbolic link. If you made the file yourself and others on the machine can read a secret in it, re:Seat says so and gives the `chmod` to run.
+`~/.reseat/rules.yaml` lists targets in priority order. re:Seat reserves nothing else. `reseat rules init` writes a commented one, and `reseat rules from-schedule` writes one from the schedule you built in the AWS portal.
 
-If you built your schedule in the AWS portal, `reseat rules from-schedule` writes the file for you. Your reserved sessions come first, then your favorites, in the order the API lists them. The API does not promise that order, so reorder the targets to set your priority. Each target is the exact sitting you picked, by session id with `repeats: false`, so the file can be written even while the catalog is empty. `favorites sync` and `book` still need `reseat sync` first. Every reserved session is listed. A favorite past `watch_cap` is written as a comment, not dropped. The API treats a favorite as interest only, not a reservation. This command turns your favorites into booking targets on purpose, and says how many, so delete any you only want to keep an eye on. When an exact sitting is full and the talk has other sittings, `book` says so in one line. Nothing moves to another sitting unless you set `repeats: true` on that target. Other settings are the `rules init` defaults, with its example lunch left as a comment. Without `--force` it never replaces an existing file. With `--force` the old file is kept as `rules.yaml.bak`, because its settings, `serve_secret` included, are reset.
-
-```yaml
-targets:
-  - code: ARC301          # any sitting of ARC301. Earliest first unless prefer: latest
-    backups: [ARC302]     # tried if no sitting of ARC301 can be held
-  - session_id: 1780442277219001cKCh
-    repeats: false        # this sitting only
-meals:
-  - {day: Tuesday, start: "12:00", end: "13:00"}
-max_per_day: 5
-arrive_confidence: 0.8      # leave early enough to finish the estimated walk in time this often (0.5 to 0.99)
-watch_cap: 25
-home_venue: Venetian      # where the first walk of each day starts
-serve_secret: <long random string>   # needed for the web app off this laptop
-ntfy_topic: <random 16 to 64 characters>   # optional push
-probe_session: <id of a session that takes no reservations>   # resume the moment writes open
-```
-
-The first target wins a time slot. Within a batch, formats that are not recorded go first, because they fill first: Workshop, Lab and Bootcamp, then Builders' session, Chalk talk, Code talk, Breakout session, then the rest.
+The full reference, with every setting and an example file: [Rules file](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/rules.md).
 
 ### Running it all week
 
 re:Seat is designed for a laptop left in the hotel room, plugged in and awake, while you carry only your phone. Your sign-in can only happen on your own machine, so the laptop makes every API call. The phone gets notifications through the ntfy app and approves a swap from the notification. Opening the web app on the phone is optional, over Tailscale.
 
-**Keep the laptop awake with the lid closed.** Start it with `reseat serve`.
-
-- macOS. `caffeinate -s reseat serve` keeps the Mac awake while it is plugged in. Closing the lid still puts most MacBooks to sleep unless an external display is attached. Either leave the lid open with the screen dimmed, or run `sudo pmset -a disablesleep 1` before you leave and `sudo pmset -a disablesleep 0` when you are back.
-- Windows. Settings, System, Power and battery: when plugged in, sleep after Never. Control Panel, Power Options, Choose what closing the lid does: when plugged in, Do nothing.
-
-**Set up the phone: notifications.** Set `ntfy_topic` in the rules file to a long random name, install the ntfy app on the phone and subscribe to that topic. Push is off unless the topic is set. The laptop posts to `https://ntfy.sh/<topic>`, each kind once:
-
-- **Swaps:** a swap proposed, 2 minutes from lapsing, done, rolled back or failed.
-- **Bookings:** a seat booked. A Book offer: a session just added, or a seat opened on a favorite, that fits your day. More than five new sessions in one sweep come as five offers and one summary. A seat opened or a new sitting appeared but your rules stopped it, with the reason. The only sitting your rules allow is full while another has seats. A booking the read-back could not confirm. The catalog back after the API served none.
-- **Schedule:** a session you hold moved or left the catalog. Two held sessions too far apart to walk between in the gap. The leave-now blocks re:Seat wrote no longer match what you hold, with, under `ntfy_approve: true`, an **Update** button that rewrites them and reads the schedule back (only if you use the blocks).
-- **On site:** a morning briefing between 06:00 and 10:00 on each conference day, leave in 10 minutes, leave now, and a talk you want but hold no seat for starting in 20 minutes, with whether to queue.
-- **Health:** writes paused or resumed, the API unreachable for 10 minutes or back, sign-in needed.
-
-Each push carries the event, session codes, titles and those status lines, never your token, an abstract or a session id. When `reseat serve` listens on an address other than 127.0.0.1, a tap opens the right page there. Use your Tailscale address: it works only inside your own Tailscale network.
-
-**Choose what reaches the phone.** Under `notify:` in the rules file, `quiet: "22:00-07:00"` (Las Vegas time) holds pushes back and sends one summary when the quiet hours end, and `mute: [on_site]` drops a category: swaps, bookings, schedule, on_site, health. Sign in needed and a swap that failed always come through.
-
-**Approve from the notification.** Add `ntfy_approve: true` and a swap proposal, and its 2-minute reminder, arrive with **Swap now** and **Keep** buttons, with `ntfy_book: true` a Book offer with **Book** and **Dismiss** (at most 3 bookings a day from the notification), and out-of-date leave-now blocks with **Update**. Long-press the notification to see them. The tap goes back through ntfy.sh to a second topic derived from yours, and re:Seat reads it over an outgoing connection, so the phone never has to reach the laptop: no Tailscale, no link, no sign-in. It runs the same checked swap as the web app, and a second push tells you the result. The button carries the proposal's plan id, which is random, works once and expires after 10 minutes, so tapping twice runs the swap once. To try it first on demo data: `reseat serve --demo --push <your topic>`.
-
-**Your topic name is the secret.** ntfy.sh topics have no password: anyone who knows the name can read what is posted to it and post to it. So treat `ntfy_topic` like a password. Make it long and random, for example `python3 -c "import secrets; print(secrets.token_urlsafe(24))"`, never reuse it, and do not put it in a screenshot. re:Seat accepts only 16 to 64 letters, digits, `-` and `_`, and on macOS and Linux warns when a rules file holding the topic can be read by other users on the machine.
-
-If the name leaks, this is what someone else could do, and what limits it:
-
-- **Read your pushes.** They hold session codes, titles, times, rooms, venues and status lines. When the web app is reachable from your phone, they also hold its address on your Tailscale network, and with `ntfy_approve` each button's single-use id. Never your token, an abstract, a session id, or anything that signs in to AWS. Knowing the topic gives no access to your schedule or your account.
-- **Post to your topic.** A fake notification could appear on your phone. re:Seat never acts on what is posted there. Check anything odd in the web app or the official app.
-- **With `ntfy_approve` or `ntfy_book` on, tap your buttons.** With `ntfy_approve: true` they could approve or dismiss a swap that is waiting for you, or run Update on your leave-now blocks. With `ntfy_book: true` they could book or dismiss a Book offer that is waiting. That is all. A button only works on a proposal or offer re:Seat made, while it waits: its plan id is random, works once and expires after 10 minutes. Each Book tap reserves the one session it offered, after the same checks as the web app: the seat is open, it fits around what you hold, and it is not a second sitting of a talk you hold. Each offer could still become a seat you did not want, which may block a target that opens later at that time, so bookings from the notification stop at 3 a day. Swap now runs the same checked swap as the web app: a fresh read of the new seat, a fallback for yours, and your seat booked again if the new one is refused. Update only adds, changes or removes the leave-now blocks re:Seat wrote. Nobody can use the topic to book, cancel or favorite anything else.
-- **What to do.** Put a new random name in `ntfy_topic`, subscribe to it in the ntfy app, unsubscribe from the old one, and restart `reseat serve`. re:Seat no longer posts to or listens on the old name. ntfy.sh keeps past messages for a while, so pushes already sent stay readable on the old name until they expire there. To keep push but drop the buttons, remove `ntfy_approve` and `ntfy_book`.
-
-
-**Email and text messages, through Amazon SNS.** Alerts to act on (Book offers, bookings, swaps, a session you hold moving, sign-in needed, offline) can also go to an SNS topic in your own AWS account, with a link to the web app when your phone can reach it. re:Seat stores no AWS keys: it uses an AWS profile you already have.
-
-```bash
-pip install "reseat[aws]"
-aws sns create-topic --name reseat-alerts --profile <profile>
-aws sns subscribe --topic-arn <arn> --protocol email --notification-endpoint <your email> --profile <profile>
-```
-
-Confirm the subscription from the email AWS sends, then add `sns_topic_arn: <arn>` and `aws_profile: <profile>` to the rules file and restart `reseat serve`. The profile needs `sns:Publish` on that topic only. For text messages, subscribe a phone number with `--protocol sms`. AWS sends US texts only from a registered origination number in your account, set up in AWS End User Messaging SMS, so email is the quick start. The alert text goes to SNS in your account: session codes, titles and the event type, never your token or a session id.
-
-**When writes are switched off.** A 409 means the API has reservation writes turned off, and retrying will not help until they are back. re:Seat keeps watching and keeps every opening queued, but sends no reserve and runs no swap. It tries once after 15 minutes. With `probe_session` set to a session that takes no reservations, it checks every minute instead and resumes the moment writes open. Push says "Booking paused" and "Booking resumed".
-
-**On site.** During the event days the laptop also checks the day's held and wanted sessions every 20 seconds, at most 35 of them, so a seat freed by a no-show is booked while you are in the walk-up line.
-
-**When the hotel Wi-Fi drops.** The watcher keeps running. It retries with a growing wait, up to 5 minutes between tries, and goes back to its normal pace as soon as a sweep works. A sweep that fails halfway is not saved, so a seat that opened during the outage is still caught afterwards. Each outage goes in the journal. Your reserved seats stay reserved, because they live in your AWS schedule, not on the laptop. While the laptop is offline it cannot book anything and the phone cannot reach it, so use the official app until it is back. If the AWS API is down but the internet is up, push tells you "re:Seat offline since HH:MM" after 10 minutes and "re:Seat back" when it recovers.
-
-**When sign-in expires.** If the token can no longer be refreshed, re:Seat stops booking, keeps watching for the moment it can read again, and tells you once: "sign in needed". Run `reseat login` on the laptop. Booking resumes on the next sweep.
-
-#### Optional: the web app on the phone
-
-**Set it up.** Install [Tailscale](https://tailscale.com) on the laptop and the phone and sign in to the same account on both. Add a long random `serve_secret` to the rules file, then start it on the laptop:
-
-```bash
-reseat serve --tailscale
-```
-
-re:Seat listens on 127.0.0.1 only and asks Tailscale to forward `http://<your laptop's Tailscale name>:8490` to it, so the page is reachable from your own Tailscale devices and nowhere else. Stopping `reseat serve` removes the forwarding. This also avoids macOS's Local Network rules, which can drop connections from other devices to a program they do not recognise. `--host <Tailscale address>` still works where those rules allow it.
-
-It prints a one-time link. Open it once on each device. It sets a cookie and the address bar is left clean. If the cookie is lost, open `/login` on the same address and type the secret. Wrong secrets are limited to 5 a minute from each device and 30 a minute from all devices together, so one device guessing does not lock out your phone. A sign-in lasts 7 days. To sign every device out, stop and restart `reseat serve`: sign-ins live only in the running process. The page is plain HTTP, so open it over Tailscale, which encrypts the connection, not across open hotel Wi-Fi. Without `serve_secret`, `reseat serve` listens on 127.0.0.1 only and refuses any other address. It never listens on every interface: `--host 0.0.0.0` is refused. The page is access control for a hotel network, not a security product: it stops a neighbour on the same Wi-Fi from approving your swaps. Swap now and Dismiss take a plan id that expires after 10 minutes. No page or endpoint takes a session id.
-
-**Reach it from the phone.** With `--tailscale`, open the printed link on the phone. Tailscale is designed to let the phone reach the laptop from any venue, and the page is not offered on the hotel network.
-
-**If the phone cannot open it.** `reseat serve` checks it can reach its own address when it starts. On macOS, a terminal app without Local Network permission accepts connections and then drops them. Allow the app you run reseat in (Terminal, iTerm or VS Code) under System Settings, Privacy & Security, Local Network, then quit and reopen it. Also check Tailscale is switched on on both devices.
-
-**Put it on the home screen.** On the iPhone, open the web app in Safari, tap Share, then Add to Home Screen. re:Seat then opens full screen with its own icon, on Approve. If it asks you to sign in, open `/login` and enter `serve_secret`.
+How to keep the laptop awake with the lid closed, set up ntfy push, approve from the notification, keep the topic secret, and open the web app on the phone over Tailscale: [Running it all week](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/phone.md). Email and text alerts through your own Amazon SNS topic: [Email and text alerts](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/alerts.md).
 
 ### MCP server
 
 `reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Your AI app starts it as a child process on your machine. Nothing is hosted.
 
-**Install it once, with the MCP extra, and sign in:**
+Once added, your AI app should list the reseat server with 11 tools.
 
-```bash
-pipx install "reseat[mcp]"     # or pip. Already installed without it: pipx install --force "reseat[mcp]"
-reseat login                   # in a terminal, once. The token goes to the system keychain
-which reseat                   # the full path for the config below. On Windows: where reseat
-```
+Tools: `list_targets`, `propose_changes`, `propose_swap`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. Every change is two steps. `propose_changes`, `propose_swap` or `guard_sync` returns a plan id and sends nothing, and `approve_changes` carries that plan out once, within 10 minutes.
 
-**Add it to your AI app.** Most apps take the same entry. Use the full path it printed, because an app often does not see your shell's PATH:
+Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==0.8.0" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
 
-```json
-{
-  "mcpServers": {
-    "reseat":      { "command": "/full/path/to/reseat", "args": ["mcp"] },
-    "reseat-demo": { "command": "/full/path/to/reseat", "args": ["mcp", "--demo"] }
-  }
-}
-```
-
-| App | Where the entry goes |
-|---|---|
-| Claude Code | No file. Run `claude mcp add reseat -- /full/path/to/reseat mcp`, and for the demo `claude mcp add reseat-demo -- /full/path/to/reseat mcp --demo` |
-| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS, `%APPDATA%\Claude\claude_desktop_config.json` on Windows |
-| Cursor | `~/.cursor/mcp.json` for every project, or `.cursor/mcp.json` in one project |
-| Kiro | `~/.kiro/settings/mcp.json` for every workspace, or `.kiro/settings/mcp.json` in one workspace |
-| Windsurf (Devin Desktop) | `~/.codeium/windsurf/mcp_config.json`, or `~/.config/devin/mcp_config.json` under its new name |
-| VS Code | `.vscode/mcp.json` in one workspace, or the user `mcp.json` from the command MCP: Open User Configuration. The top key is `servers`, not `mcpServers`, and each entry adds `"type": "stdio"` |
-
-Use the file for every project where you can. A project file holds only a path, but that path names your home folder, so keep it out of commits others see. Restart or reload the app after editing. It should list the reseat server with 11 tools. The four planning tools need re:Seat 0.7.0 or newer, and the `autopilot` list in `draft_rules` needs 0.8.0. Version 0.6.1 has the other 7. Start with `reseat-demo`: it needs no sign-in and nothing reaches AWS. Use an app that shows you each tool call before it runs, because the agent could approve a plan without asking you (see the limit below).
-
-**Without installing.** If you use [uv](https://docs.astral.sh/uv/), an app can run the server straight from PyPI: `"command": "uvx", "args": ["--python", "3.12", "--from", "reseat[mcp]==0.8.0", "reseat", "mcp"]`. `--python` picks an interpreter re:Seat supports, since uv may otherwise pick an older one on your path. Pin the version, so a new release never runs with your token before you choose it. You still sign in once, with `uvx --python 3.12 --from "reseat[mcp]==0.8.0" reseat login`. The watcher runs as `reseat serve` in a terminal, so most people install it.
-
-**As a plugin.** This repository is also a Claude Code plugin marketplace and holds two Kiro Powers. Each comes in two forms. `reseat-demo` uses the demo's fake API and needs no sign-in. `reseat` is for your own seats. It needs a rules file, or the server will not start, and a sign-in, or each tool answers "Not signed in". Set both up first with the steps in [Install](#install), running each command as `uvx --python 3.12 --from "reseat[mcp]==0.8.0" reseat ...` if you have not installed re:Seat. Both forms run the pinned `reseat[mcp]==0.8.0` through `uvx`, so [uv](https://docs.astral.sh/uv/) must be on your path.
-
-- Claude Code: `claude plugin marketplace add hsiddhu2/reseat`, then `claude plugin install reseat-demo@reseat` or `claude plugin install reseat@reseat`. In a session, the same commands start with `/plugin`. Checked: `reseat-demo` installs this way and its server connects.
-- Kiro: clone this repository, open the Powers panel, choose Add Custom Power, then import a power from a folder, and pick `plugins/kiro/reseat-demo` or `plugins/kiro/reseat`. The files follow Kiro's Agent Plugins format and pass its published schemas. Checked on 26 October: a copy of `plugins/kiro/reseat-demo`, placed at a path with no spaces, imported this way, and its `check_plan` tool answered in Kiro chat. An import straight from a clone whose path held a folder name ending in a space was refused with "The selected folder is not a valid power directory". Whether the path or the folder picked caused it was not narrowed down. If you see that message, pick the folder holding `plugin.json`, or copy it to a plain path. The `reseat` power has not been imported.
-
-Tools: `list_targets`, `propose_changes`, `propose_swap`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. `search_sessions` searches the local catalog by text, type, day, venue, seat band, level, topic and service, and sends nothing to AWS. `open_slots(day)` reads your schedule once and lists the free gaps between 08:00 and 18:00, with the sessions you can walk to and away from in time. `check_plan(codes)` takes up to 25 session codes and states, for each, whether it fits what you hold and the rest of the list: clashes, two sittings of one talk, walks that miss the 11-minute door rule, meals, `max_per_day` and `watch_cap`. A full sitting lists the other open sittings of the talk. `draft_rules(add, remove)` drafts a new rules file: the codes in `add` go after your current targets in the order given, and the answer shows the whole target order. re:Seat tries targets in that order, so an earlier target wins a clashing time slot. An exact code such as AIM341-R1 pins that sitting. A code without -R such as AIM341 takes any sitting, so a repeat AWS adds later can still be booked. Removing a target you hold only stops re:Seat watching it, and never cancels the seat. Drafted targets ask first before any cancel. Autopilot is opt-in per target. `draft_rules(add, remove, autopilot)` turns on `auto_swap` only for the codes in `autopilot`, each one added in the same draft or already a target. For an existing target only its `auto_swap` changes. Any other code in `autopilot` is refused and nothing is drafted. The answer names every target that may swap on its own. Such a swap cancels a seat only after a fresh read shows the new seat open and a way back to the old one. The AI asks you before it sets `autopilot`. Approving the draft writes only your local rules file, keeps the old one as `rules.yaml.bak`, and sends nothing to AWS. Comments and settings in the file stay as they were. Once `reseat serve` runs with the new rules, the watcher books a new target when a seat frees, as it does for every target. The planning tools list in start-time order, or in the order you gave. re:Seat lists and checks, and leaves the choosing to you. Every change is two steps. `propose_changes`, `propose_swap` or `guard_sync` returns a plan id and sends nothing. `propose_swap(held_code)` finds an open sitting of a held talk that your rules put before the one you hold, runs the swap's checks with fresh reads, and lists them. Approving it runs the same checked swap as `reseat swap`. `approve_changes` carries that plan out once, within 10 minutes, and reserves only what it named. A leave-now plan is refused if what you hold changed after it was shown. Calls run one at a time. No tool takes a list of session ids. Each call reads the rules file again if it changed on disk since the last call, so a server left running for days answers from the file as it is now. Any change drops the plans made before it. A file that does not load, has more targets than `watch_cap`, is a symbolic link, or on macOS and Linux belongs to another user or is writable by others, is refused, the old rules stay, and the next answer says why.
-
-Try it without signing in: `reseat mcp --demo` serves the same tools on the demo's fake API, with a week of sessions held and a seat open, so a client can list targets, plan and approve leave-now blocks, ask queue-or-go, and draft a rules file. The demo's rules file is a throwaway copy in a temporary folder. Nothing reaches AWS. `python demo/plan.py` runs the four planning tools in the order an AI app would call them.
-
-Know the limit: the server tells the agent to ask you before approving, but it cannot check that it did. The agent sees the plan id and could approve on its own. Session titles come from the catalog and reach the agent. Use a client that shows you each tool call before it runs.
+Install, the config entry for each AI app, the plugins, every tool and its limits: [MCP server](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 
 ### Good citizen rules
 
@@ -398,6 +281,7 @@ A fault storm runs the whole flow for a simulated hour on a saved copy of the re
 
 - [How re:Seat works](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md): the design, each part marked built or planned, and how it is tested.
 - [Design decisions](https://github.com/hsiddhu2/reseat/blob/main/docs/adr/README.md): each architecture decision, why it was made and what it costs.
+- Guides: [Rules file](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/rules.md), [Running it all week](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/phone.md) (phone, push, Tailscale), [Email and text alerts](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/alerts.md) and [MCP server](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 - [AWS Events API facts](https://github.com/hsiddhu2/reseat/blob/main/docs/api-facts.md): the API behaviour re:Seat relies on, with sources.
 - [Changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md), [Security](https://github.com/hsiddhu2/reseat/blob/main/SECURITY.md), [Contributing](https://github.com/hsiddhu2/reseat/blob/main/CONTRIBUTING.md) and [Code of conduct](https://github.com/hsiddhu2/reseat/blob/main/CODE_OF_CONDUCT.md).
 - [Live proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof/): checks run against the real API.
