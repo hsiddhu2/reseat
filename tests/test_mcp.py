@@ -91,12 +91,12 @@ def _is_array(p):
     return p.get("type") == "array" or any(x.get("type") == "array" for x in p.get("anyOf", []))
 
 
-async def test_server_exposes_eleven_tools_and_none_takes_a_session_list(tools, fake):
+async def test_server_exposes_twelve_tools_and_none_takes_a_session_list(tools, fake):
     server = M.build_server(tools)
     listed = await server.list_tools()
     assert sorted(t.name for t in listed) == sorted(
         ["list_targets", "propose_changes", "propose_swap", "approve_changes", "explain_drift", "guard_sync",
-         "queue_or_go", "search_sessions", "open_slots", "check_plan", "draft_rules"])
+         "queue_or_go", "search_sessions", "open_slots", "check_plan", "draft_rules", "propose_favorites"])
     lists = {"check_plan": {"codes"}, "draft_rules": {"add", "remove", "autopilot"}}
     for t in listed:
         props = (t.input_schema or {}).get("properties", {})
@@ -363,7 +363,7 @@ async def test_readme_names_the_tools_the_server_lists(tools):
     named = re.findall(r"`([a-z_]+)`", line.split(". ", 1)[0])
     count = int(re.search(r"with (\d+) tools", readme).group(1))
     listed = sorted(t.name for t in await M.build_server(tools).list_tools())
-    assert sorted(named) == listed and count == len(listed) == 11
+    assert sorted(named) == listed and count == len(listed) == 12
 
 
 def test_cli_mcp_without_rules_keeps_stdout_clean(monkeypatch, tmp_path):

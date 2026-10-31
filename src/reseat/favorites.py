@@ -130,12 +130,21 @@ def plan(rules: Rules, store: Store, event_id: str, favorites: set[str],
 
 
 def sync(client: EventsClient, store: Store, event_id: str, rules: Rules,
-         dry_run: bool = False, prune: bool = True) -> FavoritesSync:
-    """Fresh GetSchedule, add what is missing, remove re:Seat's own unwanted favorites, read back once."""
+         dry_run: bool = False, prune: bool = True, add_only: set[str] | None = None,
+         remove_only: set[str] | None = None) -> FavoritesSync:
+    """Fresh GetSchedule, add what is missing, remove re:Seat's own unwanted favorites, read back once.
+
+    With `add_only` and `remove_only`, an approved plan's adds and removals, nothing outside them
+    is sent, in either direction, even if the fresh read now asks for more. A session the fresh
+    read no longer needs is skipped, never sent.
+    """
     schedule = client.get_schedule(event_id)
     res = plan(rules, store, event_id, set(schedule.favorites), set(schedule.reserved), prune)
+    if remove_only is not None:
+        res.removals = [o for o in res.removals if o.session_id in remove_only]
     labels = dict(res.wanted)
-    todo = [sid for sid, _ in res.wanted if sid not in {o.session_id for o in res.outcomes}]
+    todo = [sid for sid, _ in res.wanted if sid not in {o.session_id for o in res.outcomes}
+            and (add_only is None or sid in add_only)]
     if dry_run or (not todo and not res.removals):
         res.outcomes += [FavoriteOutcome(s, labels[s], "not_sent") for s in todo]
         return res

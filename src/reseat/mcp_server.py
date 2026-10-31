@@ -3,13 +3,18 @@
 Rules this module exists to respect:
 - No tool takes a list of session ids to reserve or cancel. Writes happen only
   through `approve_changes(plan_id)`, for a plan that `propose_changes`,
-  `propose_swap` or `guard_sync` returned. Plan ids are random, expire after 10 minutes, work once.
+  `propose_swap`, `propose_favorites` or `guard_sync` returned. Plan ids are random, expire after
+  10 minutes, work once.
 - Approving a booking plan reserves only the sessions that plan named, re-checked
   against the schedule at that moment, through the router: quota-sized batches,
   fallback, read-back, journal.
 - A swap plan runs only through swap.py, which reads both sessions fresh again,
   needs a fallback for the held seat, takes its cross-process lock, and journals
   every state. Proposing runs the same checks and sends no write.
+- A favorites plan runs only through favorites.py, the engine `reseat favorites sync` uses:
+  AssociateFavorites counts each session against its quota, so batches never exceed what is left.
+  It is not idempotent, so a failed session is never re-sent, and GetSchedule is read back after.
+  Approving sends only the sessions the plan named, re-checked against a fresh schedule read.
 - Nothing here prints to stdout. On stdio, stdout is the protocol.
 - The SDK runs tool calls in parallel. One lock makes them run one at a time, so
   two approvals cannot both read the schedule before either writes.
@@ -32,7 +37,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import guard, planning
+from . import favorites, guard, planning
 from . import rules as R
 from .client import ApiError, EventsClient, OperationClosed
 from .models import Session
@@ -47,12 +52,14 @@ PLAN_TTL = 600
 @dataclass
 class Plan:
     plan_id: str
-    kind: str                       # book | guard | swap | rules
+    kind: str                       # book | guard | swap | rules | favorites
     expires: float
     sessions: list[str] = field(default_factory=list)
     summary: str = ""
     shown: tuple[tuple[str, ...], ...] = ()     # the guard diff the attendee saw
     draft: planning.Draft | None = None         # rules: the file to write, and the file it came from
+    removals: list[str] = field(default_factory=list)   # favorites: re:Seat's own favorites to remove
+    prune: bool = False                                 # favorites: whether removals were asked for
 
 
 def _count(n: int, word: str) -> str:
@@ -109,7 +116,14 @@ class Tools:
         return p
 
     def _target(self, label: str) -> str:
-        return target_name(label, self.store, self.event_id)
+        return planning.clean(target_name(label, self.store, self.event_id), 60)
+
+    def _name(self, sid: str) -> str:
+        """Code and title only. A session no longer in the catalog is named without its id."""
+        s = self.store.get(self.event_id, sid)
+        if not s:
+            return "a session no longer in the local catalog"
+        return f"{planning.clean(s.abbreviation, 20)} {planning.clean(s.title, 160)}"
 
     def _code(self, sid: str) -> str:
         s = self.store.get(self.event_id, sid)
@@ -229,6 +243,32 @@ class Tools:
         return (f"Plan {p.plan_id}, valid 10 minutes. Leave-now changes:\n{p.summary}\n"
                 "Nothing has been sent. Call approve_changes with this plan id to apply.")
 
+    def propose_favorites(self, prune: bool = False) -> str:
+        """What `reseat favorites sync --dry-run` would send, as a plan. Reads GetSchedule once and
+        sends no write. With `prune`, favorites re:Seat itself added for a dropped target are listed
+        for removal. A favorite the attendee added, or one for a held seat, is never listed."""
+        try:
+            res = favorites.sync(self.client, self.store, self.event_id, self.rules, dry_run=True,
+                                 prune=prune)
+        except ApiError as e:
+            return f"No favorites plan. A read failed: {planning.clean(str(e), 300)}. Nothing was sent."
+        adds = [o for o in res.outcomes if o.status == "not_sent"]
+        notes = _favorite_notes(res, self._target)
+        if not adds and not res.removals:
+            return ("Favorites already match the rules' targets. Nothing to change, no plan made."
+                    + ("\n" + notes if notes else ""))
+        lines = ([f"- add {self._name(o.session_id)} for target {self._target(o.target)}" for o in adds]
+                 + [f"- remove {self._name(o.session_id)}, which re:Seat added for a target no longer "
+                    "in the rules" for o in res.removals])
+        p = self._new_plan("favorites", [o.session_id for o in adds], "\n".join(lines))
+        p.removals, p.prune = [o.session_id for o in res.removals], prune
+        return (f"Plan {p.plan_id}, valid 10 minutes. Favorites: add {len(adds)}, remove "
+                f"{len(res.removals)}, {res.count('already')} already favorited.\n{p.summary}\n"
+                + (notes + "\n" if notes else "")
+                + "Nothing has been sent. Approving adds these to the official favorites in batches within "
+                "the quota and reads the schedule back. It never reserves or cancels a seat. Ask the "
+                "attendee, then call approve_changes with this plan id.")
+
     def propose_swap(self, held_code: str) -> str:
         """An open sitting of a held talk that comes earlier in the rules' order, checked as swap.py
         checks. Sends nothing."""
@@ -293,12 +333,14 @@ class Tools:
             p = self._plans.pop(plan_id, None)
         if p is None or p.expires <= self.clock():
             return ("Refused: unknown, used or expired plan id. Call propose_changes, propose_swap, "
-                    "guard_sync or draft_rules first.")
+                    "propose_favorites, guard_sync or draft_rules first.")
         try:
             if p.kind == "swap":
                 return self._swap(p)
             if p.kind == "rules":
                 return self._write_rules(p)
+            if p.kind == "favorites":
+                return self._favorites(p)
             return self._book(p) if p.kind == "book" else self._guard(p)
         except SwapBusy as e:
             return f"Not run: {e} Nothing was sent. Propose again in a moment."
@@ -321,6 +363,50 @@ class Tools:
         return ("Done. Read back from the schedule:\n" + "\n".join(lines)
                 + f"\nThe schedule now lists {len(run.schedule.reserved)} reserved sessions."
                 + (f"\nErrors: {'; '.join(errors)}" if errors else ""))
+
+    def _favorites(self, p: Plan) -> str:
+        """One engine run, limited to the plan's sessions: quota-sized batches, no re-send of a failed
+        session, one GetSchedule read-back. Reports as `reseat favorites sync` does."""
+        res = favorites.sync(self.client, self.store, self.event_id, self.rules, prune=p.prune,
+                             add_only=set(p.sessions), remove_only=set(p.removals))
+        planned = set(p.sessions)
+        mine = [o for o in res.outcomes if o.session_id in planned]
+        skipped = (len(planned - {o.session_id for o in mine})
+                   + len(set(p.removals) - {o.session_id for o in res.removals}))
+        add_word = {"not_sent": "not sent", "already": "already favorited"}
+        rm_word = {"gone": "already gone", "not_sent": "not sent"}
+        lines = [f"- {add_word.get(o.status, o.status)}: {self._name(o.session_id)}"
+                 + (f" ({planning.clean(o.code, 40)})" if o.code else "") for o in mine]
+        lines += [f"- {rm_word.get(o.status, o.status)} from favorites: {self._name(o.session_id)}"
+                  for o in res.removals]
+        n = {k: sum(1 for o in mine if o.status == k) for k in ("added", "already", "failed", "unconfirmed")}
+        head = (f"{_count(len(mine), 'sitting')} planned: {n['added']} added, {n['already']} already "
+                f"favorited, {n['failed']} failed, {n['unconfirmed']} unconfirmed.")
+        if res.removals:
+            head += f" {res.removed('removed')} of {len(res.removals)} removed."
+        sent = (any(o.status not in ("already", "not_sent") for o in mine)
+                or any(o.status != "not_sent" for o in res.removals))
+        out = [favorites.CLOSED] if res.closed else []
+        if res.closed or (res.error and not sent):
+            out.append("Stopped before every planned change was sent:")
+        elif not sent:
+            out.append("Nothing was sent: the fresh read showed nothing left to change.")
+        elif res.error and "read-back failed" in res.error:
+            out.append("Sent, but the schedule could not be read back, so nothing is confirmed:")
+        else:
+            out.append("Done. Read back from the schedule:")
+        out += lines + [head]
+        if skipped:
+            out.append(f"{_count(skipped, 'planned change')} no longer needed by the fresh read, not sent.")
+        if notes := _favorite_notes(res, self._target):
+            out.append(notes)
+        if res.disagreements:
+            out.append(f"{len(res.disagreements)} answers disagreed with the read-back. They are shown as "
+                       "unconfirmed or failed above, and none is sent again.")
+        if res.error:
+            out.append(f"Stopped: {planning.clean(res.error, 300)}. A failed session is never re-sent. "
+                       "Check the schedule before proposing again.")
+        return "\n".join(out)
 
     def _swap(self, p: Plan) -> str:
         held_id, wanted_id = p.sessions
@@ -376,6 +462,17 @@ class Tools:
         return f"Leave-now blocks:\n{out}" + (f"\n{probs}" if probs else "")
 
 
+def _favorite_notes(res: favorites.FavoritesSync, name: Callable[[str], str]) -> str:
+    notes = [f"{name(m)}: not in the local catalog. Run reseat sync." for m in res.missing]
+    if res.prune_skipped:
+        notes.append("No favorite is listed for removal, because a target is missing from the local "
+                     "catalog.")
+    if res.kept_held:
+        notes.append(f"{_count(len(res.kept_held), 'favorite')} re:Seat added for dropped targets "
+                     "kept, because a seat is held there.")
+    return "\n".join(notes)
+
+
 def _guarded_any(run: Callable[[], Any]) -> Any:
     try:
         return run()
@@ -409,8 +506,8 @@ def build_server(tools: Tools) -> Any:
 
     server = MCPServer("reseat", instructions=(
         "re:Seat manages AWS re:Invent seats for one attendee. Read tools are safe. "
-        "Every change is two steps: propose_changes, propose_swap, guard_sync or draft_rules returns a "
-        "plan id and changes nothing. "
+        "Every change is two steps: propose_changes, propose_swap, propose_favorites, guard_sync or "
+        "draft_rules returns a plan id and changes nothing. "
         "Show the plan to the attendee. Only after they agree, call approve_changes with that plan id. "
         "re:Seat lists and checks. Choosing is for the attendee: give the facts and let the attendee "
         "pick and order the sessions."))
@@ -439,9 +536,18 @@ def build_server(tools: Tools) -> Any:
             return _noted(note, tools.propose_swap(held_code))
 
     @server.tool()
+    def propose_favorites(prune: bool = False) -> str:
+        """Plan adding every target sitting in the rules to the official AWS favorites, as reseat
+        favorites sync does. With prune, also remove favorites re:Seat added for targets no longer in
+        the rules. A favorite the attendee added is never removed. Returns a plan id. Sends nothing."""
+        with tools.serial:
+            note = tools.refresh()
+            return _noted(note, tools.propose_favorites(prune))
+
+    @server.tool()
     def approve_changes(plan_id: str) -> str:
-        """Carry out a plan from propose_changes, propose_swap, guard_sync or draft_rules, once, within
-        10 minutes. Ask the attendee first."""
+        """Carry out a plan from propose_changes, propose_swap, propose_favorites, guard_sync or
+        draft_rules, once, within 10 minutes. Ask the attendee first."""
         with tools.serial:
             note = tools.refresh()
             return _noted(note, tools.approve_changes(plan_id))

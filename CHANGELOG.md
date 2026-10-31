@@ -4,6 +4,10 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+### Added
+
+- MCP tool `propose_favorites(prune)`: plans adding the rules' target sittings to the official favorites, and with `prune` removing the ones re:Seat added for dropped targets, as `reseat favorites sync` does. `approve_changes` runs it once by plan id, within the AssociateFavorites quota, never re-sends a failed session, and reads GetSchedule back. The server now lists 12 tools.
+
 ### Changed
 
 - README: a "Plan where you already plan" path near the top, with the official schedule, a planner export or an AI app through `reseat mcp`.

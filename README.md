@@ -264,9 +264,9 @@ How to keep the laptop awake with the lid closed, set up ntfy push, approve from
 
 `reseat mcp` runs a local MCP server over stdio, so an agent can read your targets and plan changes for you. Your AI app starts it as a child process on your machine. Nothing is hosted.
 
-Once added, your AI app should list the reseat server with 11 tools.
+Once added, your AI app should list the reseat server with 12 tools.
 
-Tools: `list_targets`, `propose_changes`, `propose_swap`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. Every change is two steps. `propose_changes`, `propose_swap` or `guard_sync` returns a plan id and sends nothing, and `approve_changes` carries that plan out once, within 10 minutes.
+Tools: `list_targets`, `propose_changes`, `propose_swap`, `propose_favorites`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. Every change is two steps. `propose_changes`, `propose_swap`, `propose_favorites` or `guard_sync` returns a plan id and sends nothing, and `approve_changes` carries that plan out once, within 10 minutes.
 
 Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==0.8.1" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
 
