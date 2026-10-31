@@ -268,7 +268,7 @@ Once added, your AI app should list the reseat server with 12 tools.
 
 Tools: `list_targets`, `propose_changes`, `propose_swap`, `propose_favorites`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. Every change is two steps. `propose_changes`, `propose_swap`, `propose_favorites` or `guard_sync` returns a plan id and sends nothing, and `approve_changes` carries that plan out once, within 10 minutes.
 
-Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==0.8.1" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
+Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==0.8.2" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
 
 Install, the config entry for each AI app, the plugins, every tool and its limits: [MCP server](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 
@@ -309,6 +309,7 @@ The main releases. Every release is in the [changelog](https://github.com/hsiddh
 - **0.7.0, 19 October:** walk-up odds with a range, and leave times with a chosen confidence, committed 13 October, [636e665](https://github.com/hsiddhu2/reseat/commit/636e665). Planning tools for your AI app, with no ranking, committed 15 October, [7dc6421](https://github.com/hsiddhu2/reseat/commit/7dc6421).
 - **0.8.0, 26 October:** the Findings page, Book offers on a tap, and email and text alerts through your own Amazon SNS topic. Committed 25 October, [86e5740](https://github.com/hsiddhu2/reseat/commit/86e5740).
 - **0.8.1, 31 October:** the MCP server re-reads the rules file before each call. On site, polling leaves GetSession quota for the read before a swap. The test fixture is a sample, not the whole catalog. Every change is in the [changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md).
+- **0.8.2, 31 October:** `propose_favorites`, so your AI app puts your targets in the official app as favorites through `reseat mcp`, approved by plan id. The README opens with planning in the AI tool you already use.
 
 ## License
 

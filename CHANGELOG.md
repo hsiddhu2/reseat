@@ -4,6 +4,8 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-31
+
 ### Added
 
 - MCP tool `propose_favorites(prune)`: plans adding the rules' target sittings to the official favorites, and with `prune` removing the ones re:Seat added for dropped targets, as `reseat favorites sync` does. `approve_changes` runs it once by plan id, within the AssociateFavorites quota, never re-sends a failed session, and reads GetSchedule back. The server now lists 12 tools.
@@ -114,7 +116,8 @@ First release on PyPI.
 - The MCP server, which writes only by approving a plan id it proposed.
 - The local web app and ntfy pushes.
 
-[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/hsiddhu2/reseat/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/hsiddhu2/reseat/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/hsiddhu2/reseat/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/hsiddhu2/reseat/compare/v0.6.1...v0.7.0
