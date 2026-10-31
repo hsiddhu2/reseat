@@ -6,7 +6,7 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ### Changed
 
-- README: a "Plan where you already plan" path near the top, with the official schedule, a planner export or an AI app through `reseat mcp`.
+- README opens with planning through `reseat mcp` in the AI tool you already use, then the official schedule or a planner export.
 
 ## [0.8.1] - 2026-10-31
 
