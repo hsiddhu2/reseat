@@ -61,7 +61,7 @@ The fastest was full again about one minute after it opened. That is the chalk t
 
 ## Sessions added
 
-218 sessions were added to the catalog after the load sweep, in 251 added rows, since some were removed and listed again. 196 of them are still listed: 89 featured experiences, 21 event services, 21 expo sessions, 20 breakouts, 17 chalk talks, 16 lightning talks, 5 keynotes, 4 workshops, 2 code talks and 1 builders' session. 163 of the 218 were first added after the 24 October update. No sweep in the window loaded or re-keyed the whole catalog, so none was left out as a baseline.
+218 sessions were added to the catalog after the load sweep, in 251 added rows, since some were removed and listed again. 196 of them are still listed: 89 featured experiences, 21 event services, 21 expo sessions, 20 breakouts, 17 chalk talks, 16 lightning talks, 5 keynotes, 4 workshops, 2 code talks and 1 builders' session. 156 of the 218 were first added after the 24 October update. No sweep in the window loaded or re-keyed the whole catalog, so none was left out as a baseline.
 
 ## Removed and moved
 
@@ -183,7 +183,7 @@ The time to refill was measured per opening, to the next row for the same sessio
 
 ## Result
 
-Seats keep opening on full sessions, on 16 of the 19 days, and some fill again within minutes. Sessions keep being added, 163 of them since 24 October. The watcher saw both, and recovered from 44 connection drops on its own. It caught no target seat as it freed in this window. No session on today's target list opened after 19 October, and the journal has no reserve outside the test rows listed above.
+Seats keep opening on full sessions, on 16 of the 19 days, and some fill again within minutes. Sessions keep being added, 156 of them first added since 24 October. The watcher saw both, and recovered from 44 connection drops on its own. It caught no target seat as it freed in this window. No session on today's target list opened after 19 October, and the journal has no reserve outside the test rows listed above.
 
 ## What it does not prove
 
