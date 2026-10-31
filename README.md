@@ -2,6 +2,17 @@
 
 re:Seat keeps your AWS re:Invent seats after the plan is made. You rank the talks you want in a rules file. It watches the whole catalog, books a target when a seat frees or a new repeat sitting appears, swaps a held seat for one you rank higher only after checking a way back, and writes when to leave into your official schedule. It runs on your own laptop against the [AWS Events API](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html). Alerts reach your phone, and email through your own Amazon SNS topic.
 
+**Plan where you already plan.** re:Seat does not rank or pick talks. Bring the plan you have, or build it with your AI app, and re:Seat keeps the seats:
+
+```bash
+reseat rules from-schedule        # your official AWS schedule: reserved first, then favorites
+reseat rules import plan.json     # or a JSON export from reinvent-planner.cloud, in its order
+reseat favorites sync --dry-run   # see what goes into the official app as favorites
+reseat serve                      # watch, book and swap within your rules
+```
+
+Or plan with your AI app. `reseat mcp` gives any AI app or agentic IDE that runs MCP servers local search, free slots and plan checks, and drafts the rules file for your approval. Your AI app chooses, re:Seat supplies the facts and the checks. Setup for Claude Code, Kiro, Cursor, Windsurf and VS Code is in [the MCP guide](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
+
 ![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
 **Three ways in:**
@@ -32,6 +43,7 @@ re:Seat keeps your AWS re:Invent seats after the plan is made. You rank the talk
 - **Offers what is new, booked on your tap.** A session added to the catalog, or a seat that opens on one of your favorites, comes as an offer with a **Book** button: on the Approve page, and with `ntfy_book: true` on the notification. Book checks the seat and your day again, reserves, and reads your schedule back. Nothing outside your rules is booked without the tap.
 - **Shows what it saw.** The Findings page counts every opening on a full session, how fast it filled again, sessions added and outages recovered. [Live counts from one attendee's laptop](https://hsiddhu2.github.io/reseat/findings.html).
 - **Tells you when to leave.** Leave-now blocks in your official schedule, a morning briefing, leave in 10 minutes, and whether to queue for a walk-up seat. Walking times are labelled as estimates.
+- **Plans with your AI app, without ranking.** Through `reseat mcp`, the app searches the local catalog, finds free slots you can walk to, checks a plan for clashes, walks and full sittings, and drafts the rules file. It is written only when you approve the plan id.
 - **Keeps your token on your laptop.** Nothing is hosted. The token goes only to `api.awsevents.com`.
 
 Booking freed seats, the safe swap and leave-now blocks were committed on 2 October ([ee7655a](https://github.com/hsiddhu2/reseat/commit/ee7655a)) and released on PyPI in 0.5.1 on 10 October. When each feature landed: [Release history](#release-history).
