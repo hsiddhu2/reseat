@@ -14,6 +14,7 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 - The MCP server re-reads the rules file before each tool call, and any change drops pending plans.
 - Today page: headings in "Wanted today, not held" are no longer cut off.
+- The test fixture is now a 200-session sample of the 1 October catalog, not the whole catalog, so the repo and sdist no longer carry it.
 
 ### Security
 

@@ -11,7 +11,7 @@ error bodies and per-session bulk results. Faults can be scripted per session:
     fake.refuse["S1"] = "seatHeldByCrew" -> any failure code on reserve or favorite, known or not
     fake.stuck.add("S1")                -> unfavorite S1 answers 204, GetSchedule still lists it
     fake.schedule.reserved.add("S9")    -> conflicts computed from session times
-    FakeEventsApi.from_fixture("tests/fixtures/catalog-2026-10-01.json")  -> real shapes
+    FakeEventsApi.from_fixture("tests/fixtures/catalog-sample-2026-10-01.json")  -> real shapes, sampled
     fake.storm(clock, full_rate=0.3, fail_503_at=40, closed=(t0, t1))  -> a fault storm, see storm()
 
 Use it as an httpx transport:  EventsClient(transport=fake.transport())

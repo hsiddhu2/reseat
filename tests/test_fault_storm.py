@@ -1,4 +1,4 @@
-"""The whole flow against a fault storm on the real 2026 catalog.
+"""The whole flow against a fault storm on a sample of the real 2026 catalog.
 
 30 percent of reserve attempts come back full, the first request in every minute
 gets a 429, one request gets a 503, writes return 409 for fifteen minutes, and the
@@ -26,7 +26,7 @@ from reseat.swap import Swap
 from reseat.watcher import Watcher
 
 EV = "reinvent2026"
-FIXTURE = Path(__file__).parent / "fixtures" / "catalog-2026-10-01.json"
+FIXTURE = Path(__file__).parent / "fixtures" / "catalog-sample-2026-10-01.json"
 OPEN = ("available", "limited", "veryLimited")
 RESERVATION_WRITES = {"ReserveSessions", "CancelReservation"}
 OTHER_WRITES = {"AssociateFavorites", "DisassociateFavorite", "CreatePersonalTime",
@@ -124,7 +124,7 @@ def run_flow(seed):
     return fake, client, store, rules, router, events, fav, booked, blocks
 
 
-@pytest.fixture(scope="module", params=[3, 11, 23])   # each seed reaches a swap
+@pytest.fixture(scope="module", params=[3, 11, 24])   # each seed reaches a swap on the sample
 def storm(request):
     return run_flow(request.param)
 

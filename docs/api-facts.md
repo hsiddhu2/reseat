@@ -91,7 +91,7 @@ Not in the API: speaker IDs or bios, recording status, room capacity, other atte
 
 ## Observed in the live catalog, 1 October 2026
 
-Source: `reseat sync` and `reseat save-fixture` run against reinvent2026 on 1 October 2026 by a registered attendee. Fixture `tests/fixtures/catalog-2026-10-01.json`. These are observations, not spec guarantees.
+Source: `reseat sync` and `reseat save-fixture` run against reinvent2026 on 1 October 2026 by a registered attendee. The test fixture `tests/fixtures/catalog-sample-2026-10-01.json` keeps a 200-session sample of that pull. These are observations, not spec guarantees.
 
 - 2068 sessions, 9 pages of 250.
 - `venue` is one of `MGM Grand`, `Caesars Forum`, `Venetian`, or absent. It is absent on 909 sessions. Then the venue is the first segment of `room`: `Caesars Palace` or `Wynn/Encore`. AWS names Wynn and Encore as one venue.
