@@ -11,7 +11,7 @@ reseat favorites sync --dry-run   # see what goes into the official app as favor
 reseat serve                      # watch, book and swap within your rules
 ```
 
-Or plan with your AI app. `reseat mcp` gives any AI app or agentic IDE that runs MCP servers local search, free slots and plan checks, and drafts the rules file for your approval. Your AI app chooses, re:Seat supplies the facts and the checks. Setup for Claude Code, Kiro, Cursor, Windsurf and VS Code is in [the MCP guide](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
+Or plan with your AI app or agentic IDE through `reseat mcp`. It never ranks. [Setup](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 
 ![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
