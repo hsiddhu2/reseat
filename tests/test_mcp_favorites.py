@@ -128,7 +128,7 @@ def test_429_twice_stops_reads_back_and_sends_no_third(fake, tools):
     fake.fail_next(F.OP, 429, times=2)
     done = tools.approve_changes(pid)
     assert fake.counts[F.OP] == 2 and fake.schedule.favorites == set()
-    assert "Stopped: 429" in done and "3 failed" in done and "never re-sent" in done
+    assert "Stopped: AssociateFavorites: 429" in done and "3 failed" in done and "never re-sent" in done
 
 
 def test_read_back_failure_says_nothing_is_confirmed(fake, client, tools):
@@ -256,7 +256,8 @@ def test_a_5xx_on_remove_stops_and_is_read_back(fake, store, tools):
     out = tools.propose_favorites(prune=True)
     fake.fail_next(F.UNOP, 503)
     done = tools.approve_changes(plan_id(out))
-    assert fake.counts[F.UNOP] == 1 and "Stopped: 503" in done and "never re-sent" in done
+    assert fake.counts[F.UNOP] == 1 and "never re-sent" in done
+    assert "Stopped: DisassociateFavorite: 503" in done
     assert "failed from favorites: ARC301-R1" in done and "not sent from favorites: ARC301-R2" in done
 
 
@@ -265,7 +266,7 @@ def test_a_5xx_on_add_is_read_back_not_retried(fake, tools):
     fake.fail_next(F.OP, 503)
     done = tools.approve_changes(pid)
     assert fake.counts[F.OP] == 1 and fake.schedule.favorites == set()
-    assert "Stopped: 503" in done and "3 failed" in done and "Read back" in done
+    assert "Stopped: AssociateFavorites: 503" in done and "3 failed" in done and "Read back" in done
 
 
 def test_an_already_favorited_race_in_the_batch_is_reported_as_already(fake, client, tools):
@@ -314,3 +315,95 @@ def test_a_planned_add_no_longer_wanted_is_reported_and_not_sent(fake, store, to
     done = tools.approve_changes(pid)
     assert fake.schedule.favorites == {"S-SVS1"}
     assert "2 planned changes no longer needed by the fresh read, not sent" in done
+
+
+def test_a_race_that_answers_already_favorited_for_the_whole_batch_still_says_sent(fake, client, tools):
+    pid = plan_id(tools.propose_favorites())
+    real = client.favorite
+
+    def race(ev, ids):
+        fake.schedule.favorites |= set(ids)                             # the app got there first, for all
+        return real(ev, ids)
+
+    client.favorite = race
+    done = tools.approve_changes(pid)
+    assert fake.counts[F.OP] == 1 and "Nothing was sent" not in done
+    assert done.startswith("Done. Read back") and "0 added, 3 already favorited" in done
+
+
+def test_removals_that_all_answer_404_say_nothing_changed_not_read_back(fake, client, store, tools):
+    _mirror_then_drop(tools, store)
+    out = tools.propose_favorites(prune=True)
+    real = client.unfavorite
+
+    def gone_first(ev, sid):
+        fake.schedule.favorites.discard(sid)
+        return real(ev, sid)
+
+    client.unfavorite = gone_first
+    reads = fake.counts["GetSchedule"]
+    done = tools.approve_changes(plan_id(out))
+    assert fake.counts["GetSchedule"] == reads + 1                      # the fresh read, no read-back
+    assert done.startswith("Nothing changed. Already gone:") and "Read back" not in done
+
+
+def test_the_demo_server_plans_and_approves_favorites():
+    from reseat import demo as D
+    client, store, rules, event, clock = D.mcp_parts()
+    t = M.Tools(client, store, rules, event, clock)
+    out = t.propose_favorites()
+    done = t.approve_changes(plan_id(out))
+    assert "Nothing has been sent" in out and done.startswith("Done. Read back")
+    assert "0 failed, 0 unconfirmed" in done
+    ids = {sid for sid, _ in F.wanted_sittings(rules, store, event)}
+    assert ids and ids <= set(client.get_schedule(event).favorites)
+    assert not any(sid in out + done for sid in ids)
+
+
+def _client_with(fake, clock, on_post):
+    """A client whose transport runs `on_post(req)` for each AssociateFavorites."""
+    import httpx
+
+    from reseat.client import EventsClient, QuotaTracker
+
+    def route(req):
+        if req.method == "POST" and req.url.path.endswith("/favorites"):
+            return on_post(req)
+        return fake._handle(req)
+
+    return EventsClient(token_provider=lambda: fake.token, base_url="https://api.awsevents.com",
+                        quota=QuotaTracker(clock=clock), sleep=clock.sleep,
+                        transport=httpx.MockTransport(route))
+
+
+def test_a_timeout_on_add_is_settled_by_read_back_and_never_resent(fake, store, clock):
+    import httpx
+    store.apply_sweep(EV, sample_sessions(), with_abstracts=False)
+
+    def lands_then_times_out(req):
+        fake._handle(req)
+        raise httpx.ReadTimeout("timed out", request=req)
+
+    tools = M.Tools(_client_with(fake, clock, lands_then_times_out), store, R.parse(RULES), EV, clock=clock)
+    done = tools.approve_changes(plan_id(tools.propose_favorites()))
+    assert fake.counts[F.OP] == 1 and len(fake.schedule.favorites) == 3
+    assert "3 added" in done and "never re-sent" in done
+    assert "Nothing to change" in tools.propose_favorites() and fake.counts[F.OP] == 1
+
+
+def test_a_409_during_a_prune_removal_stops_after_one_request(fake, store, tools):
+    _mirror_then_drop(tools, store)
+    out = tools.propose_favorites(prune=True)
+    fake.closed = True
+    done = tools.approve_changes(plan_id(out))
+    assert fake.counts[F.UNOP] == 1 and F.CLOSED in done
+    assert {"S-ARC1", "S-ARC2"} <= fake.schedule.favorites
+
+
+def test_no_batch_is_larger_than_the_quota_left(fake, client, store, tools, monkeypatch):
+    import json
+    pid = plan_id(tools.propose_favorites())
+    monkeypatch.setattr(client.quota, "remaining", lambda op: 2)
+    tools.approve_changes(pid)
+    sizes = [len(json.loads(r["request"])) for r in store.journal_entries(EV) if r["op"] == F.OP]
+    assert sorted(sizes) == [1, 2] and fake.counts[F.OP] == 2 and len(fake.schedule.favorites) == 3

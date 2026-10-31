@@ -103,7 +103,7 @@ def test_409_stops_cleanly(fake, client, synced):
 def test_5xx_is_read_back_not_retried(fake, client, synced):
     fake.fail_next(F.OP, 503)
     res = F.sync(client, synced, EV, rules("targets:\n- code: SVS401\n"))
-    assert fake.counts[F.OP] == 1 and res.error.startswith("503")
+    assert fake.counts[F.OP] == 1 and ": 503 " in res.error
     assert status(res) == {"S-SVS1": "failed"}                 # read-back says it did not land
 
 
@@ -212,7 +212,7 @@ def test_5xx_on_remove_stops_and_the_read_back_settles_it(fake, client, synced):
     _mirror(fake, client, synced, "targets:\n- code: ARC301\n")
     fake.fail_next(F.UNOP, 503)
     res = F.sync(client, synced, EV, rules("targets: []\n"))
-    assert fake.counts[F.UNOP] == 1 and res.error.startswith("503")
+    assert fake.counts[F.UNOP] == 1 and ": 503 " in res.error
     assert {o.session_id: o.status for o in res.removals} == {"S-ARC1": "failed", "S-ARC2": "not_sent"}
 
 
@@ -288,7 +288,7 @@ def test_429_twice_on_remove_stops_and_is_read_back(fake, client, synced):
     _mirror(fake, client, synced, "targets:\n- code: SVS401\n")
     fake.fail_next(F.UNOP, 429, times=2)
     res = F.sync(client, synced, EV, rules("targets: []\n"))
-    assert fake.counts[F.UNOP] == 2 and res.error.startswith("429")
+    assert fake.counts[F.UNOP] == 2 and ": 429 " in res.error
     assert res.removals[0].status == "failed"                       # read-back still lists it
     assert synced.journal_entries(EV)[0]["op"] == "GetSchedule"
 
@@ -325,7 +325,7 @@ def test_dropped_connection_on_remove_is_read_back_not_retried(fake, synced, clo
     client = _net_client(fake, clock, refuse)
     _mirror(fake, client, synced, "targets:\n- code: ARC301\n")
     res = F.sync(client, synced, EV, rules("targets: []\n"))
-    assert calls["n"] == 1 and res.error.startswith("0 ") and "ConnectError" in res.error
+    assert calls["n"] == 1 and ": 0 " in res.error and "ConnectError" in res.error
     assert {o.session_id: o.status for o in res.removals} == {"S-ARC1": "failed", "S-ARC2": "not_sent"}
 
 
@@ -369,7 +369,7 @@ def test_401_after_refresh_on_remove_stops_and_reads_back(fake, client, synced):
     _mirror(fake, client, synced, "targets:\n- code: SVS401\n")
     fake.fail_next(F.UNOP, 401)                                     # no on_refresh: AuthRequired
     res = F.sync(client, synced, EV, rules("targets: []\n"))
-    assert res.error.startswith("401") and res.removals[0].status == "failed"
+    assert ": 401 " in res.error and res.removals[0].status == "failed"
 
 
 def test_read_back_failure_after_remove_is_reported(fake, client, synced):

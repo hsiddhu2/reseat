@@ -10,6 +10,8 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ### Changed
 
+- MCP answers: target names in `list_targets`, `propose_changes` and the autopilot list are now cleaned of control and hidden characters and cut to 60 characters.
+
 - README: a "Plan where you already plan" path near the top, with the official schedule, a planner export or an AI app through `reseat mcp`.
 
 ## [0.8.1] - 2026-10-31

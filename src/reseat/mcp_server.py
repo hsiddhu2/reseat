@@ -246,7 +246,8 @@ class Tools:
     def propose_favorites(self, prune: bool = False) -> str:
         """What `reseat favorites sync --dry-run` would send, as a plan. Reads GetSchedule once and
         sends no write. With `prune`, favorites re:Seat itself added for a dropped target are listed
-        for removal. A favorite the attendee added, or one for a held seat, is never listed."""
+        for removal. A favorite the attendee added, or one for a held seat, is never listed. Nothing is
+        sent until approve_changes with this plan id. Ask the attendee first."""
         try:
             res = favorites.sync(self.client, self.store, self.event_id, self.rules, dry_run=True,
                                  prune=prune)
@@ -347,7 +348,8 @@ class Tools:
         except OperationClosed:
             return WRITES_CLOSED
         except ApiError as e:
-            return f"Stopped on an API error: {e}. Check the schedule before trying again."
+            return (f"Stopped on an API error: {planning.clean(str(e), 300)}. Check the schedule before "
+                    "trying again.")
 
     def _book(self, p: Plan) -> str:
         held = self.client.get_schedule(self.event_id).reserved
@@ -384,17 +386,17 @@ class Tools:
                 f"favorited, {n['failed']} failed, {n['unconfirmed']} unconfirmed.")
         if res.removals:
             head += f" {res.removed('removed')} of {len(res.removals)} removed."
-        sent = (any(o.status not in ("already", "not_sent") for o in mine)
-                or any(o.status != "not_sent" for o in res.removals))
         out = [favorites.CLOSED] if res.closed else []
-        if res.closed or (res.error and not sent):
+        if res.closed or (res.error and not res.wrote):
             out.append("Stopped before every planned change was sent:")
-        elif not sent:
+        elif not res.wrote:
             out.append("Nothing was sent: the fresh read showed nothing left to change.")
-        elif res.error and "read-back failed" in res.error:
+        elif res.read_back:
+            out.append("Done. Read back from the schedule:")
+        elif res.error:
             out.append("Sent, but the schedule could not be read back, so nothing is confirmed:")
         else:
-            out.append("Done. Read back from the schedule:")
+            out.append("Nothing changed. Already gone:")
         out += lines + [head]
         if skipped:
             out.append(f"{_count(skipped, 'planned change')} no longer needed by the fresh read, not sent.")
@@ -539,7 +541,8 @@ def build_server(tools: Tools) -> Any:
     def propose_favorites(prune: bool = False) -> str:
         """Plan adding every target sitting in the rules to the official AWS favorites, as reseat
         favorites sync does. With prune, also remove favorites re:Seat added for targets no longer in
-        the rules. A favorite the attendee added is never removed. Returns a plan id. Sends nothing."""
+        the rules. A favorite the attendee added is never removed. Returns a plan id. Sends nothing.
+        Nothing is sent until approve_changes with this plan id. Ask the attendee first."""
         with tools.serial:
             note = tools.refresh()
             return _noted(note, tools.propose_favorites(prune))

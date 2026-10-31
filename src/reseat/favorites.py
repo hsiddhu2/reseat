@@ -57,6 +57,8 @@ class FavoritesSync:
     disagreements: list[str] = field(default_factory=list)
     closed: bool = False
     error: str | None = None
+    wrote: bool = False            # an AssociateFavorites or DisassociateFavorite request went out
+    read_back: bool = False        # GetSchedule was read back after the writes
 
     def count(self, status: str) -> int:
         return sum(1 for o in self.outcomes if o.status == status)
@@ -170,6 +172,7 @@ def _add(client: EventsClient, store: Store, event_id: str, res: FavoritesSync,
             res.outcomes += [FavoriteOutcome(s, labels[s], "not_sent") for s in todo]
             break
         batch, todo = todo[:min(BATCH_MAX, left)], todo[min(BATCH_MAX, left):]
+        res.wrote = True
         try:
             result = client.favorite(event_id, batch)
         except OperationClosed:
@@ -178,7 +181,7 @@ def _add(client: EventsClient, store: Store, event_id: str, res: FavoritesSync,
             res.outcomes += [FavoriteOutcome(s, labels[s], "not_sent") for s in batch + todo]
             break
         except ApiError as e:
-            res.error = f"{e.status} {e}"
+            res.error = str(e)
             store.journal(event_id, OP, batch, {"error": res.error}, "error")
             res.outcomes += [FavoriteOutcome(s, labels[s], "not_sent") for s in todo]
             res.outcomes += [FavoriteOutcome(s, labels[s], "unconfirmed") for s in batch]
@@ -200,6 +203,7 @@ def _remove(client: EventsClient, store: Store, event_id: str, res: FavoritesSyn
         if client.quota.remaining(UNOP) <= 0:
             res.error = "No DisassociateFavorite quota left after waiting. Stopped. Run it again in a minute."
             break
+        res.wrote = True
         try:
             client.unfavorite(event_id, o.session_id)
         except OperationClosed:
@@ -211,7 +215,7 @@ def _remove(client: EventsClient, store: Store, event_id: str, res: FavoritesSyn
                 o.status = "gone"
                 store.journal(event_id, UNOP, [o.session_id], {"status": 404}, "gone")
                 continue
-            res.error = f"{e.status} {e}"
+            res.error = str(e)
             o.status = "unconfirmed"
             store.journal(event_id, UNOP, [o.session_id], {"error": res.error}, "error")
             sent.append(o.session_id)
@@ -243,6 +247,7 @@ def _read_back(client: EventsClient, store: Store, event_id: str, res: Favorites
         res.error = (res.error + "; " if res.error else "") + f"read-back failed: {e}"
         store.journal(event_id, "GetSchedule", sent + removed, {"error": str(e)}, "readback-failed")
         return
+    res.read_back = True
     for o in res.outcomes:
         if o.session_id not in sent:
             continue
