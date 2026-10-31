@@ -18,7 +18,7 @@ React to 429s only. Rejected: every 429 costs a minute and a bulk write could fa
 
 ## Consequences
 
-Within quota by construction, checked by the fault storm test. The window lives in each process, so `serve` and `mcp` side by side can each spend a full minute's quota. On site, polling 40 sessions every 20 seconds uses the whole GetSession quota, so a fresh read before a swap can wait. Both are known limits.
+Within quota by construction, checked by the fault storm test. The window lives in each process, so `serve` and `mcp` side by side can each spend a full minute's quota. On site, polling is capped at 35 sessions every 20 seconds, 105 GetSession calls a minute, so it now leaves 15 GetSession calls a minute for the reads before a swap or booking. Two processes side by side remain a known limit.
 
 ## Where
 

@@ -81,7 +81,9 @@ PROPOSAL_TTL = 600   # seconds a proposed plan id stays valid
 OFFERS_PER_TICK = 5  # Book offers pushed one by one per sweep. More are one summary.
 BACKOFF_CAP = 300    # longest wait between sweeps during an outage
 ONSITE_EVERY = 20    # seconds between on-site GetSession polls
-ONSITE_CAP = 40      # sessions polled on site: 40 x 3 a minute stays inside GetSession's 120
+# Sessions polled on site. GetSession allows 120 a minute. 35 sessions x 3 polls a minute is 105,
+# which leaves 15 a minute for the fresh GetSession reads a swap or booking needs before it writes.
+ONSITE_CAP = 35
 CLOSED_RECHECK = 900  # after a 409, wait this long before sending another write
 OFFLINE_AFTER = 600  # seconds down before the offline event
 
@@ -421,7 +423,7 @@ class Watcher:
         return res
 
     def onsite_tick(self, day: str) -> TickResult:
-        """On site: GetSession for the day's held and wanted sessions, at most 40, instead of a sweep."""
+        """On site: GetSession for the day's held and wanted sessions, at most ONSITE_CAP, not a sweep."""
         now = self.clock()
         res = TickResult(at=now)
         self._guarded(res, now, lambda: self._onsite(res, now, day))

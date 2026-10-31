@@ -74,7 +74,7 @@ Tests: [the posterior and its interval](../tests/test_decisions.py), [history mo
 
 **The model.** Cho and Garcia-Molina study how to split a fixed refresh budget across items that change at different rates. Their result is that "the uniform policy is always more effective than the proportional policy", and that the optimal policy penalises items that change too often ("Effective page refresh policies for Web crawlers", ACM TODS 28(4), 2003, pp. 390 to 426, doi:10.1145/958942.958945).
 
-**In re:Seat.** On site it checks the day's held and wanted sessions uniformly, up to 40 of them every 20 seconds, which is the policy that result favours over checking the busiest sessions most. The optimal allocation needs each session's change rate, which only the live event can provide.
+**In re:Seat.** On site it checks the day's held and wanted sessions uniformly, up to 35 of them every 20 seconds, which is the policy that result favours over checking the busiest sessions most. The optimal allocation needs each session's change rate, which only the live event can provide.
 
 ## What these models are not
 
