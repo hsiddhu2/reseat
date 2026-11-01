@@ -52,12 +52,12 @@ def test_leave_times_walk_cutoff_and_buffer(held, store):
                                       rules(RULES + "arrive_confidence: 0.5\n"))
     got = {b.code: (b.start, b.end, b.location) for b in blocks}
     # G1 Tue 10:00 PST = 18:00Z. Home Venetian to MGM 50 min. 10:00 - 11 - 50 = 08:59 PST.
-    assert got["SEC201"] == ("2026-12-01T16:59:00", "2026-12-01T17:04:00", "MGM Grand")
+    assert got["SEC201"] == ("2026-12-01T08:59:00", "2026-12-01T09:04:00", "MGM Grand")
     # G2 11:15 at Venetian after MGM ends 11:00. 11:15 - 11 - 50 = 10:14, before 11:00, so tight:
     # minus the 30 min buffer, 09:44 PST = 17:44Z.
-    assert got["ARC301"] == ("2026-12-01T17:44:00", "2026-12-01T17:49:00", "The Venetian")
+    assert got["ARC301"] == ("2026-12-01T09:44:00", "2026-12-01T09:49:00", "The Venetian")
     # G3 first of Wednesday. Home Venetian to Caesars Forum 20 min. 14:00 - 31 = 13:29 PST.
-    assert got["DOP302"] == ("2026-12-02T21:29:00", "2026-12-02T21:34:00", "Caesars Forum")
+    assert got["DOP302"] == ("2026-12-02T13:29:00", "2026-12-02T13:34:00", "Caesars Forum")
     assert len(warnings) == 1
     assert "walk from MGM Grand is about 50 min (estimate), the gap is 15 min" in warnings[0]
 
@@ -94,7 +94,7 @@ def test_update_on_move_keeps_the_entry(held, client, store):
     res = G.sync(client, store, EV, rules())
     assert [b.code for _, b in res.plan.update] == ["DOP302"] and not res.plan.create
     # 15:00 - 11 - 24 allowed for the typical 20 min walk = 14:25 PST.
-    assert blocks_by_code(held)["DOP302"]["startDateTime"] == "2026-12-02T22:25:00"
+    assert blocks_by_code(held)["DOP302"]["startDateTime"] == "2026-12-02T14:25:00"
     assert blocks_by_code(held)["DOP302"]["personalTimeId"] == ids["DOP302"]
 
 
@@ -107,11 +107,11 @@ def test_delete_on_cancel(held, client, store):
 
 
 def test_never_touches_a_block_without_the_tag(held, client, store):
-    mine = {"personalTimeId": "pt-user1", "startDateTime": "2026-12-01T20:00:00",
-            "endDateTime": "2026-12-01T21:00:00", "title": "Leave for SEC201",
+    mine = {"personalTimeId": "pt-user1", "startDateTime": "2026-12-01T12:00:00",
+            "endDateTime": "2026-12-01T13:00:00", "title": "Leave for SEC201",
             "description": "My own reminder", "location": "MGM Grand"}
-    lunch = {"personalTimeId": "pt-user2", "startDateTime": "2026-12-01T20:00:00",
-             "endDateTime": "2026-12-01T21:00:00", "title": "Lunch", "description": "with team"}
+    lunch = {"personalTimeId": "pt-user2", "startDateTime": "2026-12-01T12:00:00",
+             "endDateTime": "2026-12-01T13:00:00", "title": "Lunch", "description": "with team"}
     held.schedule.personal_time.update({"pt-user1": mine, "pt-user2": lunch})
     G.sync(client, store, EV, rules())
     held.schedule.reserved.clear()
@@ -151,7 +151,7 @@ def test_409_stops_cleanly(held, client, store):
 
 def test_no_home_venue_says_when_to_be_there(held, store):
     blocks, _ = G.leave_blocks(G.held_sessions(store, EV, ["G1"]), rules("targets: []\n"))
-    assert blocks[0].start == "2026-12-01T17:49:00"                   # 10:00 - 11 min
+    assert blocks[0].start == "2026-12-01T09:49:00"                   # 10:00 - 11 min
     assert "Be at MGM Grand by 09.49." in blocks[0].description
 
 
@@ -213,8 +213,8 @@ def test_tag_survives_a_long_description(store):
 
 
 def test_hand_written_entry_mentioning_the_tag_is_not_ours(held, client, store):
-    note = {"personalTimeId": "pt-note", "startDateTime": "2026-12-01T20:00:00",
-            "endDateTime": "2026-12-01T20:05:00", "title": "Leave for DOP302",
+    note = {"personalTimeId": "pt-note", "startDateTime": "2026-12-01T12:00:00",
+            "endDateTime": "2026-12-01T12:05:00", "title": "Leave for DOP302",
             "description": "Notes about [reseat] tool"}
     held.schedule.personal_time["pt-note"] = note
     G.sync(client, store, EV, rules())
@@ -278,9 +278,9 @@ def test_default_leave_time_for_a_tight_change_takes_the_allowance_and_the_buffe
     blocks, warnings = G.leave_blocks(G.held_sessions(store, EV, ["G1", "G2"]), rules())
     got = {b.code: b for b in blocks}
     # G1: 10:00 - 11 - 59 allowed for the 50 min walk = 08:50 PST = 16:50Z.
-    assert got["SEC201"].start == "2026-12-01T16:50:00" and got["SEC201"].allow == 59
+    assert got["SEC201"].start == "2026-12-01T08:50:00" and got["SEC201"].allow == 59
     # G2: 11:15 - 11 - 59 = 10:05, before G1 ends at 11:00, so tight: minus 30 = 09:35 PST = 17:35Z.
-    assert got["ARC301"].start == "2026-12-01T17:35:00" and got["ARC301"].allow == 59
+    assert got["ARC301"].start == "2026-12-01T09:35:00" and got["ARC301"].allow == 59
     assert len(warnings) == 1
 
 
@@ -461,13 +461,27 @@ def test_a_new_entry_in_the_old_form_with_a_hand_written_middle_is_still_ours(he
     """The old form is recognised only with both the old prefix and the old tag."""
     G.sync(client, store, EV, rules())
     held.schedule.personal_time["pt-x"] = {
-        "personalTimeId": "pt-x", "startDateTime": "2026-12-03T20:00:00",
-        "endDateTime": "2026-12-03T20:05:00", "title": "Leave for OLD1",
+        "personalTimeId": "pt-x", "startDateTime": "2026-12-03T12:00:00",
+        "endDateTime": "2026-12-03T12:05:00", "title": "Leave for OLD1",
         "description": "re:Seat leave-now. Walk. [reseat]"}
     held.schedule.personal_time["pt-y"] = {
-        "personalTimeId": "pt-y", "startDateTime": "2026-12-03T20:00:00",
-        "endDateTime": "2026-12-03T20:05:00", "title": "Leave for OLD2",
+        "personalTimeId": "pt-y", "startDateTime": "2026-12-03T12:00:00",
+        "endDateTime": "2026-12-03T12:05:00", "title": "Leave for OLD2",
         "description": "re:Seat leave-now. Walk. Set by reseat"}
     G.sync(client, store, EV, rules())
     assert "pt-x" not in held.schedule.personal_time                 # ours, no held session, deleted
     assert "pt-y" in held.schedule.personal_time                     # mixed form, not ours, untouched
+
+
+def test_a_block_just_before_midnight_stays_on_its_date(fake, store, client):
+    # Personal time cannot cross midnight. A session at 00:10 means leaving at 23:59, and a
+    # 5-minute block would end on the next date, so it is moved to end at 23:59.
+    s = mk("M1", "SEC999", "2026-12-02", "00:10", "MGM Grand")
+    fake.add_session(s)
+    store.apply_sweep(EV, list(fake.sessions.values()), with_abstracts=False)
+    fake.schedule.reserved.add("M1")
+    blocks, _ = G.leave_blocks(G.held_sessions(store, EV, ["M1"]), rules("targets: []\n"))
+    assert (blocks[0].start, blocks[0].end) == ("2026-12-01T23:54:00", "2026-12-01T23:59:00")
+    res = G.sync(client, store, EV, rules("targets: []\n"))
+    assert not res.problems
+    assert blocks_by_code(fake)["SEC999"]["endDateTime"] == "2026-12-01T23:59:00"

@@ -162,7 +162,7 @@ The Events API signs you in with OAuth and PKCE, using your own Builder ID, thro
 | 409 means writes are switched off | Stops writing, keeps every opening queued, resumes when writes open. |
 | Seat availability is a band, not a count | Treats a move from `unavailable` to an open band as a freed seat. |
 | There is no search | Pulls the whole catalog, about 10 calls, and works locally. |
-| Personal time is UTC in 5-minute steps | Writes leave-now blocks exactly that way. |
+| Personal time is wall-clock time in the event's timezone, in 5-minute steps, never across midnight | Writes leave-now blocks exactly that way. |
 
 ## Seen live
 
@@ -239,6 +239,7 @@ reseat favorites sync              # mirror target sittings into favorites, remo
 reseat watch                       # sweep every minute, book freed seats and new repeats. --once for cron
 reseat swap <held> <wanted>        # replace a held session safely: fallback checked, rolls back on failure
 reseat guard sync                  # leave-now blocks in your official schedule. --dry-run shows the diff
+                                   # blocks written before 1 November 2026 are in UTC: run this once to move them
 reseat serve                       # watcher plus the web app and push. See "Running it all week"
 reseat serve --demo                # the web app on a fake API with a scripted week. No sign-in
 reseat mcp                         # local MCP server on stdio. Needs pip install "reseat[mcp]"

@@ -168,7 +168,7 @@ class PersonalTime(_Model):
 
 
 class PersonalTimeInput(_Model):
-    """UTC, seconds must be 00, length a whole number of 5-minute steps."""
+    """Wall-clock in the event's timezone, no offset, seconds 00, one date, 5-minute steps."""
 
     start_date_time: str = Field(alias="startDateTime")
     end_date_time: str = Field(alias="endDateTime")

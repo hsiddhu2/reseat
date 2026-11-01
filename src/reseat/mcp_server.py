@@ -236,8 +236,8 @@ class Tools:
         gp = guard.compute(self.client, self.store, self.event_id, self.rules)
         if gp.empty:
             return "Leave-now blocks already match what is held. Nothing to change."
-        lines = ([f"- create {b.title} at {b.start}Z" for b in gp.create]
-                 + [f"- update {b.title} to {b.start}Z" for _, b in gp.update]
+        lines = ([f"- create {b.title} at {b.start} Las Vegas time" for b in gp.create]
+                 + [f"- update {b.title} to {b.start} Las Vegas time" for _, b in gp.update]
                  + [f"- delete {p.title}" for p in gp.delete])
         p = self._new_plan("guard", [], "\n".join(lines), _diff(gp))
         return (f"Plan {p.plan_id}, valid 10 minutes. Leave-now changes:\n{p.summary}\n"

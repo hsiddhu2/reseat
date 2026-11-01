@@ -315,7 +315,7 @@ def schedule(event: str = config.DEFAULT_EVENT):
         for sid in ids:
             _row(t, *row(sid))
         con.print(t)
-    t = Table("ID", "Start UTC", "End UTC", "Title", "Location", title="Personal time")
+    t = Table("ID", "Start, Las Vegas", "End, Las Vegas", "Title", "Location", title="Personal time")
     for p in s.personal_time:
         _row(t, p.personal_time_id, p.start_date_time, p.end_date_time, p.title, p.location or "")
     con.print(t)
@@ -593,11 +593,11 @@ def guard_sync(event: str = config.DEFAULT_EVENT,
     gp = res.plan
     verb = "would " if dry_run else ""
     for b in gp.create:
-        con.print(f"  [green]{verb}create[/green] {_esc(b.title)} {_esc(b.start)}Z  {_esc(b.description)}")
+        con.print(f"  [green]{verb}create[/green] {_esc(b.title)} {_esc(b.start)}  {_esc(b.description)}")
     for _pid, b in gp.update:
-        con.print(f"  [cyan]{verb}update[/cyan] {_esc(b.title)} {_esc(b.start)}Z  {_esc(b.description)}")
+        con.print(f"  [cyan]{verb}update[/cyan] {_esc(b.title)} {_esc(b.start)}  {_esc(b.description)}")
     for p in gp.delete:
-        con.print(f"  [yellow]{verb}delete[/yellow] {_esc(p.title)} {_esc(p.start_date_time)}Z")
+        con.print(f"  [yellow]{verb}delete[/yellow] {_esc(p.title)} {_esc(p.start_date_time)}")
     con.print(f"{len(gp.create)} to create, {len(gp.update)} to update, {len(gp.delete)} to delete, "
               f"{len(gp.keep)} already right.")
     for w in gp.warnings:

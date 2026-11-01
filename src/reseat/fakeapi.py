@@ -395,11 +395,13 @@ def _validate_pt(body: dict) -> str | None:
         a = datetime.strptime(body["startDateTime"], "%Y-%m-%dT%H:%M:%S")
         b = datetime.strptime(body["endDateTime"], "%Y-%m-%dT%H:%M:%S")
     except ValueError:
-        return "Times must be YYYY-MM-DDTHH:MM:SS in UTC with no offset."
+        return "Times must be YYYY-MM-DDTHH:MM:SS, wall-clock in the event's timezone, with no offset."
     if a.second or b.second:
         return "Seconds must be 00."
     if b <= a:
         return "endDateTime must be after startDateTime."
+    if a.date() != b.date():
+        return "A personal time entry cannot cross midnight."
     if int((b - a).total_seconds()) % 300:
         return "Length must be a whole number of 5-minute increments."
     if any(ch in body["description"] for ch in PT_REFUSED_CHARS):

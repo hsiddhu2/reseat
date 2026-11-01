@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from reseat.campus import (
     CUTOFF_MINUTES,
     VENUES,
+    from_personal_time,
     normalize_venue,
     overlaps,
     room_label,
@@ -38,9 +39,18 @@ def test_vegas_is_pst_in_december():
 
 def test_personal_time_format():
     dt = datetime(2026, 12, 1, 18, 3, 45, tzinfo=UTC)
-    assert to_personal_time(dt) == "2026-12-01T18:03:00"
+    assert to_personal_time(dt) == "2026-12-01T10:03:00"           # Las Vegas wall-clock, not UTC
     assert round_to_5(dt).minute == 0
     assert round_to_5(dt, up=True).minute == 5
+
+
+def test_an_evening_block_stays_on_its_own_date():
+    # The spec says personal time is wall-clock in the event's timezone, not UTC, and a block
+    # cannot cross midnight. 16:49 in Las Vegas is 00:49 UTC the next day, which the old UTC
+    # format would have sent on the wrong date.
+    leave = datetime(2026, 12, 2, 0, 49, tzinfo=UTC)
+    assert to_personal_time(leave) == "2026-12-01T16:49:00"
+    assert from_personal_time("2026-12-01T16:49:00") == leave
 
 
 def test_overlap():

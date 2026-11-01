@@ -1813,7 +1813,7 @@
                     "startDateTime": {
                         "type": "string",
                         "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$",
-                        "description": "When the block starts, written `YYYY-MM-DDTHH:MM:SS` in UTC (e.g. \"2025-12-02T16:00:00\")."
+                        "description": "When the block starts, written `YYYY-MM-DDTHH:MM:SS` as wall-clock time in the event's own timezone (the\nevent's `timezone`), not UTC (e.g. \"2025-12-02T16:00:00\")."
                     },
                     "endDateTime": {
                         "type": "string",
@@ -1848,12 +1848,12 @@
                     "startDateTime": {
                         "type": "string",
                         "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$",
-                        "description": "When the block starts, written `YYYY-MM-DDTHH:MM:SS` (e.g. \"2025-12-02T16:00:00\"). Always UTC, so a trailing\n\"Z\" or an offset such as \"+01:00\" is rejected rather than converted. A block is stored to the minute, so the\nseconds must be `00`."
+                        "description": "When the block starts, written `YYYY-MM-DDTHH:MM:SS` (e.g. \"2025-12-02T16:00:00\") as wall-clock time in the\nevent's own timezone (the event's `timezone`), not UTC. A trailing \"Z\" or an offset such as \"+01:00\" is\nrejected rather than converted. A block is stored to the minute, so the seconds must be `00`."
                     },
                     "endDateTime": {
                         "type": "string",
                         "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}$",
-                        "description": "When the block ends, in the same form as `startDateTime`. Must be after `startDateTime`, and the length\nbetween the two must be a whole number of 5-minute increments."
+                        "description": "When the block ends, in the same form as `startDateTime`. Must be after `startDateTime` and on the same\ndate, so a block cannot cross midnight, and the length between the two must be a whole number of 5-minute\nincrements."
                     },
                     "title": {
                         "type": "string",

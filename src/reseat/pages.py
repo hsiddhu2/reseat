@@ -20,12 +20,12 @@ import json
 import math
 import re
 from collections.abc import Iterable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from html import escape
 from typing import TYPE_CHECKING, Any
 
 from . import decisions, findings, guard
-from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, overlaps, room_label, walk_minutes
+from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, from_personal_time, overlaps, room_label, walk_minutes
 from .changes import GHOSTS
 from .client import QUOTAS
 from .models import PersonalTime, Session
@@ -93,8 +93,8 @@ def _when(s: Session) -> str:
 
 def _pt_window(p: PersonalTime) -> tuple[datetime, datetime] | None:
     try:
-        a = datetime.fromisoformat(p.start_date_time).replace(tzinfo=UTC).astimezone(VEGAS)
-        b = datetime.fromisoformat(p.end_date_time).replace(tzinfo=UTC).astimezone(VEGAS)
+        a = from_personal_time(p.start_date_time).astimezone(VEGAS)
+        b = from_personal_time(p.end_date_time).astimezone(VEGAS)
     except ValueError:
         return None
     return a, b
@@ -486,7 +486,7 @@ def _week(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]]
     leaves = []
     blocks_now, _ = guard.leave_blocks(guard.held_sessions(st, ev, [s.session_id for s in held]), app.rules)
     for blk in blocks_now:
-        at = datetime.fromisoformat(blk.start).replace(tzinfo=UTC).astimezone(VEGAS)
+        at = from_personal_time(blk.start).astimezone(VEGAS)
         for b in blocks:
             if b["kind"] == "held" and b["session"].session_id == blk.session_id:
                 b["leave"] = f"{at:%H:%M}"
@@ -530,7 +530,7 @@ def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[
             ("Where", ", ".join(x for x in (s.campus_venue, s.room_label) if x) or "Not set"),
             ("Type", s.type_key or "Not set"), ("Seats now", s.seat_availability or "Not shown")]
     if leave:
-        at = datetime.fromisoformat(leave.start).replace(tzinfo=UTC).astimezone(VEGAS)
+        at = from_personal_time(leave.start).astimezone(VEGAS)
         walk = (f", about {leave.walk} min walk from {leave.origin}, {leave.allow} allowed (estimate)"
                 if leave.walk is not None
                 else "")
@@ -657,7 +657,7 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
         a = _start(s)
         if not b or not a:
             continue
-        leave_at = datetime.fromisoformat(b.start).replace(tzinfo=UTC).timestamp()
+        leave_at = from_personal_time(b.start).timestamp()
         if a.timestamp() > now:                  # held until it starts: a missed leave time shows as now
             hero = {"code": s.abbreviation, "start": f"{a:%H:%M}", "venue": s.campus_venue or "",
                     "room": s.room_label or "", "origin": b.origin or "", "walk": b.walk, "allow": b.allow,
@@ -668,7 +668,7 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
         a = _start(s)
         if a and a.timestamp() > now and s.abbreviation != (hero or {}).get("code"):
             b = by_id.get(s.session_id)
-            leave = (datetime.fromisoformat(b.start).replace(tzinfo=UTC).astimezone(VEGAS).strftime("%H:%M")
+            leave = (from_personal_time(b.start).astimezone(VEGAS).strftime("%H:%M")
                      if b else None)
             sub = f"{s.campus_venue or ''} · held" + (f" · leave {leave}" if leave else "")
             nxt.append((a, {"time": f"{a:%H:%M}", "name": f"{s.abbreviation} · {s.type_key or 'Session'}",

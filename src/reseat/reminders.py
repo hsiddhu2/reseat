@@ -8,18 +8,18 @@ Rules this module exists to respect:
   The web app saves each key in the local store, so a restart of reseat serve never sends one
   again. A plan id is never saved: proposals die with the process.
 - Codes and titles only. Session ids stay on the laptop.
-- Session times are Las Vegas local time, leave-now blocks are UTC. Both go through campus helpers.
+- Session times and leave-now blocks are both Las Vegas wall-clock time. Both go through campus helpers.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from . import guard
-from .campus import EVENT_DAYS, VEGAS
+from .campus import EVENT_DAYS, VEGAS, from_personal_time
 from .models import Session
 
 LEAVE_SOON = 10 * 60          # leave in 10 minutes
@@ -47,7 +47,7 @@ def how(b: guard.Block) -> str:
 
 
 def leave_time(b: guard.Block) -> float:
-    return datetime.fromisoformat(b.start).replace(tzinfo=UTC).timestamp()
+    return from_personal_time(b.start).timestamp()
 
 
 @dataclass

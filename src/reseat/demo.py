@@ -31,14 +31,14 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from . import guard, push
 from . import rules as R
-from .campus import EVENT_DAYS, VEGAS
+from .campus import EVENT_DAYS, VEGAS, from_personal_time
 from .changes import Tracker
 from .client import EventsClient, QuotaTracker
 from .fakeapi import FakeEventsApi
@@ -109,8 +109,8 @@ class Demo:
         by_code = {s.abbreviation: s.session_id for s in self.fake.sessions.values()}
         self.fake.schedule.reserved.update(by_code[c] for c in HELD)
         self.fake.schedule.personal_time["demo-dinner"] = {
-            "personalTimeId": "demo-dinner", "startDateTime": "2026-12-01T01:30:00",
-            "endDateTime": "2026-12-01T03:00:00", "title": "Team dinner", "description": "Booked by hand",
+            "personalTimeId": "demo-dinner", "startDateTime": "2026-11-30T17:30:00",
+            "endDateTime": "2026-11-30T19:00:00", "title": "Team dinner", "description": "Booked by hand",
             "location": "Wynn"}
         self.client = EventsClient(token_provider=lambda: self.fake.token, transport=self.fake.transport(),
                                    quota=QuotaTracker(clock=self.clock))      # real quotas, demo clock
@@ -684,8 +684,8 @@ class Demo:
 
 
 def _utc(start: str) -> float:
-    """A personal-time start (UTC, no offset) as a timestamp."""
-    return datetime.fromisoformat(start).replace(tzinfo=UTC).timestamp()
+    """A personal-time start (Las Vegas wall-clock, no offset) as a timestamp."""
+    return from_personal_time(start).timestamp()
 
 
 def _before_after(before: dict[str, Any], after: dict[str, Any], changes: list[Any]) -> list[dict[str, Any]]:

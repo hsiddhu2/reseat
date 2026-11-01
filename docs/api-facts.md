@@ -137,8 +137,9 @@ Source: `Schedule` and `PersonalTime` schemas.
 
 Source: `PersonalTimeInput` schema.
 
-- `startDateTime` and `endDateTime`: `YYYY-MM-DDTHH:MM:SS`. "Always UTC, so a trailing Z or an offset such as +01:00 is rejected rather than converted. A block is stored to the minute, so the seconds must be 00."
-- End after start. "The length between the two must be a whole number of 5-minute increments."
+- `startDateTime` and `endDateTime`: `YYYY-MM-DDTHH:MM:SS` "as wall-clock time in the event's own timezone (the event's `timezone`), not UTC. A trailing "Z" or an offset such as "+01:00" is rejected rather than converted. A block is stored to the minute, so the seconds must be `00`."
+- End after start "and on the same date, so a block cannot cross midnight, and the length between the two must be a whole number of 5-minute increments."
+- The spec changed. The copy fetched on 2 October 2026 said "Always UTC". The copy fetched on 1 November 2026 says wall-clock in the event's timezone. Only the `PersonalTime` and `PersonalTimeInput` schemas changed. Blocks written before the change were not converted: a GetSchedule read on 1 November 2026 returned the 25 October leave-now blocks with their UTC times unchanged.
 - `title` 1 to 128 chars, `description` 1 to 250 chars, both required. `location` 1 to 255, optional.
 - Observed live on 25 October 2026, not in the spec: CreatePersonalTime answered 400 "The personal time entry could not be applied" for a description that held `:`, `(`, `)`, `[` and `]`. The same title, times and words with all five removed were accepted. Which of the five causes the refusal was not tested one by one. A location was not the cause. re:Seat keeps descriptions to letters, digits, spaces, commas and full stops.
 - Also seen live on 25 October 2026: titles holding a hyphen, from repeat codes, were accepted, and so were blocks that fall inside a held session.

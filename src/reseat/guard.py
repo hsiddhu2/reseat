@@ -6,8 +6,10 @@ when to leave, and writes that as a 5-minute personal time block in the
 official schedule so the phone app shows it.
 
 API rules this module exists to respect:
-- Personal time is UTC, no offset, seconds 00, length a whole number of
-  5-minute steps. campus.to_personal_time formats it. Never by hand.
+- Personal time is wall-clock time in the event's timezone (Las Vegas), no
+  offset, seconds 00, on one date, length a whole number of 5-minute steps.
+  The spec said UTC until it changed after 2 October 2026.
+  campus.to_personal_time formats it. Never by hand.
 - Title 1 to 128 characters, description 1 to 250, location up to 255.
 - UpdatePersonalTime is a full replacement, so every field is sent.
 - CreatePersonalTime is not idempotent. Each create is sent once. A 400 on one
@@ -31,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from . import decisions
-from .campus import CUTOFF_MINUTES, session_start_utc, to_personal_time, walk_minutes
+from .campus import CUTOFF_MINUTES, from_personal_time, session_start_utc, to_personal_time, walk_minutes
 from .client import ApiError, EventsClient, OperationClosed
 from .models import PersonalTime, PersonalTimeInput, Session
 from .rules import Rules
@@ -56,7 +58,7 @@ class Block:
 
     code: str
     session_id: str
-    start: str          # UTC, YYYY-MM-DDTHH:MM:00
+    start: str          # Las Vegas wall-clock, YYYY-MM-DDTHH:MM:00
     end: str
     title: str
     description: str
@@ -151,9 +153,14 @@ def leave_blocks(sessions: list[Session], rules: Rules) -> tuple[list[Block], li
         else:
             how = f"Walk {origin} to {dest}, about {walk} min, {allow} allowed, estimate."   # never official
         how = _safe(how)
+        end = leave + timedelta(minutes=BLOCK_MINUTES)
+        if to_personal_time(end)[:10] != to_personal_time(leave)[:10]:
+            # A block cannot cross midnight. End it at 23:59 instead, a few minutes early.
+            end = from_personal_time(to_personal_time(end)[:10] + "T00:00:00") - timedelta(minutes=1)
+            leave = end - timedelta(minutes=BLOCK_MINUTES)
         blocks.append(Block(
             code=code, session_id=s.session_id,
-            start=to_personal_time(leave), end=to_personal_time(leave + timedelta(minutes=BLOCK_MINUTES)),
+            start=to_personal_time(leave), end=to_personal_time(end),
             title=f"Leave for {code}"[:128],
             description=f"{PREFIX} {how[:250 - len(PREFIX) - len(TAG) - 2]} {TAG}",
             location=(dest or None) and dest[:255], origin=origin, walk=walk, allow=allow))

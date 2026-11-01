@@ -15,7 +15,7 @@ These records were written on 30 October 2026 for decisions already in the code.
 | [ADR-0007](0007-writes-closed.md) | Writes closed (409) is a normal state | accepted | 0.5.1 |
 | [ADR-0008](0008-sweep-guards.md) | Refuse a catalog that looks broken | accepted | 0.5.1 |
 | [ADR-0009](0009-schemas.md) | Strict rules file, permissive API models | accepted | 0.5.1 |
-| [ADR-0010](0010-time.md) | Times through one module | accepted | 0.5.1, zone check 0.8.0 |
+| [ADR-0010](0010-time.md) | Times through one module | accepted, amended 2026-11-01 | 0.5.1, zone check 0.8.0 |
 | [ADR-0011](0011-store.md) | SQLite store with owner-only files | accepted | 0.5.1 |
 | [ADR-0012](0012-one-engine.md) | One engine under three surfaces | accepted | 0.5.1 |
 | [ADR-0013](0013-web-app.md) | Web app on loopback by default | accepted | 0.5.1 |
