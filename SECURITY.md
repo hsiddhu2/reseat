@@ -4,7 +4,7 @@
 
 | Version | Supported |
 |---|---|
-| 0.8.x, the latest on PyPI | Yes |
+| 1.0.x, the latest on PyPI | Yes |
 | Older | No. Upgrade with `pip install -U reseat` |
 
 ## Reporting a vulnerability

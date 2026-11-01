@@ -4,10 +4,13 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-11-01
+
 ### Fixed
 
 - Leave-now blocks are written in Las Vegas wall-clock time. The API spec changed after 2 October 2026: personal time is now "wall-clock time in the event's own timezone, not UTC", and a block cannot cross midnight. Blocks written before were in UTC, 8 hours late under the new rule. `reseat guard sync --dry-run` shows each one as an update, and `reseat guard sync` moves them. `reseat serve` offers the same Update on Today and by push, and writes nothing until it is tapped. The Today page, reminders and the MCP plan text read blocks the same way. The fake API refuses a block that crosses midnight.
 - `docs/openapi.json` refreshed to the live spec of 1 November 2026.
+- `reseat findings` says "1 opening on 1 session", not "1 openings on 1 sessions".
 
 ## [0.8.2] - 2026-10-31
 
@@ -121,7 +124,8 @@ First release on PyPI.
 - The MCP server, which writes only by approving a plan id it proposed.
 - The local web app and ntfy pushes.
 
-[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/hsiddhu2/reseat/compare/v0.8.2...v1.0.0
 [0.8.2]: https://github.com/hsiddhu2/reseat/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/hsiddhu2/reseat/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/hsiddhu2/reseat/compare/v0.7.0...v0.8.0

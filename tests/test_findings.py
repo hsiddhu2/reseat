@@ -115,11 +115,35 @@ def test_cli_findings_prints_counts_and_writes_json_from_a_patched_store_only(st
     out = tmp_path / "f.json"
     r = CliRunner().invoke(cli.app, ["findings", "--json", str(out)])      # no rules file: no targets
     assert r.exit_code == 0, r.output
-    assert "Seats opened on full sessions: 1 on 1 sessions" in r.output and "On targets: 0" in r.output
-    assert "Breakout session: 1 openings on 1 sessions" in r.output
+    assert "Seats opened on full sessions: 1 on 1 session, on 1 day." in r.output
+    assert "On targets: 0" in r.output
+    assert "Breakout session: 1 opening on 1 session" in r.output
     f = json.loads(out.read_text(encoding="utf-8"))
     assert f["openings"]["total"] == 1 and "S-ARC1" not in out.read_text(encoding="utf-8")
     assert opened == [1] and not (tmp_path / "never.db").exists() and config.DB_PATH != real_db
     (tmp_path / "rules.yaml").write_text("targets:\n- code: ARC301\n", encoding="utf-8")
     r = CliRunner().invoke(cli.app, ["findings"])
     assert r.exit_code == 0 and "On targets: 1" in r.output
+
+
+def test_cli_findings_says_plurals_for_more_than_one(store, client, fake, tmp_path, monkeypatch):
+    fake.set_band("S-SEC1", "unavailable")           # a second full Breakout session in the baseline
+    _sweep(store, client, T0)
+    fake.set_band("S-ARC1", "veryLimited")
+    fake.set_band("S-SEC1", "limited")               # two openings on two sessions, day one
+    _sweep(store, client, T0 + 60)
+    fake.set_band("S-ARC1", "unavailable")
+    _sweep(store, client, T0 + 360)
+    fake.set_band("S-ARC1", "available")             # a third opening, day two
+    _sweep(store, client, T0 + DAY)
+    monkeypatch.setattr(config, "HOME", tmp_path)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "never.db")
+    monkeypatch.setattr(config, "RULES_PATH", tmp_path / "rules.yaml")
+    monkeypatch.setattr(cli, "_store", lambda: store)
+    monkeypatch.setattr(cli, "_client", lambda: (_ for _ in ()).throw(AssertionError("no API call")))
+    monkeypatch.setattr(cli.time, "time", lambda: T0 + DAY)
+    r = CliRunner().invoke(cli.app, ["findings"])
+    assert r.exit_code == 0, r.output
+    assert "Seats opened on full sessions: 3 on 2 sessions, on 2 days." in r.output
+    assert "Breakout session: 3 openings on 2 sessions" in r.output
+    assert "1 openings" not in r.output and "1 sessions" not in r.output

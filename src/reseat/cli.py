@@ -269,6 +269,11 @@ def save_fixture(event: str = config.DEFAULT_EVENT,
 # --------------------------------------------------------------------------- schedule
 
 
+def _count(n: int, word: str) -> str:
+    """'1 session', '2 sessions'."""
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
 @app.command()
 def findings(event: str = config.DEFAULT_EVENT,
              out: str = typer.Option("", "--json", help="Also write the counts to this file, as JSON.")):
@@ -281,11 +286,11 @@ def findings(event: str = config.DEFAULT_EVENT,
     f = findings_engine.compute(st, event, time.time(), wanted)
     o, c = f["openings"], f["catalog"]
     con.print(f"{f['since']} to {f['until']} Las Vegas time, {f['days']} days, {f['sweeps']:,} sweeps.")
-    con.print(f"Seats opened on full sessions: {o['total']} on {o['sessions']} sessions, on {o['days_with']} "
-              f"days. Full again within 10 minutes: {o['refilled']['under 10 min']}. On targets: "
-              f"{o['on_targets']}.")
+    con.print(f"Seats opened on full sessions: {o['total']} on {_count(o['sessions'], 'session')}, on "
+              f"{_count(o['days_with'], 'day')}. Full again within 10 minutes: "
+              f"{o['refilled']['under 10 min']}. On targets: {o['on_targets']}.")
     for t, n, k in o["by_type"]:
-        con.print(f"  {_esc(t)}: {n} openings on {k} sessions")
+        con.print(f"  {_esc(t)}: {_count(n, 'opening')} on {_count(k, 'session')}")
     con.print(f"Sessions added: {c['added']}, {c['still_listed']} still listed. Removed {c['removed']}, "
               f"moves {c['moved']}.")
     con.print(f"Full now: {f['bands_now']['full']:,} of {f['bands_now']['reservable']:,} that take "
