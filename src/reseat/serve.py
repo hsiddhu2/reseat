@@ -35,7 +35,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -45,7 +45,7 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from . import __version__, guard, offers, pages
-from .campus import EVENT_DAYS, VEGAS
+from .campus import EVENT_DAYS, VEGAS, from_personal_time
 from .changes import Tracker
 from .client import ApiError
 from .guard import _OPEN as OPEN_BANDS
@@ -322,7 +322,7 @@ class App:
             b = by_id.get(s.session_id)
             if not b:
                 continue
-            leave_at = datetime.fromisoformat(b.start).replace(tzinfo=UTC).timestamp()
+            leave_at = from_personal_time(b.start).timestamp()
             if leave_at >= now - 300:
                 next_leave = {"code": b.code, "leave_at": leave_at,
                               "leave_local": vegas(leave_at).strftime("%H:%M"), "how": _how(b)}

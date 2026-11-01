@@ -175,6 +175,19 @@ def test_personal_time_rejects_bad_length(fake, client):
     assert e.value.status == 400
 
 
+@pytest.mark.parametrize("start, end", [
+    ("2026-12-01T23:55:00", "2026-12-02T00:05:00"),    # crosses midnight, refused by the spec
+    ("2026-12-01T17:00:00Z", "2026-12-01T17:05:00Z"),  # a trailing Z is rejected, not converted
+])
+def test_personal_time_refuses_a_block_off_the_local_clock(fake, client, start, end):
+    from reseat.client import ApiError
+    body = PersonalTimeInput(startDateTime=start, endDateTime=end, title="x", description="y")
+    with pytest.raises(ApiError) as e:
+        client.create_personal_time("reinvent2026", body)
+    assert e.value.status == 400
+    assert client.get_schedule("reinvent2026").personal_time == []
+
+
 def test_token_is_never_sent_to_another_host(fake):
     other = EventsClient(token_provider=lambda: fake.token, base_url="https://evil.example.com",
                          transport=fake.transport())

@@ -4,6 +4,11 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+### Fixed
+
+- Leave-now blocks are written in Las Vegas wall-clock time. The API spec changed after 2 October 2026: personal time is now "wall-clock time in the event's own timezone, not UTC", and a block cannot cross midnight. Blocks written before were in UTC, 8 hours late under the new rule. `reseat guard sync --dry-run` shows each one as an update, and `reseat guard sync` moves them. `reseat serve` offers the same Update on Today and by push, and writes nothing until it is tapped. The Today page, reminders and the MCP plan text read blocks the same way. The fake API refuses a block that crosses midnight.
+- `docs/openapi.json` refreshed to the live spec of 1 November 2026.
+
 ## [0.8.2] - 2026-10-31
 
 ### Added

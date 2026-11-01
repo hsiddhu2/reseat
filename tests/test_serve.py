@@ -7,6 +7,7 @@ import pytest
 from reseat import push
 from reseat import rules as R
 from reseat import serve as S
+from reseat.campus import from_personal_time
 from reseat.client import EventsClient, QuotaTracker
 from reseat.fakeapi import FakeEventsApi
 from reseat.models import Session
@@ -587,7 +588,7 @@ def _serve_once(path, now):
 
 def test_a_restart_of_serve_never_repeats_a_reminder_already_pushed(tmp_path):
     """Sent reminder keys live in the store file, so a second App over it pushes none of them again."""
-    from datetime import UTC, datetime
+    from datetime import datetime
 
     from reseat import guard
     from reseat.campus import VEGAS
@@ -610,7 +611,7 @@ def test_a_restart_of_serve_never_repeats_a_reminder_already_pushed(tmp_path):
     blocks, _ = guard.leave_blocks(guard.held_sessions(store, EV, ["H1-session-id", "H3-session-id"]),
                                      app.rules)
     h3 = next(b for b in blocks if b.code == "DOP302")
-    clock["t"] = datetime.fromisoformat(h3.start).replace(tzinfo=UTC).timestamp()
+    clock["t"] = from_personal_time(h3.start).timestamp()
     app.refresh()                                       # a new key, the leave for DOP302, still goes out
     clock["t"] = vegas_at("07:00", "2026-12-02")
     app.refresh()                                       # and the next day's briefing

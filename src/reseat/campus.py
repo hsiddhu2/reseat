@@ -139,10 +139,18 @@ def session_window(date: str, time_: str, minutes: int) -> tuple[datetime, datet
     return start, start + timedelta(minutes=minutes)
 
 
-def to_personal_time(dt: datetime) -> str:
-    """Personal time wants YYYY-MM-DDTHH:MM:SS in UTC, no offset, seconds 00."""
-    u = dt.astimezone(UTC).replace(second=0, microsecond=0)
-    return u.strftime("%Y-%m-%dT%H:%M:%S")
+def to_personal_time(dt: datetime, tz: ZoneInfo = VEGAS) -> str:
+    """Personal time wants YYYY-MM-DDTHH:MM:SS as wall-clock time in the event's own timezone.
+
+    The spec as of 1 November 2026 says "not UTC": a trailing Z or an offset is rejected, the
+    seconds must be 00, and a block cannot cross midnight. The 2 October spec said UTC.
+    """
+    return dt.astimezone(tz).replace(second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def from_personal_time(value: str, tz: ZoneInfo = VEGAS) -> datetime:
+    """A personal-time start or end, wall-clock in the event's timezone, as an aware UTC datetime."""
+    return datetime.fromisoformat(value).replace(tzinfo=tz).astimezone(UTC)
 
 
 def round_to_5(dt: datetime, up: bool = False) -> datetime:

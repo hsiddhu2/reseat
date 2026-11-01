@@ -33,7 +33,7 @@ Full detail, with sources, is in [api-facts.md](api-facts.md).
 - **Quota counts sessions.** Ten reserves in one call spend 10 of the 30 per minute.
 - **No swap.** Reserving a session that overlaps a held one is refused. Cancel must come first. That is the risk re:Seat manages.
 - **Two-day gap.** The portal opens reserved seating on 6 October 2026. API writes open on 8 October. re:Seat cannot help with the first rush.
-- **Time zones.** Sessions are Las Vegas local time. Personal time is UTC.
+- **Time zones.** Sessions are Las Vegas local time. Personal time is also Las Vegas wall-clock time, with no offset, and a block stays on one date. Until the spec changed after 2 October 2026 it was UTC.
 
 ## What re:Seat does
 
@@ -113,7 +113,7 @@ Each design decision, with its context and its cost, is recorded in [the decisio
 | Auth | built | PKCE on port 8484, fallback to 8489. OS keychain. Refresh once on 401. Sign-out with revoke. The token is only ever sent to `https://api.awsevents.com`. A dropped connection or a failed refresh on a write is read back like a server error. |
 | API client | built | Typed models that mirror the OpenAPI spec. Quota tracker per operation. Honors `Retry-After` once. Per-session failures as typed results. |
 | Catalog store | built | SQLite. Full sync, then cheap sweeps. Added, removed and moved sessions. Band history. Write journal. |
-| Campus | built | The 2026 venues, a walking-time table, Las Vegas to UTC conversion. |
+| Campus | built | The 2026 venues, a walking-time table, Las Vegas to UTC conversion for sessions, and personal time in Las Vegas wall-clock. |
 | Rules | built | `~/.reseat/rules.yaml`. Targets come from the official schedule (reserved first, then favorites, by session id) or a reinvent-planner.cloud export. Validation against the catalog. |
 | Order router | built | Priority, quota, fallback trees, scarcity ordering, read-back. |
 | Cancel | built | `GetSession` first, ask first, one DELETE, read-back. |
@@ -161,6 +161,6 @@ re:Seat uses all 12 operations in the spec. Each write is read back with GetSche
 | CancelReservation | Cancel, swap, the writes-open probe | Not idempotent. 400 or 404 on a session not held. |
 | AssociateFavorites | `favorites sync` adds every target sitting | Up to 10 per call, quota counts sessions. `alreadyFavorited` skipped. |
 | DisassociateFavorite | `favorites sync` removes favorites re:Seat added for dropped targets | One per call. A 404 means already gone and is never re-sent. Never a favorite the attendee added, never a held seat. |
-| CreatePersonalTime | Leave-now blocks | UTC, no offset, 5-minute steps. |
+| CreatePersonalTime | Leave-now blocks | Las Vegas wall-clock, no offset, one date, 5-minute steps. |
 | UpdatePersonalTime | Leave-now blocks when holds change | Only blocks carrying the re:Seat tag. |
 | DeletePersonalTime | Leave-now blocks no longer needed | The only idempotent write. |
