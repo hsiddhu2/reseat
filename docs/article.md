@@ -1,179 +1,111 @@
-# re:Seat: the seats you missed, booked while you sleep
+# re:Seat: your AI plans, re:Seat books the seats
 
-Six days after reserved seating opened for re:Invent 2026, 1,115 of the 1,460 sessions that take reservations were full. re:Seat is a small tool that runs on your laptop against the AWS Events API, watches the catalog every minute, and books the seat you wanted the moment one frees up or AWS adds a repeat sitting. It never sends a booking twice, reads every write back from your schedule, checks it has a way back in before it cancels anything, and has been keeping my own week since 13 October.
+Reserved seating for re:Invent 2026 opened on 6 October. By 1 November, 1,448 of the 1,483 sessions that take reservations were full. But seats come back. From 12 October to 1 November, full sessions opened again 42 times, on 16 of 21 days. Only 5 were full again within 10 minutes. Most, 32 of the 42, were not seen full again for an hour or more, measured to the next sweep that saw them full. The problem is that no person can watch every full session, all day.
 
-![re:Seat demo: a seat opens and a swap is proposed with Swap now and Keep, the week labels what changed, the swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
+re:Seat watches them for you. While your laptop is awake, it sweeps the whole catalog about once a minute and books a freed seat or a new repeat sitting inside your rules. It swaps you to a better sitting only after it has checked your way back. It tells you when to leave. Your plan is the input. Plan with the AI tool you already use, and the plan becomes a rules file that re:Seat follows. Your AI does the thinking, and re:Seat does the booking.
 
-Try it in two minutes, with no sign-in, on demo data:
+**Try it, no sign-in:** `uvx --python 3.12 reseat serve --demo`, then open `http://127.0.0.1:8491/`. Or open the [browser demo](https://hsiddhu2.github.io/reseat/).
 
-```
-pip install reseat
-reseat serve --demo
-```
+![re:Seat demo: a seat opens, a swap is approved and verified, and Today shows when to leave](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/demo.gif)
 
-Or open the [click-through demo](https://hsiddhu2.github.io/reseat/) in your browser. The code is at [github.com/hsiddhu2/reseat](https://github.com/hsiddhu2/reseat).
+## What happens every year
 
-## The problem starts after the plan
+re:Invent 2025 drew [more than 60,000 attendees](https://www.aboutamazon.com/news/aws/aws-ceo-ai-inference-transforms-developer-capabilities).
 
-Here is what attendees have said about reserved seating, from Reddit, blogs and Builder Center posts:
+- "A little secret, get in line and keep refreshing the app for the associated session." ([r/aws, 2022](https://www.reddit.com/r/aws/comments/yxsli3/aws_reinvent_reserved_seating/))
+- It is "whack-a-mole night", because "no sooner have you tried to reserve a seat it’s quite likely that session will already be fully booked" ([Adam Divall, 2023](https://adamdivall.co.uk/article/reinvent/preparing-for-reinvent2023/)).
+- "You will definitely fail to join the next session unless you have reserved and they're on the same building." ([r/aws, 2023](https://www.reddit.com/r/aws/comments/186kzmh/my_initial_impressionsfeedback_about_the_aws/))
+- AWS's [FAQ](https://aws.amazon.com/events/reinvent/faqs/): "Look for repeated instances of sessions (indicated with -R in the session ID) or continue checking back for availability in that session."
 
-- "Most things were full by 10:03am." (2022)
-- "Some stuff that was full yesterday I was able to reserve right now." (2024)
-- "The more popular sessions get 2-3x extra sessions once they get booked up." (2022)
-- "Use 11 minutes as I have found myself arguing with the staff." (2025)
-- "Don't do one session at Venetian followed by a session at MGM. You'll never make it." (2022)
+## The planning problems, and what re:Seat does
 
-Seats free up after opening day, and AWS adds repeat sittings for popular sessions. Both happen when you are not looking. The only way to catch them has been to keep refreshing the app.
+| Problem | What re:Seat does |
+|---|---|
+| **A huge catalog.** "Just wait until you see the session catalogue - it's huge :)" ([r/aws, 2023](https://www.reddit.com/r/aws/comments/17lx1qa/aws_reinvent_confusing_venues/)) | `search_sessions` searches the local copy by text, type, day and venue. Nothing goes to AWS. |
+| **Scattered repeats.** "I should be able to pull up details for a session and see ALL occurrences of that particular session." ([r/aws, 2024](https://www.reddit.com/r/aws/comments/1h6ustk/reinvent_2024_pet_peeves/)) | A target names a talk. re:Seat tries its sittings in your order, and with repeats on, any sitting AWS adds later. |
+| **Hidden walks.** "you won’t make back to back sessions in eg Venetian and MGM.. it takes too long to move between them." ([r/aws, 2023](https://www.reddit.com/r/aws/comments/17lx1qa/aws_reinvent_confusing_venues/)) | `check_plan` flags clashes, two sittings of one talk and walks that miss the 11-minute door rule. |
+| **Backups.** "I personally add some backup sessions in case I don't manage to book all my first choices." ([Jimmy Dahlqvist](https://jimmydqv.com/how-to-reinvent-ep-2-sessions/)) | Each target can list backups, tried in order. |
+| **Favorites are not seats.** "A favorite is just a bookmark. Reserving is what actually holds you a spot." ([Dahlqvist](https://jimmydqv.com/how-to-reinvent-ep-3-reserved-seating/)) | re:Seat reserves the seat. `reseat favorites sync` adds your targets to your AWS favorites and never removes yours. |
+| **The plan lives apart from the booking.** Dahlqvist keeps his picks in a text file. "Then I can copy & paste and search for sessions and just reserve them fast." ([Dahlqvist](https://jimmydqv.com/how-to-reinvent-ep-3-reserved-seating/)) | `draft_rules` writes your plan as a rules file. `reseat rules from-schedule` imports a plan built in the AWS portal. `reseat rules import` reads a JSON export from reinvent-planner.cloud, in its order. |
 
-## What it does
+## The seat problems
 
-| | What re:Seat does | The API calls behind it |
-|---|---|---|
-| **Books freed seats** | A talk you want moving from full to open is booked within a minute. | ListSessions sweep, ReserveSessions, GetSchedule read-back |
-| **Books new repeats** | A new sitting of a talk you want is booked the moment it appears. Never two sittings of one talk. | ListSessions sweep, ReserveSessions, GetSchedule |
-| **Swaps without losing a seat** | Moves you to the sitting you want more, only after checking there is a way back in. | GetSession fresh reads, CancelReservation, ReserveSessions, GetSchedule |
-| **Gets you there on time** | Writes leave-now blocks into your official schedule. Pushes a morning briefing, leave in 10 minutes, and leave now. | CreatePersonalTime, UpdatePersonalTime, DeletePersonalTime |
-| **Says queue or go** | For a talk you want but do not hold, the odds of a walk-up seat, with a range and its basis. | Band history from every sweep |
-| **Keeps the official app in step** | Every target sitting shows as a favorite. When you drop a target, the favorites re:Seat added for it are removed. Never one you added, never a seat you hold. | AssociateFavorites, DisassociateFavorite, GetSchedule read-back |
-| **Offers what is new** | A session just added, or a seat opening on a favorite, arrives with a Book button. One tap checks again, books and reads back. Nothing outside your rules is booked without it. | GetSession fresh read, ReserveSessions, GetSchedule read-back |
-| **Asks on your phone** | A swap proposal arrives as a notification with Swap now and Keep. Alerts can also go by email or text through an SNS topic in your own AWS account. | None from the phone. It never holds a token. Amazon SNS for email and text. |
-| **Plans with your own AI** | Four MCP tools let the AI app you already use search, find free slots, check a plan and draft your rules. | Local catalog, GetSchedule. The planning tools never reserve or cancel. |
+- **Seats come back when nobody is looking.** 32 of the 42 openings were not seen full again for an hour or more.
+- **There is no swap.** A reserve that clashes with a held seat is refused ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-26-clash-refused.md)). You must cancel, then rebook.
+- **You lose your seat at the door** if you are not there "at least ten minutes prior to the session start time" ([AWS FAQ](https://aws.amazon.com/events/reinvent/faqs/)).
 
-**By the numbers:** all 12 operations of the Events API. 11 MCP tools. 22 demo scenarios. 1,228 tests on Linux, macOS and Windows. One host ever sees the access token. Zero hosted services.
+## Plan with the AI tool you already use
 
-## It has to be right the first time
+AWS offers its Events API as a REST API and as "a Model Context Protocol (MCP) server, for AI assistants and agents" ([developer guide](https://docs.aws.amazon.com/events/latest/devguide/what-is-events-api.html)). re:Seat runs its own MCP server on your laptop with `reseat mcp`. It adds no model and no hosted service. You and your AI choose. re:Seat keeps the seats.
 
-Reserve and cancel are not idempotent. A retried booking can hold a second seat, and a retried cancel can drop one you meant to keep. So re:Seat follows the API's rules exactly, and the code enforces each one:
+AWS warns that "an assistant can report 'done' when some sessions failed" ([guide](https://docs.aws.amazon.com/events/latest/devguide/mcp-server.html)). re:Seat's 12 tools work from your real catalog and schedule. Each write runs only through a plan id from an earlier call, so your AI app can show you the plan before it is approved. A plan id works once, expires after 10 minutes and is dropped when the rules file changes.
 
-- **Never a blind retry.** After every reserve or cancel, re:Seat reads your schedule back with GetSchedule and journals the result. A timeout or a 5xx is settled by that read, never by sending the write again.
-- **Quota per operation, per minute.** Bulk calls count sessions, not requests. A tracker never sends a batch larger than the quota left. On a 429 it waits `Retry-After` once, then stops.
-- **Writes can be closed.** Until reserved seating opened to the API, every write returned 409. re:Seat handles that answer everywhere a write can happen, and probes for it only with a session you can never hold.
-- **Check the event before any time.** Session times carry no time zone. The only place the API states it is GetEvent's `timezone`, so `reseat whoami` and `reseat sync` read it first and refuse an event in another zone or on other dates. re:Seat uses the IANA zone, not the abbreviation: the live API labels this December event PDT, when Las Vegas is on PST.
-- **Personal time is UTC.** No offset, seconds `00`, a whole number of 5-minute steps. Sessions are Las Vegas time. One module does every conversion.
-- **The token stays home.** Sign-in is OAuth with PKCE through a loopback port, so it only works on your own machine. Tokens live in the OS keychain. The access token goes only to `api.awsevents.com`, and the client refuses any other host. The refresh token goes to the Builder ID sign-in service.
+## What re:Seat does after the plan
 
-![How re:Seat fits together: the CLI, web app and MCP server on your laptop share one engine and one local store. Only the API client talks to the AWS Events API, only Auth talks to Builder ID sign-in, and the phone reaches the laptop through ntfy.sh](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/architecture.png)
+**It books what opens.** A freed seat on a target, or a new repeat sitting, is booked inside your rules.
 
-## Swapping a seat without losing one
+**It swaps safely.** It cancels held seat A for wanted seat B only when a fresh `GetSession` read shows B open with no clash, A has a way back, and you allowed it with a Swap now tap or `auto_swap: true`. If B is refused, it books A again, or another open sitting of A.
 
-The API has no swap. If you hold session A and the sitting you want more, B, opens at the same time, reserving B is refused with `scheduleConflict`. You must cancel A first, and for a moment you hold neither.
+**It tells you when to leave.** re:Seat plans to 11 minutes before the start, as [one veteran advises](https://angelo.mandato.com/2025/08/16/ultimate-tips-aws-re-invent-2025/): "use 11 minutes as I have found myself arguing with the staff". It writes leave-now blocks into your official AWS schedule.
 
-re:Seat cancels A only when three things hold:
+- **Queue or go.** For a talk you want but do not hold, it gives walk-up odds with a range, updated each time it sees the session fill. It is a heuristic, not a prediction ([models](https://github.com/hsiddhu2/reseat/blob/main/docs/models.md)).
+- **On site.** During the day it checks the day's held and wanted sessions, up to 35 of them every 20 seconds, so a seat a no-show frees can be booked while you stand in the walk-up line.
 
-1. **B is open** in a fresh GetSession read, takes reservations, and clashes with nothing else you hold.
-2. **A has a way back.** Its own band is open, or another known sitting of A is open, read fresh, and clashes with nothing else you hold.
-3. **You approved it**, from the Approve page or the notification, or allowed auto-swap for that target.
+## How it uses the API safely
 
-Then it cancels A, reserves B, and reads your schedule back. If B failed, it reserves A again. If A is gone too, it tries each fallback once, in order, and tells you exactly what you hold.
+- **No blind retry.** Reserve and cancel are not idempotent. A timeout is settled by reading your schedule back, never by resending. Every write is checked in `GetSchedule` and journaled.
+- **A 200 can still hold per-session failures.** A reserve on full AIM353 came back HTTP 200 with `sessionFull` in `failed`. re:Seat recorded it as full and never resent it ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-full-refused.md)).
+- **Quota is per operation per minute.** Bulk calls count each session named, not each request. re:Seat sizes each batch to the quota left. On a 429 it waits `Retry-After` once, retries, and stops if refused again. After a 401 it refreshes the sign-in and resends once. A 429 writes nothing and spends no quota, so that one retry never repeats a write that landed.
+- **Ask before a cancel,** unless you opted that target in.
+- **An empty catalog is not trusted.** The API served no sessions from 8 to 12 October. A guard refuses an empty or half-missing sweep ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-08-catalog-empty.md)).
+- **Your token stays in your OS keychain** and goes only to `api.awsevents.com`.
 
-Three cases stop it with nothing more sent: the cancel fails and A is still held, a read-back fails, or writes close after the cancel. Each says exactly what you hold, or that the state is unknown. One swap runs at a time, across processes, and every step is journaled before and after it is sent.
+It uses every operation of the Events API, 12 in all, from the sweep to the leave-now blocks.
 
-![The Approve page at phone width: the held seat and the opened seat side by side, the checks, and Swap now or Keep](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png)
+## The proof
 
-## Seen live, on the real API
+I am registered for re:Invent 2026. The watcher ran on my laptop against the live catalog, 12 October to 1 November ([full record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-watcher-to-1-nov.md)):
 
-I tested on the live API and kept the records. Session codes of my own holds are left out.
+- **21,274 sweeps** of the whole catalog. Sweeps came under 5 minutes apart for about 57 percent of the window, about 270 hours. The laptop slept some nights.
+- **42 openings on 33 full sessions.** Counted as openings, not sessions: 21 on chalk talks, 15 on workshops, 3 on code talks, 2 on gamified learning and 1 on a bootcamp.
+- **221 sessions added** after the catalog returned, and 56 removed.
+- **49 connection drops recovered** on their own, with no write sent during them.
 
-**The catalog went empty.** On 8 October, the day API writes were due to open, the API served no catalog:
+![re:Seat Findings page, 12 October to 1 November: 21,274 sweeps, 42 openings on 33 full sessions, openings per day, and how long until each was full again](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/proof/2026-11-01-watcher-to-1-nov-findings.png)
 
-```
-ListSessions                -> 200, totalCount 0, items 0
-GetSession <held session>   -> 404 "No session was found with the requested id"
-GetSchedule                 -> 200, reserved 14, favorites 16
-```
+*What the watcher saw, 12 October to 1 November: openings per day, and how long until each was full again. "Targets" on this page means the current target list. None of those 3 sessions opened while it was a target.*
 
-re:Seat's first sync read that as "every session removed" and emptied its local copy. It sent no write. Since then, an empty or short catalog is refused, and nothing is booked while a held session is missing. Others hit the same empty catalog and said so in a post on [the hackathon's discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion). [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-08-catalog-empty.md) has one line for each daily check.
+Live writes, read back:
 
-**The catalog came back.** On 12 October it returned with 2,227 sessions, and 1,115 of the 1,460 that take reservations were full. Session ids survived the outage, and 13 sessions changed their code under the same id, so a target pinned by id followed them. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-12-catalog-returned.md).
+- **25 October:** after a rules edit and restart, with nothing else typed or tapped, it booked the 2 targets that were already open and sent a push and an email for each ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-autopilot-first-booking.md)).
+- **25 and 26 October:** a swap from INV510-R1 to INV508-R1 and back, by hand in under 3 seconds each way ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-live-swap-round-trip.md)), then by the watcher on its own in 6 seconds each way ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-26-watcher-swap.md)).
+- **25 October:** 15 leave-now blocks written and read back ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-25-leave-now-blocks.md)).
+- **1 November:** a reserve on full AIM353, refused inside a 200, never resent ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-full-refused.md)).
+- **1 November:** a swap approved with Swap now on the phone push, there and back, each verified. Cancel to verified took 2 seconds each way ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-phone-swap-tap.md)).
+- **1 November:** a rollback. A test script skipped the clash pre-check on purpose, to force a refusal after the cancel. The new seat was refused with `scheduleConflict` after the cancel. re:Seat reserved the old seat again 4 seconds after its cancel and read it back ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-swap-rollback.md)).
 
-**The API differed from its spec.** A cancel on a session you do not hold is documented as 404. The live API answered 400. re:Seat now reads either as writes open, with a test for each.
+Then the API changed. Personal time went from "Always UTC" in the 2 October spec to "wall-clock time in the event's own timezone, not UTC" in the 1 November copy. Blocks written in UTC sat 8 hours late until they were moved. re:Seat 1.0.0 followed the same day. `reseat guard sync` moved my 15 blocks and read them back ([changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md), [API facts](https://github.com/hsiddhu2/reseat/blob/main/docs/api-facts.md), [journal counts](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-watcher-to-1-nov.md)).
 
-**Writes work, and every one is read back.** I reserved a repeat sitting I did not want, read it back, cancelled it and read it back. Twice:
+## Built as a product
 
-```
-22:32:57 PDT  ReserveSessions    AMZ202-R1  success    read back: 15 reserved, AMZ202-R1 held
-22:33:19 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
-22:40:06 PDT  ReserveSessions    AMZ202-R1  success    read back: 15 reserved, AMZ202-R1 held
-22:47:16 PDT  CancelReservation  AMZ202-R1  cancelled  read back: 14 reserved, AMZ202-R1 not held
-```
+10 releases on [PyPI](https://pypi.org/project/reseat/) since 10 October, 1.0.0 on 1 November. 1,355 tests against a fake of the API, including a fault storm of full sessions, 429s, a 503 and writes switched off.
 
-The second time I checked the seat in the AWS portal before cancelling. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-12-round-trip.md).
+CI on Linux, macOS and Windows, CodeQL, pip-audit, Dependabot, 18 [design decisions](https://github.com/hsiddhu2/reseat/tree/main/docs/adr) and an MIT licence.
 
-**It runs my week.** Since 13 October the watcher has run on my own schedule. On 14 October I opened the web app on my phone over Tailscale ([the record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-14-tailscale.md)). My sessions' codes, titles and rooms are covered:
+![re:Seat architecture](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/architecture.png)
 
-![My week on the live catalog: held sessions coloured by type, a leave time on each, and the talks I want but do not hold beside them. Codes, titles and rooms are covered](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/live-week.png)
+## Not seen live yet
 
-![Today on my phone: when to leave, the walk as an estimate, and walk-up odds for three talks I want. Codes, titles and rooms are covered](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/live-phone-today.png)
+A target seat caught at the moment it frees. Built and tested against the fake API. Three sessions on the current target list did open, all between 13 and 19 October, before they were added as targets ([record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-30-watcher-to-30-oct.md)).
 
-**What the watcher saw in its first thirteen days.** From 12 to 24 October it swept the whole catalog 6,892 times while my laptop was awake. A full session opened again 30 times, on 23 sessions, on 11 of the 13 days. Four of those seats were gone again within 10 minutes, one in about a minute. 62 sessions were added, 51 still listed. Full sessions rose to 1,374 of 1,479. None of the 23 was a talk I asked for, so it booked nothing. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-20-watcher-first-week.md) will be updated up to submission. The same counts, drawn as charts, are on [the Findings page](https://hsiddhu2.github.io/reseat/findings.html), exported from my laptop with `reseat findings --json`.
+## Start before 30 November
 
-![The Findings page on my real data: sweeps, seats that opened on full sessions by day, how long until each was full again, and sessions added. Counts by session type and seat band only](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/findings.png)
-
-**Favorites in step, both ways.** On 24 October `favorites sync` added one talk to my favorites, and after I dropped it from my rules, removed it again. Each write was read back. My own 25 favorites were never listed for removal. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-favorites-round-trip.md).
-
-**Alerts by email, through my own AWS account.** re:Seat can publish its alerts to an Amazon SNS topic I own. The first test reached my inbox. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-email-alert.md).
-
-![The test email from re:Seat through my SNS topic](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/proof/2026-10-24-email-alert-inbox.png)
-
-**Live and simulated, plainly.** Seen live: the empty catalog, its return, the 400, two booking round trips, a favorite added and removed, a test email through my own SNS topic ([the record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-24-email-alert.md)), the watcher on my week, the phone over Tailscale, 36 connection drops it recovered from on its own. Not yet seen live: a swap, a booking the watcher caught, a Book tap, an alert the watcher raised by email, a seat filling at the moment of booking. Those run against a fake of the API that produces every failure the documentation lists.
-
-## Getting you to the room before the doors close
-
-Door staff stop admitting 11 minutes before the start. re:Seat's leave time is the session start, minus those 11 minutes, minus enough time for the walk to be done in time 80 percent of the time, minus a buffer you set when the change is tight. Walking speeds vary by about 19 percent from person to person, so a typical 40-minute walk gets 47 minutes. When you ask it to, re:Seat writes the leave time into your official schedule, and the Today page counts it down. Walking times between the six 2026 venues are labelled as estimates everywhere they appear.
-
-![The Today page at phone width: the leave-in countdown, what is next, and queue-or-go advice for a wanted talk without a seat](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png)
-
-## Your own AI plans, re:Seat keeps the seats
-
-With over 2,000 sessions, picking still takes hours. `reseat mcp` runs a local MCP server, so the AI app you already use can plan with you. It gets four planning tools:
-
-- `search_sessions` searches the local catalog by text, type, day, venue, seat band, level, topic and service.
-- `open_slots(day)` lists the free gaps in a day, with the sessions you can walk to and away from before the doors close.
-- `check_plan(codes)` states facts about a list: full, clashes, two sittings of one talk, a walk you cannot make, a meal, your caps.
-- `draft_rules(add, remove)` drafts your rules file and shows the whole target order. Approving writes only that local file.
-
-Every answer lists in start-time order and never ranks. The planning tools never reserve or cancel. Any change to your seats is a propose, then a separate approve by plan id.
-
-The walk check caught something the API does not. The repeat sitting from the round trip above starts at 12:30 at Caesars Forum. One of my own sessions ends at 12:30 at Caesars Palace. The API accepted the booking, because the times do not overlap. Asked to check it, `check_plan` answered ([the record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-21-check-plan.md)):
-
-```
-- AMZ202-R1  Mon 30 Nov 12:30 PT, 120 min  Caesars Forum, Level 1 | Forum 101  unavailable
-  full, no seat to reserve now.
-  cannot be reached in time: held <held session> ends 12:30 at Caesars Palace, the walk is about 12 min
-  (estimate) and 15 min is allowed, enough to arrive in time 80% of the time, so arrival is
-  about 12:45, 26 min after doors close at 12:19.
-  No other sitting of this talk is open.
+```bash
+pipx install reseat
+reseat login
+reseat serve
 ```
 
-## How it was tested
+`reseat login` opens your AWS Builder ID sign-in. For the AI tools, install `reseat[mcp]` and follow the [MCP guide](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 
-Every write path runs against an in-process fake of the API that produces each documented failure: partial bulk results, `scheduleConflict`, 409, 429 with `Retry-After`, 5xx, dropped connections and an expired sign-in.
-
-A fault storm runs the whole flow for an hour on the 2,006 timed sessions of the real catalog. 30 percent of reserves come back full, a 429 lands every minute, plus a 503 and fifteen minutes of 409, under the real quotas. It checks that no quota is exceeded, no talk is held twice and every write is read back. The storm found two bugs: swaps proposed that could never run, and writes re-sent every minute into a 409. A third turned up beside it before it could lose a seat: a timeout while reserving B, after A was cancelled, escaped the rollback. The fix went into the client, so every write path inherits it.
-
-The planning tools were also run from an AI app against my real schedule, and every answer was read for wording that ranks or misleads. That run found six things to fix before release ([the record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-10-21-check-plan.md)).
-
-## Limits, honestly
-
-- It cannot help with the opening rush. Reserved seating opened in the AWS portal two days before API writes did.
-- It is built for a laptop left in the hotel room, plugged in and awake.
-- Walking times and walk-up odds are estimates, and labelled as such.
-- It lists and checks sessions. Choosing them is yours. It reads your official schedule, or imports reinvent-planner.cloud exports.
-- The MCP server tells your AI app to ask you before approving a plan, but cannot check that it did. Use an app that shows each tool call.
-- The web app is plain HTTP. On the phone, open it over Tailscale.
-
-## What's next
-
-I will run re:Seat through re:Invent week on my own schedule and publish what it caught: the seats it booked, the swaps it proposed and the walks it timed. The proof files in the repo will grow with it.
-
-If you are attending re:Invent 2026, install it, point it at your schedule, and tell me what it catches for you.
-
-- Code: [github.com/hsiddhu2/reseat](https://github.com/hsiddhu2/reseat)
-- Install: [pypi.org/project/reseat](https://pypi.org/project/reseat/)
-- Click-through demo: [hsiddhu2.github.io/reseat](https://hsiddhu2.github.io/reseat/)
-- How it works, and how each of the 12 API operations is used: [docs/architecture.md](https://github.com/hsiddhu2/reseat/blob/main/docs/architecture.md#api-operations-used)
-- The models behind it, with sources: [docs/models.md](https://github.com/hsiddhu2/reseat/blob/main/docs/models.md)
-- API facts it relies on: [docs/api-facts.md](https://github.com/hsiddhu2/reseat/blob/main/docs/api-facts.md)
-- Every live record: [docs/proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof)
-
-re:Seat is built for the AWS re:Invent 2026 Event Catalog API Builder Challenge, on the AWS Events API.
+Code on [GitHub](https://github.com/hsiddhu2/reseat), live records in [docs/proof](https://github.com/hsiddhu2/reseat/tree/main/docs/proof). Let re:Seat watch for your seats.
