@@ -31,6 +31,10 @@ Before `git add`, search the file for `k=`, `code=`, `ts.net`, `100.`, `@`, `ntf
 
 | Check | File | Status |
 |---|---|---|
+| What the watcher saw, 12 October to 1 November: openings, catalog changes, outages, blind spells and the sign-in expiry | [`2026-11-01-watcher-to-1-nov.md`](2026-11-01-watcher-to-1-nov.md), with the Findings screenshot [`2026-11-01-watcher-to-1-nov-findings.png`](2026-11-01-watcher-to-1-nov-findings.png) | done |
+| A reserve on a full session, refused with sessionFull inside a 200, 1 November | [`2026-11-01-full-refused.md`](2026-11-01-full-refused.md) | done |
+| A swap approved with Swap now on the phone notification, there and back, 1 November | [`2026-11-01-phone-swap-tap.md`](2026-11-01-phone-swap-tap.md) | done |
+| A swap whose new seat is refused after the cancel, rolled back, 1 November | [`2026-11-01-swap-rollback.md`](2026-11-01-swap-rollback.md) | done |
 | What the watcher saw, 12 to 30 October: openings, catalog changes, outages and blind spells | [`2026-10-30-watcher-to-30-oct.md`](2026-10-30-watcher-to-30-oct.md) | done |
 | A reserve that clashes with a held seat, refused with scheduleConflict, 26 October | [`2026-10-26-clash-refused.md`](2026-10-26-clash-refused.md) | done |
 | A swap run by the watcher on its own, there and back, started by a rules edit, 26 October | [`2026-10-26-watcher-swap.md`](2026-10-26-watcher-swap.md) | done |
