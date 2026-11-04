@@ -4,6 +4,10 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+### Fixed
+
+- Screens and plan checks that said "Doors close" used re:Seat's 11-minute arrive-by time. AWS closes the doors 10 minutes before the start ("at least ten minutes prior to the session start time", AWS re:Invent FAQ). Today and the week's detail panel now show the real door time. `check_plan` and `open_slots` name both: how late an arrival is, against the arrive-by time, and when the doors close. Leave-now blocks and every fit check still plan for 11 minutes, so no leave time moves.
+
 ## [1.0.0] - 2026-11-01
 
 ### Fixed

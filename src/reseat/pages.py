@@ -25,7 +25,16 @@ from html import escape
 from typing import TYPE_CHECKING, Any
 
 from . import decisions, findings, guard
-from .campus import CUTOFF_MINUTES, EVENT_DAYS, VEGAS, from_personal_time, overlaps, room_label, walk_minutes
+from .campus import (
+    CUTOFF_MINUTES,
+    DOORS_CLOSE_MINUTES,
+    EVENT_DAYS,
+    VEGAS,
+    from_personal_time,
+    overlaps,
+    room_label,
+    walk_minutes,
+)
 from .changes import GHOSTS
 from .client import QUOTAS
 from .models import PersonalTime, Session
@@ -534,7 +543,8 @@ def _detail(app: App, blk: dict[str, Any], leave: guard.Block | None, held: set[
         walk = (f", about {leave.walk} min walk from {leave.origin}, {leave.allow} allowed (estimate)"
                 if leave.walk is not None
                 else "")
-        rows.append(("Leave", f"{at:%H:%M}{walk}. Doors close {CUTOFF_MINUTES} min before the start."))
+        rows.append(("Leave", f"{at:%H:%M}{walk}. Doors close {DOORS_CLOSE_MINUTES} min before the start, "
+                              f"re:Seat plans for {CUTOFF_MINUTES}."))
     if blk.get("moved"):
         rows.append(("Moved", f"Now in {blk['moved']}"))
     if blk.get("walk_note"):
@@ -661,7 +671,8 @@ def _today(app: App, held: list[Session], wanted: list[tuple[Any, list[Session]]
         if a.timestamp() > now:                  # held until it starts: a missed leave time shows as now
             hero = {"code": s.abbreviation, "start": f"{a:%H:%M}", "venue": s.campus_venue or "",
                     "room": s.room_label or "", "origin": b.origin or "", "walk": b.walk, "allow": b.allow,
-                    "leave_at": leave_at, "doors": (a - timedelta(minutes=CUTOFF_MINUTES)).strftime("%H:%M")}
+                    "leave_at": leave_at,
+                    "doors": (a - timedelta(minutes=DOORS_CLOSE_MINUTES)).strftime("%H:%M")}
             break
     nxt: list[tuple[datetime, dict[str, Any]]] = []
     for s in today:

@@ -41,7 +41,7 @@ Tests: [5xx on a booking is read back, not retried](../tests/test_router.py#L262
 
 ## 4. Leave in time with a chosen confidence
 
-**The problem.** Doors close 11 minutes before a session. The walk between two venues varies with crowds and wayfinding, and a single number is wrong half the time.
+**The problem.** AWS closes the doors 10 minutes before a session, and re:Seat plans to arrive by 11. The walk between two venues varies with crowds and wayfinding, and a single number is wrong half the time.
 
 **The model.** Fan, Kalaba and Moore frame route choice as maximising the probability of arriving by a deadline ("Arriving on time", JOTA 127(3), 2005, pp. 497 to 513, doi:10.1007/s10957-005-7498-5). For one fixed route this becomes: leave at the deadline minus the alpha-quantile of the travel time. That quantile is the planning time behind the US Federal Highway Administration's buffer index, (95th percentile time minus average time) / average time ("Travel Time Reliability: Making It There On Time, All The Time", 2005). Walking speeds vary around their mean with a standard deviation of 19.3 percent, 0.26 m/s around 1.34 m/s (Weidmann, "Transporttechnik der Fussgänger", Schriftenreihe des IVT 90, ETH Zürich, 2nd ed. 1993, section 5.12.6).
 

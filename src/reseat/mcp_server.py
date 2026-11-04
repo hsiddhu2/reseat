@@ -595,7 +595,7 @@ def build_server(tools: Tools) -> Any:
     @server.tool()
     def check_plan(codes: list[str]) -> str:
         """Facts about up to 25 session codes against what is held and against each other: in the
-        catalog, seat band, clashes, two sittings of one talk, walks with the 11-minute door rule,
+        catalog, seat band, clashes, two sittings of one talk, walks with the 11-minute arrive-by rule,
         meals, max_per_day and watch_cap. A base code such as AIM341 checks every sitting. An exact
         code such as AIM341-R1 checks that sitting. Reads the schedule once. Writes nothing."""
         with tools.serial:
