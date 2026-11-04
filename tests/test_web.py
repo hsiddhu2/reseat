@@ -10,7 +10,7 @@ import pathlib
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 import keyring
@@ -110,14 +110,28 @@ def test_today_view_has_the_leave_countdown_next_items_and_wanted(demo):
     assert t["label"] == "Mon 30 Nov"
     h = t["hero"]
     assert (h["code"], h["start"], h["venue"], h["origin"], h["walk"], h["doors"]) == (
-        "ARC302-R", "11:30", "MGM Grand", "Caesars Forum", 40, "11:19")
+        "ARC302-R", "11:30", "MGM Grand", "Caesars Forum", 40, "11:20")
     names = [n["name"] for n in t["next"]]
     assert names == ["CMP409-R · Chalk talk", "API319 · Breakout session", "Personal · Team dinner"]
     [w] = t["wanted"]
     assert w["code"] == "SVS306-R" and w["clash"] == "Overlaps held CMP409-R." and "Basis:" in w["text"]
     assert t["cover"].startswith("Laptop sweeps the catalog every 30 s and checks today's 5 sessions")
     html = pages.render_today(snap, demo=True)
-    assert "LEAVE IN" in html and "Doors close 11:19" in html and "Team dinner" in html
+    assert "LEAVE IN" in html and "Doors close 11:20" in html and "Team dinner" in html
+
+
+def test_doors_show_ten_but_the_leave_time_still_plans_for_eleven(demo):
+    # AWS closes the doors 10 min before the start. The leave time stays start minus 11 minus the allowance.
+    snap = demo.app.snapshot()
+    h = snap["view"]["today"]["hero"]
+    leave = datetime.fromtimestamp(h["leave_at"], VEGAS)
+    assert (h["start"], h["doors"]) == ("11:30", "11:20")
+    want = datetime(2026, 11, 30, 11, 30) - timedelta(minutes=11 + h["allow"])
+    assert leave.strftime("%H:%M") == want.strftime("%H:%M")
+    cmp = next(b for b in snap["view"]["week"]["blocks"] if b["code"] == "CMP409-R")
+    row = dict(cmp["detail"]["rows"])["Leave"]
+    allow = int(re.search(r"(\d+) allowed", row).group(1))
+    assert row.startswith((datetime(2026, 11, 30, 13, 0) - timedelta(minutes=11 + allow)).strftime("%H:%M"))
 
 
 def test_no_session_id_token_or_secret_in_any_view_or_the_json(demo):
@@ -935,6 +949,8 @@ def test_every_week_block_opens_a_detail_panel_with_its_facts(demo):
     rows = dict(cmp["detail"]["rows"])
     assert rows["When"].startswith("Monday 30 November, 13:00") and "MGM Grand" in rows["Where"]
     assert rows["Leave"].startswith("12:") and cmp["detail"]["status"] == "You hold this seat."
+    # AWS closes the doors 10 minutes before the start. The leave time keeps re:Seat's 11.
+    assert rows["Leave"].endswith("Doors close 10 min before the start, re:Seat plans for 11.")
     assert any(x["code"] == "CMP409-R1" for x in cmp["detail"]["sittings"])
     ant = next(b for b in blocks if b["code"] == "ANT335")
     assert "Queue or go" in dict(ant["detail"]["rows"]) and "Tight walk" in dict(ant["detail"]["rows"])

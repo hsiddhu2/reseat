@@ -56,7 +56,8 @@ EVENT_DAYS = {
     "thursday": "2026-12-03", "friday": "2026-12-04",
 }
 SAME_VENUE_MINUTES = 10
-CUTOFF_MINUTES = 11  # AWS says 10. Veterans say 11 to avoid arguing at the door.
+DOORS_CLOSE_MINUTES = 10  # AWS FAQ: be there "at least ten minutes prior to the session start time".
+CUTOFF_MINUTES = 11  # re:Seat's arrive-by time, one minute inside the doors. Veterans say 11.
 
 
 # The 2026 catalog names one combined venue "Wynn/Encore". Encore's meeting

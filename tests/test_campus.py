@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from reseat.campus import (
     CUTOFF_MINUTES,
+    DOORS_CLOSE_MINUTES,
     VENUES,
     from_personal_time,
     normalize_venue,
@@ -62,6 +63,11 @@ def test_overlap():
 
 def test_cutoff_is_eleven():
     assert CUTOFF_MINUTES == 11
+
+
+def test_doors_close_ten_minutes_before_the_start():
+    # AWS FAQ: "at least ten minutes prior to the session start time". re:Seat plans one minute inside it.
+    assert DOORS_CLOSE_MINUTES == 10 and CUTOFF_MINUTES == DOORS_CLOSE_MINUTES + 1
 
 
 def test_normalize_real_2026_strings():

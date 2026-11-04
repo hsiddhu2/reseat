@@ -333,8 +333,8 @@ def test_walk_out_across_a_meal_uses_the_next_held_venue(clock):
 
 
 @pytest.mark.parametrize("start,fits", [("12:37", True), ("12:38", False)])
-def test_ending_exactly_at_the_next_door_close_minute_fits(clock, start, fits):
-    # Same venue walk 10 min, allowance 12 at 0.8. Next held 14:00, doors close 13:49.
+def test_ending_exactly_at_the_next_arrive_by_minute_fits(clock, start, fits):
+    # Same venue walk 10 min, allowance 12 at 0.8. Next held 14:00, arrive by 13:49.
     # A 60 min session at 12:37 ends 13:37, plus 12 is 13:49: fits. One minute later does not.
     cat = [_s("H1", "AAA101", TUE, "09:00"), _s("H2", "BBB102", TUE, "14:00"), _s("X", "EDG300", TUE, start)]
     out = _slots(clock, cat, reserved={"H1", "H2"})
@@ -343,7 +343,7 @@ def test_ending_exactly_at_the_next_door_close_minute_fits(clock, start, fits):
 
 @pytest.mark.parametrize("start,fits", [("10:23", True), ("10:22", False)])
 def test_walk_in_boundary(clock, start, fits):
-    # Held ends 10:00 at The Venetian. 10:00 plus 12 min must be by doors close, start minus 11.
+    # Held ends 10:00 at The Venetian. 10:00 plus 12 min must be by the arrive-by time, start minus 11.
     cat = [_s("H1", "AAA101", TUE, "09:00"), _s("X", "EDG300", TUE, start)]
     assert ("EDG300" in codes(_slots(clock, cat, reserved={"H1"}))) is fits
 
@@ -623,7 +623,7 @@ def test_codes_in_one_plan_are_checked_against_each_other(world):
     assert "clashes with held ARC301" in _block(out, "SEC401")
     aim = _block(out, "AIM310")
     assert "cannot be reached in time: SEC401 ends 10:30 at The Venetian, the walk is about" in aim
-    assert "so arrival is about 10:42, 23 min after doors close at 10:19" in aim
+    assert "so arrival is about 10:42, 23 min after the arrive-by time of 10:19, doors close at 10:20" in aim
 
 
 async def test_check_plan_through_the_mcp_server(world):
@@ -771,7 +771,7 @@ def test_an_unknown_walk_in_still_needs_the_11_minutes(clock):
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     near = P.check_plan(client, store, EV, r, ["NOV100"])
     assert ("cannot be reached in time: held AAA101 ends 10:00, the walk time is not known, "
-            "and doors close at 09:54") in near
+            "and the arrive-by time is 09:54, doors close at 09:55") in near
     assert _block(P.check_plan(client, store, EV, r, ["NOV200"]), "NOV200").strip().endswith("fits.")
 
 
@@ -785,7 +785,7 @@ def test_an_unknown_walk_out_still_needs_the_11_minutes(clock):
 
 @pytest.mark.parametrize("start,fits", [("10:23", True), ("10:22", False)])
 def test_check_plan_walk_in_boundary(clock, start, fits):
-    # Same venue walk 10 min, 12 allowed at 0.8. Held ends 10:00, so doors close by 10:12 at the latest.
+    # Same venue walk 10 min, 12 allowed at 0.8. Held ends 10:00, so arrive-by is 10:12 at the latest.
     cat = [_s("H", "AAA101", TUE, "09:00"), _s("X", "EDG300", TUE, start)]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = _block(P.check_plan(client, store, EV, r, ["EDG300"]), "EDG300")
@@ -1305,7 +1305,7 @@ def test_the_walk_problem_names_the_end_the_venue_and_the_arrival(clock):
     out = _block(P.check_plan(client, store, EV, r, ["AMZ202-R1"]), "AMZ202-R1")
     assert "held TNC337 ends 12:30 at Caesars Palace, the walk is about 12 min (estimate)" in out
     assert ("and 15 min is allowed, enough to arrive in time 80% of the time, so arrival is about 12:45, "
-            "26 min after doors close at 12:19") in out
+            "26 min after the arrive-by time of 12:19, doors close at 12:20") in out
     assert writes_sent(fake) == []
 
 
@@ -1404,7 +1404,7 @@ def test_the_walk_out_reads_in_full_and_names_no_held_prefix(world):
     out = _block(world[2].check_plan(["NET330"]), "NET330")
     assert ("leaves no time for DOP302: NET330 ends 13:30 at Wynn, the walk is about 55 min (estimate) "
             "and 65 min is allowed, enough to arrive in time 80% of the time, so arrival is about 14:35, "
-            "46 min after doors close at 13:49.") in out
+            "46 min after the arrive-by time of 13:49, doors close at 13:50.") in out
     assert "held NET330" not in out and writes_sent(world[0]) == []
 
 
@@ -1414,7 +1414,8 @@ def test_the_walk_from_a_planned_code_has_no_held_prefix_and_a_held_one_does(wor
     assert "cannot be reached in time: SEC401 ends 10:30" in aim and "held SEC401" not in out
     assert ("leaves no time for AIM310: SEC401 ends 10:30 at The Venetian, the walk is about 10 min "
             "(estimate) and 12 min is allowed, enough to arrive in time 80% of the time, "
-            "so arrival is about 10:42, 23 min after doors close at 10:19.") in _block(out, "SEC401")
+            "so arrival is about 10:42, 23 min after the arrive-by time of 10:19, "
+            "doors close at 10:20.") in _block(out, "SEC401")
     assert writes_sent(world[0]) == []
 
 
@@ -1423,17 +1424,17 @@ def test_an_unknown_walk_out_reads_in_full(clock):
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = P.check_plan(client, store, EV, r, ["NOV100"])
     assert out.endswith("leaves no time for AAA101: NOV100 ends 10:55, the walk time is not known, "
-                        "and doors close at 10:49.")
+                        "and the arrive-by time is 10:49, doors close at 10:50.")
     assert writes_sent(fake) == []
 
 
 @pytest.mark.parametrize("start,late", [("10:22", 1), ("10:15", 8)])
-def test_minutes_late_is_arrival_less_doors(clock, start, late):
-    # Same venue, 12 min allowed at 0.8. Held ends 10:00, arrival 10:12, doors close 11 min before start.
+def test_minutes_late_is_arrival_less_arrive_by(clock, start, late):
+    # Same venue, 12 min allowed at 0.8. Held ends 10:00, arrival 10:12, arrive-by 11 min before start.
     cat = [_s("H", "AAA101", TUE, "09:00"), _s("X", "EDG300", TUE, start)]
     fake, client, store, r = _world(clock, cat, {"H"}, "targets: []\n")
     out = _block(P.check_plan(client, store, EV, r, ["EDG300"]), "EDG300")
-    assert f"so arrival is about 10:12, {late} min after doors close at" in out
+    assert f"so arrival is about 10:12, {late} min after the arrive-by time of" in out
     assert "cannot be reached in time: held AAA101 ends 10:00 at The Venetian" in out
     assert writes_sent(fake) == []
 

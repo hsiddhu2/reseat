@@ -24,7 +24,16 @@ from pathlib import Path
 
 from . import decisions
 from . import rules as R
-from .campus import CUTOFF_MINUTES, VEGAS, VENUES, event_date, normalize_venue, session_window, walk_minutes
+from .campus import (
+    CUTOFF_MINUTES,
+    DOORS_CLOSE_MINUTES,
+    VEGAS,
+    VENUES,
+    event_date,
+    normalize_venue,
+    session_window,
+    walk_minutes,
+)
 from .client import ApiError, EventsClient
 from .models import SeatBand, Session, normalize_type
 from .rules import Rules, Target
@@ -284,17 +293,17 @@ def _fits(s: Session, gap: tuple[datetime, datetime], busy: list[_Busy], rules: 
     w = _window(s)
     if not w or w[0] < gap[0] or w[1] > gap[1]:
         return None
-    door = timedelta(minutes=CUTOFF_MINUTES)
+    arrive_by = timedelta(minutes=CUTOFF_MINUTES)
     prev_end = max((b.end for b in busy if b.end <= w[0]), default=None)
     walk_in = walk_minutes(_origin(w[0], busy, rules.home_venue), s.campus_venue)
     allow_in = decisions.walk_allowance(walk_in, rules.arrive_confidence) if walk_in is not None else 0
-    if prev_end and prev_end + timedelta(minutes=allow_in) > w[0] - door:
+    if prev_end and prev_end + timedelta(minutes=allow_in) > w[0] - arrive_by:
         return None
     nxt = min((b for b in busy if b.start >= w[1] and not b.meal), key=lambda b: b.start, default=None)
     walk_out = walk_minutes(s.campus_venue, nxt.venue) if nxt else None
     if nxt:
         allow_out = decisions.walk_allowance(walk_out, rules.arrive_confidence) if walk_out is not None else 0
-        if w[1] + timedelta(minutes=allow_out) > nxt.start - door:
+        if w[1] + timedelta(minutes=allow_out) > nxt.start - arrive_by:
             return None
     return _Fit(s, walk_in, walk_out, nxt is not None)
 
@@ -387,22 +396,24 @@ class _Item:
 
 
 def _walk_problem(a: _Item, b: _Item, rules: Rules) -> str | None:
-    """Why b cannot be reached from a in time, or None. Same allowance and door rule as leave-now."""
-    door = timedelta(minutes=CUTOFF_MINUTES)
+    """Why b cannot be reached from a in time, or None. Same allowance and arrive-by rule as leave-now.
+    The text also names the real door time, DOORS_CLOSE_MINUTES before the start."""
+    arrive_by = timedelta(minutes=CUTOFF_MINUTES)
     walk = walk_minutes(a.session.campus_venue, b.session.campus_venue)
     allow = decisions.walk_allowance(walk, rules.arrive_confidence) if walk is not None else 0
-    doors, arrive = b.window[0] - door, a.window[1] + timedelta(minutes=allow)
-    if arrive <= doors:
+    by, arrive = b.window[0] - arrive_by, a.window[1] + timedelta(minutes=allow)
+    if arrive <= by:
         return None
+    doors = _clock(b.window[0] - timedelta(minutes=DOORS_CLOSE_MINUTES))
     end = f"{'held ' if a.held else ''}{_code(a)} ends {_clock(a.window[1])}"
     if walk is None:
         return (f"cannot be reached in time: {end}, the walk time is not known, "
-                f"and doors close at {_clock(doors)}")
-    late = int((arrive - doors).total_seconds() // 60)
+                f"and the arrive-by time is {_clock(by)}, doors close at {doors}")
+    late = int((arrive - by).total_seconds() // 60)
     return (f"cannot be reached in time: {end} at {a.session.campus_venue}, the walk is about {walk} min "
             f"(estimate) and {allow} min is allowed, enough to arrive in time "
             f"{round(rules.arrive_confidence * 100)}% of the time, so arrival is about {_clock(arrive)}, "
-            f"{late} min after doors close at {_clock(doors)}")
+            f"{late} min after the arrive-by time of {_clock(by)}, doors close at {doors}")
 
 
 def _code(i: _Item | Session) -> str:
@@ -476,7 +487,7 @@ def _codes(codes: list[str]) -> list[str] | str:
 
 def check_plan(client: EventsClient, store: Store, event_id: str, rules: Rules, codes: list[str]) -> str:
     """Facts about each code against what is held and against the rest of the list: in the catalog,
-    reservable, band, clashes, two sittings of one talk, walks with the door rule, meals, the daily
+    reservable, band, clashes, two sittings of one talk, walks with the arrive-by rule, meals, the daily
     cap and the watch cap. One GetSchedule read. Facts only, no pass mark."""
     got = _codes(codes)
     if isinstance(got, str):
