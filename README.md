@@ -269,7 +269,7 @@ Once added, your AI app should list the reseat server with 12 tools.
 
 Tools: `list_targets`, `propose_changes`, `propose_swap`, `propose_favorites`, `approve_changes`, `explain_drift`, `guard_sync`, `queue_or_go`, and for planning `search_sessions`, `open_slots`, `check_plan` and `draft_rules`. Every change is two steps. `propose_changes`, `propose_swap`, `propose_favorites` or `guard_sync` returns a plan id and sends nothing, and `approve_changes` carries that plan out once, within 10 minutes.
 
-Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==1.0.0" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
+Without installing, with [uv](https://docs.astral.sh/uv/): `uvx --python 3.12 --from "reseat[mcp]==1.0.1" reseat mcp`. `reseat mcp --demo` serves the same tools on the demo's fake API, with no sign-in.
 
 Install, the config entry for each AI app, the plugins, every tool and its limits: [MCP server](https://github.com/hsiddhu2/reseat/blob/main/docs/guide/mcp.md).
 
@@ -312,6 +312,7 @@ The main releases. Every release is in the [changelog](https://github.com/hsiddh
 - **0.8.1, 31 October:** the MCP server re-reads the rules file before each call. On site, polling leaves GetSession quota for the read before a swap. The test fixture is a sample, not the whole catalog. Every change is in the [changelog](https://github.com/hsiddhu2/reseat/blob/main/CHANGELOG.md).
 - **0.8.2, 31 October:** `propose_favorites`, so your AI app puts your targets in the official app as favorites through `reseat mcp`, approved by plan id. The README opens with planning in the AI tool you already use.
 - **1.0.0, 1 November:** leave-now blocks follow the API's change from UTC to Las Vegas wall-clock time, and never cross midnight. `reseat guard sync` moves blocks written before. [1b8e27b](https://github.com/hsiddhu2/reseat/commit/1b8e27b).
+- **1.0.1, 4 November:** screens say when AWS closes the doors, 10 minutes before the start, and keep planning for 11. Demo GIF and screenshots refreshed. [e4c813b](https://github.com/hsiddhu2/reseat/commit/e4c813b).
 
 ## License
 
