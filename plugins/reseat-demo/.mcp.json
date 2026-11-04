@@ -6,7 +6,7 @@
         "--python",
         "3.12",
         "--from",
-        "reseat[mcp]==1.0.0",
+        "reseat[mcp]==1.0.1",
         "reseat",
         "mcp",
         "--demo"

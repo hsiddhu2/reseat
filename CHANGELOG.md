@@ -4,9 +4,15 @@ Notable changes in each release. Dates are UTC, as published on [PyPI](https://p
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-04
+
 ### Fixed
 
 - Screens and plan checks that said "Doors close" used re:Seat's 11-minute arrive-by time. AWS closes the doors 10 minutes before the start ("at least ten minutes prior to the session start time", AWS re:Invent FAQ). Today and the week's detail panel now show the real door time. `check_plan` and `open_slots` name both: how late an arrival is, against the arrive-by time, and when the doors close. Leave-now blocks and every fit check still plan for 11 minutes, so no leave time moves.
+
+### Changed
+
+- The demo GIF and the demo screenshots in the README show the current pages.
 
 ## [1.0.0] - 2026-11-01
 
@@ -128,7 +134,8 @@ First release on PyPI.
 - The MCP server, which writes only by approving a plan id it proposed.
 - The local web app and ntfy pushes.
 
-[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/hsiddhu2/reseat/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/hsiddhu2/reseat/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/hsiddhu2/reseat/compare/v0.8.2...v1.0.0
 [0.8.2]: https://github.com/hsiddhu2/reseat/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/hsiddhu2/reseat/compare/v0.8.0...v0.8.1
