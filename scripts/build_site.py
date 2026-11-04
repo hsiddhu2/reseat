@@ -3,8 +3,8 @@
     python scripts/build_site.py _site
 
 Runs demo mode by hand, exactly as `reseat serve --demo` scripts it: a baseline
-sweep, a seat opens, a new sitting appears, a room moves. Then it saves the three
-views as plain HTML, approves the swap through the real swap code on the fake API,
+sweep, a seat opens, a new sitting appears, a room moves. Then it saves every
+page as plain HTML, approves the swap through the real swap code on the fake API,
 and saves the dashboard again. No server, no JavaScript, no sign-in. Every page
 says it is a snapshot of demo data.
 """
@@ -22,7 +22,7 @@ from reseat import pages
 
 NOTE = ('Static snapshot of demo data, from <code>reseat serve --demo</code>. Nothing here talks to AWS. '
         'Swap now shows the result the real swap code produced. Run it live: '
-        '<code>pip install -e .</code> then <code>reseat serve --demo</code>.')
+        '<code>pip install reseat</code> then <code>reseat serve --demo</code>.')
 EXTRA_CSS = """
 /* static snapshot only */
 .actions a { display: inline-flex; align-items: center; justify-content: center; min-height: 44px;

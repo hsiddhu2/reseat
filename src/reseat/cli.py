@@ -1,6 +1,6 @@
 """re:Seat command line.
 
-Week one commands. Reads are live today. Writes to reservations open 8 October.
+Every command. Business logic lives in the engine modules.
 """
 
 from __future__ import annotations
@@ -110,7 +110,8 @@ def _store() -> Store:
 
 
 @app.command()
-def login(no_browser: bool = typer.Option(False, help="Print the URL instead of opening a browser.")):
+def login(no_browser: bool = typer.Option(False, "--no-browser",
+                                       help="Print the URL instead of opening a browser.")):
     """Sign in with your AWS Builder ID."""
     try:
         auth.login(open_browser=not no_browser)
@@ -328,7 +329,7 @@ def schedule(event: str = config.DEFAULT_EVENT):
 
 @app.command()
 def favorite(session_ids: list[str], event: str = config.DEFAULT_EVENT,
-             dry_run: bool = typer.Option(False, help="Show what would be sent.")):
+             dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be sent.")):
     """Mark sessions as favorites. Batches of 10, quota aware."""
     c, st = _client(), _store()
     ids = list(dict.fromkeys(session_ids))
@@ -802,7 +803,7 @@ def serve(event: str = config.DEFAULT_EVENT,
                                          "Tailscale: listen on 127.0.0.1 and have Tailscale forward "
                                          "http://<this computer's Tailscale name>:<port> to it. Needs "
                                          "serve_secret (demo mode makes one).")):
-    """Run the watcher and serve the web app: dashboard, approve and today. Leave the laptop awake."""
+    """Run the watcher and serve the web app on this laptop. Leave the laptop awake."""
     from . import push
     from . import serve as serve_mod
     from . import tailnet as tailnet_mod
@@ -975,7 +976,7 @@ def _approve_wait() -> float:
 @app.command("mcp")
 def mcp_cmd(event: str = config.DEFAULT_EVENT,
             demo: bool = typer.Option(False, "--demo", help="Use the demo's fake Events API. No sign-in.")):
-    """Run the local MCP server on stdio. Needs: pip install "reseat[mcp]"."""
+    r"""Run the local MCP server on stdio. Needs: pip install "reseat\[mcp]"."""
     from . import demo as demo_mod
     from . import mcp_server
     try:
