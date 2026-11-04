@@ -84,7 +84,7 @@ With your own seats, `reseat serve` runs the watcher and the same web app at `ht
 
 | Week, laptop width | Approve, phone width | Today, phone width |
 |---|---|---|
-| ![Week: status line, a swap waiting for approval, what just changed, and the week grid with a NEW label](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/week.png) | ![Approve: the held and opened sessions side by side, the checks and one button](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png) |
+| ![Week: status line, a swap waiting for approval, what just changed, and the week grid with a PROPOSED label](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/week.png) | ![Approve: the held and opened sessions side by side, the checks, and Swap now or Keep](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/approve.png) | ![Today: leave-in countdown, next sessions, wanted sessions with queue-or-go advice](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/today.png) |
 
 ![Demo page: a scenario list, and beside it what AWS did, what re:Seat did, the week before and after, and the phone's notification](https://raw.githubusercontent.com/hsiddhu2/reseat/main/docs/screenshots/demo.png)
 
