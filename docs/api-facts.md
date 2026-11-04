@@ -1,6 +1,6 @@
 # AWS Events API, verified facts
 
-What re:Seat relies on about the AWS Events API. Every fact was read from the OpenAPI spec or an AWS developer guide page on 29 or 30 September 2026, or observed in the live catalog where marked. The source is beside each section. If [`openapi.json`](openapi.json) disagrees with this file, the spec wins.
+What re:Seat relies on about the AWS Events API. Every fact was read from the OpenAPI spec or an AWS developer guide page on 29 or 30 September 2026, from the spec fetched again on 1 November 2026 where marked, or observed in the live catalog where marked. The source is beside each section. If [`openapi.json`](openapi.json) disagrees with this file, the spec wins.
 
 [`openapi.json`](openapi.json) is AWS's spec, copied unchanged from https://api.awsevents.com/v1/openapi.json so the code can be checked against it. It belongs to AWS.
 
@@ -39,6 +39,7 @@ Source: operation descriptions in the spec.
 - DeletePersonalTime on an entry already gone succeeds. "A retry is safe." It is the only idempotent write.
 - UpdatePersonalTime is a full replacement. Every field is required and an omitted optional field is cleared.
 - Reserving a session that overlaps a held one fails per session with `scheduleConflict` and `conflictsWith`, the list of the caller's held sessions that overlap. There is no swap or replace operation. Seen live on 26 October 2026: one reserve that overlapped a held session came back with `successful` empty and that session in `failed` with `scheduleConflict` and `conflictsWith` naming the held one ([the record](proof/2026-10-26-clash-refused.md)).
+- Seen live on 1 November 2026: a reserve on a full session came back 200 with `successful` empty and that session in `failed` with `sessionFull` and an empty `conflictsWith` ([the record](proof/2026-11-01-full-refused.md)).
 
 ## Failure codes on bulk results
 
@@ -112,7 +113,6 @@ Source: [proof/2026-10-08-catalog-empty.md](proof/2026-10-08-catalog-empty.md). 
 - On the evening of 8 October, the day writes were scheduled to open through the API, ListSessions answered 200 with `totalCount` 0 and no items, and GetSession answered 404 for every session tried, including held ones. GetSchedule, GetEvent and ListEvents still worked.
 - Reservations made after seating opened carry ids from the same ranges as the rest of the catalog. An earlier version of this page said they all begin `17842318` and that no 1 October id did. Both were wrong, see the 12 October section.
 - GetSchedule lists `reserved` and `favorites` as arrays of unique ids. The spec does not define their order.
-- The same condition was reported publicly on 3 October by another developer: `totalCount` 0, 404 on GetSession, GetSchedule still answering, and the official MCP server returning the same empty list. It was also raised in a post on [an AWS Builder Center discussion page](https://builder.aws.com/build/hackathons/7c0e8c59-35d9-3ceb-8f80-0d5dc41bfebf/reinvent-event-catalog-api-hackathon?tab=discussion).
 - re:Seat therefore refuses a sweep that comes back empty or loses most of the catalog without bringing back one of about the same size, checks each walk against `totalCount`, records a re-keyed catalog as a new baseline rather than as news, and books nothing while a held session is missing from its local catalog.
 
 ## Observed in the live API, 12 October 2026

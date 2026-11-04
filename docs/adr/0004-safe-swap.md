@@ -18,7 +18,7 @@ Cancel then reserve with one restore attempt and no precondition. Rejected: it c
 
 ## Consequences
 
-The worst case is bounded and reported, never silent. Seen live on 25 and 26 October, 2 to 3 seconds holding neither seat by whole-second journal times. The rollback path is tested against the fake only.
+The worst case is bounded and reported, never silent. Seen live on 25 and 26 October and 1 November, 2 to 3 seconds holding neither seat by whole-second journal times. The rollback was seen live once, on 1 November, on a refusal forced on purpose: the old seat was held again 4 seconds after its cancel ([the record](../proof/2026-11-01-swap-rollback.md)). The branch to another sitting of the old talk is tested against the fake only.
 
 ## Where
 
