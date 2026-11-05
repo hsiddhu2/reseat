@@ -37,7 +37,7 @@ reseat serve                      # watch, book and swap within your rules
 - **1 November:** a swap whose new seat was refused after the cancel, forced on purpose. re:Seat reserved the old seat again 4 seconds after its cancel and read it back. [The record](https://github.com/hsiddhu2/reseat/blob/main/docs/proof/2026-11-01-swap-rollback.md).
 - **Not yet seen live:** a seat caught as it frees.
 
-**Read the story** on [AWS Builder Center](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-the-seats-you-missed-booked-while-you-sleep).
+**Read the story** on [AWS Builder Center](https://builder.aws.com/project/3KZhHk8a0XfKPUaIdZUTKjSLoZ4/reseat-plan-reinvent-with-your-ai-over-mcp-reseat-books-the-seats).
 
 **What re:Seat does:**
 
